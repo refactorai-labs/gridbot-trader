@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Each simulation run with config, status, and aggregate results
+model Simulation {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name        String @default("Untitled Simulation")
+  pair        String // "WETH/USDC" or "WBTC/USDC"
+  poolAddress String
+  chain       String @default("eth")
+
+  startTime DateTime
+  endTime   DateTime
+  timeframe String   @default("1h") // "5m", "15m", "1h", "4h"
+  feeRate   Float    @default(0.001) // 0.1%
+
+  status       String  @default("pending") // pending, running, completed, failed
+  errorMessage String?
+
+  // Adaptive layer toggle
+  adaptiveEnabled Boolean @default(true)
+  emaPeriod       Int     @default(50)
+  volumeMultiplier Float  @default(1.5)
+
+  // Aggregate results (computed after simulation)
+  totalPnl       Float?
+  totalPnlPct    Float?
+  longPnl        Float?
+  shortPnl       Float?
+  totalTrades    Int?
+  longTrades     Int?
+  shortTrades    Int?
+  winCount       Int?
+  lossCount      Int?
+  maxDrawdown    Float?
+  maxDrawdownPct Float?
+  finalEquity    Float?
+  totalCandles   Int?
+
+  // Relations
+  gridConfigs    GridConfiguration[]
+  gridOrders     GridOrder[]
+  adaptiveEvents AdaptiveEvent[]
+  pnlSnapshots   PnlSnapshot[]
+
+  @@index([status])
+  @@index([pair])
+  @@index([createdAt])
+}
+
+// Grid configuration per side (long/short) per simulation
+model GridConfiguration {
+  id String @id @default(cuid())
+
+  simulationId String
+  simulation   Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  side       String // "long" or "short"
+  gridLevels Int    @default(10)
+  gridType   String @default("arithmetic") // "arithmetic" or "geometric"
+  upperBound Float
+  lowerBound Float
+
+  orderSizeType String @default("fixed") // "fixed" or "percent"
+  orderSize     Float // USD amount or % of allocation
+  totalCapital  Float
+
+  profitMode            String @default("next_level") // "next_level" or "custom"
+  customProfitDistance   Float?
+
+  // Computed spacing (stored for display)
+  gridSpacing    Float?
+  gridSpacingPct Float?
+
+  @@unique([simulationId, side])
+  @@index([simulationId])
+}
+
+// Individual grid orders
+model GridOrder {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  simulationId String
+  simulation   Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  side       String // "long" or "short"
+  level      Int    // Grid level index
+  levelPrice Float
+  orderType  String // "buy" or "sell"
+  orderSize  Float  // Size in USD
+
+  status   String    @default("pending") // "pending", "filled", "cancelled"
+  fillPrice Float?
+  fillTime  DateTime?
+  fillCandleIdx Int?
+
+  pairedOrderId String?
+
+  pnl    Float?
+  pnlPct Float?
+  fees   Float?
+
+  sizeMultiplier Float @default(1.0)
+
+  @@index([simulationId, side, status])
+  @@index([simulationId, fillCandleIdx])
+}
+
+// Adaptive layer events
+model AdaptiveEvent {
+  id String @id @default(cuid())
+
+  simulationId String
+  simulation   Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  candleIdx Int
+  timestamp DateTime
+
+  eventType   String // "trend_change", "breakout_detected", "de_risk", "re_entry", "grid_resize"
+  detailsJson String // JSON with event-specific details
+
+  longMultiplier  Float?
+  shortMultiplier Float?
+
+  @@index([simulationId, candleIdx])
+}
+
+// P&L snapshots for equity curve
+model PnlSnapshot {
+  id String @id @default(cuid())
+
+  simulationId String
+  simulation   Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  candleIdx Int
+  timestamp DateTime
+
+  price         Float
+  equity        Float
+  realizedPnl   Float
+  unrealizedPnl Float
+  longEquity    Float
+  shortEquity   Float
+
+  longOrdersActive  Int
+  shortOrdersActive Int
+  longFillCount     Int
+  shortFillCount    Int
+
+  @@index([simulationId, candleIdx])
+}
+
+// Cached OHLCV candle data
+model CandleCache {
+  id String @id @default(cuid())
+
+  pair        String
+  poolAddress String
+  chain       String
+  timeframe   String
+
+  timestamp DateTime
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float
+
+  @@unique([poolAddress, timeframe, timestamp])
+  @@index([poolAddress, timeframe])
+  @@index([pair, timeframe, timestamp])
+}
+
+// Saved configuration presets
+model SavedConfiguration {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name        String
+  description String @default("")
+  configJson  String // Full serialized config
+
+  pair       String
+  longLevels Int
+  shortLevels Int
+  gridType   String
+
+  @@index([pair])
+}

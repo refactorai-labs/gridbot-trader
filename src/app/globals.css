@@ -1,0 +1,331 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 8, 10, 18;
+  --background-end-rgb: 12, 14, 24;
+  --card-bg: rgba(16, 20, 32, 0.9);
+  --card-border: rgba(255, 255, 255, 0.06);
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(255, 255, 255, 0.4);
+  --hover-bg: rgba(255, 255, 255, 0.04);
+  --btn-secondary-bg: rgba(255, 255, 255, 0.06);
+  --btn-secondary-hover: rgba(255, 255, 255, 0.1);
+  --scrollbar-track: rgba(255, 255, 255, 0.03);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
+  --input-bg: rgba(255, 255, 255, 0.04);
+  --input-border: rgba(255, 255, 255, 0.08);
+  --input-focus: rgba(99, 102, 241, 0.5);
+
+  /* Grid bot specific */
+  --grid-long: #10b981;
+  --grid-long-bg: rgba(16, 185, 129, 0.08);
+  --grid-long-border: rgba(16, 185, 129, 0.2);
+  --grid-short: #ef4444;
+  --grid-short-bg: rgba(239, 68, 68, 0.08);
+  --grid-short-border: rgba(239, 68, 68, 0.2);
+  --grid-fill: #facc15;
+  --grid-neutral: #6366f1;
+  --adaptive-accent: #8b5cf6;
+  --chart-bg: #0a0c14;
+
+  color-scheme: dark;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+    180deg,
+    rgb(var(--background-start-rgb)) 0%,
+    rgb(var(--background-end-rgb)) 100%
+  );
+  min-height: 100vh;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Subtle grid noise texture */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.01) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.01) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Card */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  backdrop-filter: blur(12px);
+  @apply rounded-lg;
+}
+
+.card-header {
+  color: var(--text-primary);
+  @apply text-sm font-semibold tracking-wide uppercase;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.08em;
+}
+
+/* Buttons */
+.btn {
+  @apply px-4 py-2 rounded-md font-medium text-sm transition-all duration-150;
+  font-family: 'Inter', sans-serif;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  @apply text-white shadow-lg;
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.15);
+}
+.btn-primary:hover {
+  background: linear-gradient(135deg, #818cf8, #6366f1);
+  box-shadow: 0 0 24px rgba(99, 102, 241, 0.25);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--btn-secondary-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--card-border);
+}
+.btn-secondary:hover {
+  background: var(--btn-secondary-hover);
+  color: var(--text-primary);
+}
+
+.btn-long {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--grid-long);
+  border: 1px solid var(--grid-long-border);
+}
+.btn-long:hover {
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.btn-short {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--grid-short);
+  border: 1px solid var(--grid-short-border);
+}
+.btn-short:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* Form inputs */
+.form-label {
+  color: var(--text-muted);
+  @apply block text-xs font-medium mb-1 uppercase tracking-wider;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.form-input {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text-primary);
+  @apply w-full rounded-md px-3 py-2 text-sm;
+  font-family: 'JetBrains Mono', monospace;
+}
+.form-input:focus {
+  outline: none;
+  border-color: var(--input-focus);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.form-select {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text-primary);
+  @apply w-full rounded-md px-3 py-2 text-sm appearance-none;
+  font-family: 'JetBrains Mono', monospace;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='rgba(255,255,255,0.4)' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+.form-select:focus {
+  outline: none;
+  border-color: var(--input-focus);
+}
+
+/* Table */
+.table {
+  @apply w-full text-sm;
+  font-family: 'JetBrains Mono', monospace;
+}
+.table th {
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--card-border);
+  @apply text-left font-medium py-2 px-3 text-xs uppercase tracking-wider;
+}
+.table td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  @apply py-2.5 px-3 text-sm;
+  color: var(--text-secondary);
+}
+.table tr:hover td {
+  background: var(--hover-bg);
+}
+
+/* Status badges */
+.badge {
+  @apply px-2 py-0.5 rounded text-xs font-medium;
+  font-family: 'JetBrains Mono', monospace;
+}
+.badge-long {
+  background: var(--grid-long-bg);
+  color: var(--grid-long);
+  border: 1px solid var(--grid-long-border);
+}
+.badge-short {
+  background: var(--grid-short-bg);
+  color: var(--grid-short);
+  border: 1px solid var(--grid-short-border);
+}
+.badge-neutral {
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--grid-neutral);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+.badge-fill {
+  background: rgba(250, 204, 21, 0.1);
+  color: var(--grid-fill);
+  border: 1px solid rgba(250, 204, 21, 0.2);
+}
+
+/* Stat card */
+.stat-card {
+  @apply p-3 rounded-lg;
+  background: var(--btn-secondary-bg);
+  border: 1px solid var(--card-border);
+}
+.stat-label {
+  color: var(--text-muted);
+  @apply text-xs uppercase tracking-wider mb-1;
+  font-family: 'JetBrains Mono', monospace;
+}
+.stat-value {
+  color: var(--text-primary);
+  @apply text-lg font-bold;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Playback controls */
+.playback-btn {
+  @apply p-2 rounded-md transition-all duration-150;
+  background: var(--btn-secondary-bg);
+  border: 1px solid var(--card-border);
+  color: var(--text-secondary);
+}
+.playback-btn:hover {
+  background: var(--btn-secondary-hover);
+  color: var(--text-primary);
+}
+.playback-btn.active {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--grid-neutral);
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+/* Speed selector */
+.speed-btn {
+  @apply px-2 py-1 text-xs font-mono rounded transition-all duration-150;
+  color: var(--text-muted);
+}
+.speed-btn:hover {
+  color: var(--text-secondary);
+}
+.speed-btn.active {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--grid-neutral);
+}
+
+/* Timeline scrubber */
+.timeline-scrubber {
+  @apply w-full h-1.5 rounded-full appearance-none cursor-pointer;
+  background: rgba(255, 255, 255, 0.06);
+}
+.timeline-scrubber::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--grid-neutral);
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
+  cursor: pointer;
+}
+
+/* Grid fill animation */
+@keyframes grid-fill-flash {
+  0% { opacity: 0.3; box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.4); }
+  50% { opacity: 1; box-shadow: 0 0 12px 2px rgba(250, 204, 21, 0.3); }
+  100% { opacity: 0.6; box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); }
+}
+
+.grid-fill-flash {
+  animation: grid-fill-flash 0.6s ease-out;
+}
+
+/* Loading spinner */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spinner {
+  @apply w-5 h-5 border-2 border-current rounded-full;
+  border-top-color: transparent;
+  animation: spin 0.6s linear infinite;
+}
+
+/* Adaptive status indicators */
+.trend-bullish {
+  color: var(--grid-long);
+}
+.trend-bearish {
+  color: var(--grid-short);
+}
+.trend-neutral {
+  color: var(--text-muted);
+}
+
+/* Tab navigation */
+.tab-btn {
+  @apply px-4 py-2 text-sm font-medium transition-all duration-150 border-b-2;
+  color: var(--text-muted);
+  border-color: transparent;
+}
+.tab-btn:hover {
+  color: var(--text-secondary);
+}
+.tab-btn.active {
+  color: var(--text-primary);
+  border-color: var(--grid-neutral);
+}
