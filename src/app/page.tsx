@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Grid3X3, Loader2, AlertCircle } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 import ConfigPanel from '@/components/config/ConfigPanel';
 import TradingChart from '@/components/charts/TradingChart';
 import PlaybackControls from '@/components/simulation/PlaybackControls';
@@ -305,14 +306,17 @@ export default function SimulatorPage() {
             </p>
           </div>
         </div>
-        {simulation && (
-          <div className="flex items-center gap-2">
-            <span className="badge badge-neutral">{simulation.pair}</span>
-            <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-              {simulation.timeframe} · {simulation.totalCandles} candles
-            </span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {simulation && (
+            <div className="flex items-center gap-2">
+              <span className="badge badge-neutral">{simulation.pair}</span>
+              <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+                {simulation.timeframe} · {simulation.totalCandles} candles
+              </span>
+            </div>
+          )}
+          <ThemeToggle />
+        </div>
       </header>
 
       {/* Error display */}

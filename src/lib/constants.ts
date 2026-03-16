@@ -64,10 +64,12 @@ export const ADAPTIVE_DEFAULTS = {
 };
 
 // Chart colors
-export const CHART_COLORS = {
+const CHART_COLORS_DARK = {
   background: '#0a0c14',
   text: 'rgba(255, 255, 255, 0.6)',
   gridLines: 'rgba(255, 255, 255, 0.03)',
+  crosshair: 'rgba(255, 255, 255, 0.1)',
+  scaleBorder: 'rgba(255, 255, 255, 0.06)',
   longGrid: '#10b981',
   longGridDim: 'rgba(16, 185, 129, 0.15)',
   shortGrid: '#ef4444',
@@ -78,3 +80,31 @@ export const CHART_COLORS = {
   upCandle: '#10b981',
   downCandle: '#ef4444',
 };
+
+const CHART_COLORS_LIGHT = {
+  background: '#ffffff',
+  text: 'rgba(15, 23, 42, 0.6)',
+  gridLines: 'rgba(0, 0, 0, 0.05)',
+  crosshair: 'rgba(0, 0, 0, 0.1)',
+  scaleBorder: 'rgba(0, 0, 0, 0.08)',
+  longGrid: '#059669',
+  longGridDim: 'rgba(5, 150, 105, 0.15)',
+  shortGrid: '#dc2626',
+  shortGridDim: 'rgba(220, 38, 38, 0.15)',
+  fillFlash: '#ca8a04',
+  supportZone: 'rgba(5, 150, 105, 0.08)',
+  resistanceZone: 'rgba(220, 38, 38, 0.08)',
+  upCandle: '#059669',
+  downCandle: '#dc2626',
+};
+
+export function getChartColors() {
+  if (typeof document !== 'undefined') {
+    const theme = document.documentElement.getAttribute('data-theme');
+    if (theme === 'light') return CHART_COLORS_LIGHT;
+  }
+  return CHART_COLORS_DARK;
+}
+
+// Keep CHART_COLORS as default export for backward compat
+export const CHART_COLORS = CHART_COLORS_DARK;

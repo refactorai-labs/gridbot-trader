@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   createChart,
   IChartApi,
@@ -11,7 +11,7 @@ import {
   ColorType,
 } from 'lightweight-charts';
 import { OHLC, GridLevel, GridSide } from '@/lib/types';
-import { CHART_COLORS } from '@/lib/constants';
+import { getChartColors } from '@/lib/constants';
 
 interface TradingChartProps {
   candles: OHLC[];
@@ -41,31 +41,44 @@ export default function TradingChart({
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
 
+  // Track theme changes
+  const [theme, setTheme] = useState('dark');
+  useEffect(() => {
+    const el = document.documentElement;
+    setTheme(el.getAttribute('data-theme') || 'dark');
+    const observer = new MutationObserver(() => {
+      setTheme(el.getAttribute('data-theme') || 'dark');
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
+
   // Initialize chart
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const colors = getChartColors();
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: CHART_COLORS.background },
-        textColor: CHART_COLORS.text,
+        background: { type: ColorType.Solid, color: colors.background },
+        textColor: colors.text,
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: CHART_COLORS.gridLines },
-        horzLines: { color: CHART_COLORS.gridLines },
+        vertLines: { color: colors.gridLines },
+        horzLines: { color: colors.gridLines },
       },
       crosshair: {
-        vertLine: { color: 'rgba(255, 255, 255, 0.1)', width: 1, style: 3 },
-        horzLine: { color: 'rgba(255, 255, 255, 0.1)', width: 1, style: 3 },
+        vertLine: { color: colors.crosshair, width: 1, style: 3 },
+        horzLine: { color: colors.crosshair, width: 1, style: 3 },
       },
       rightPriceScale: {
-        borderColor: 'rgba(255, 255, 255, 0.06)',
+        borderColor: colors.scaleBorder,
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       timeScale: {
-        borderColor: 'rgba(255, 255, 255, 0.06)',
+        borderColor: colors.scaleBorder,
         timeVisible: true,
         secondsVisible: false,
       },
@@ -74,12 +87,12 @@ export default function TradingChart({
     });
 
     const candlestickSeries = chart.addCandlestickSeries({
-      upColor: CHART_COLORS.upCandle,
-      downColor: CHART_COLORS.downCandle,
-      borderUpColor: CHART_COLORS.upCandle,
-      borderDownColor: CHART_COLORS.downCandle,
-      wickUpColor: CHART_COLORS.upCandle,
-      wickDownColor: CHART_COLORS.downCandle,
+      upColor: colors.upCandle,
+      downColor: colors.downCandle,
+      borderUpColor: colors.upCandle,
+      borderDownColor: colors.downCandle,
+      wickUpColor: colors.upCandle,
+      wickDownColor: colors.downCandle,
     });
 
     chartRef.current = chart;
@@ -99,7 +112,7 @@ export default function TradingChart({
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [height]);
+  }, [height, theme]);
 
   // Update candle data
   const updateCandles = useCallback(() => {
@@ -128,7 +141,7 @@ export default function TradingChart({
         to: chartData.length,
       });
     }
-  }, [candles, currentCandleIdx, visibleCandleCount]);
+  }, [candles, currentCandleIdx, visibleCandleCount, theme]);
 
   useEffect(() => {
     updateCandles();
@@ -144,15 +157,15 @@ export default function TradingChart({
     }
     priceLinesRef.current = [];
 
-    const lineColor = side === 'long' ? CHART_COLORS.longGrid : CHART_COLORS.shortGrid;
-    const dimColor = side === 'long' ? CHART_COLORS.longGridDim : CHART_COLORS.shortGridDim;
+    const colors = getChartColors();
+    const lineColor = side === 'long' ? colors.longGrid : colors.shortGrid;
 
     // Add grid level lines
     for (const level of gridLevels) {
       const isFilled = filledLevelIndices.has(level.index);
       const line = seriesRef.current.createPriceLine({
         price: level.price,
-        color: isFilled ? CHART_COLORS.fillFlash : lineColor,
+        color: isFilled ? colors.fillFlash : lineColor,
         lineWidth: isFilled ? 2 : 1,
         lineStyle: isFilled ? 0 : 2, // Solid if filled, dashed if pending
         axisLabelVisible: true,
@@ -166,7 +179,7 @@ export default function TradingChart({
     if (supportLevel && side === 'long') {
       const line = seriesRef.current.createPriceLine({
         price: supportLevel,
-        color: 'rgba(16, 185, 129, 0.5)',
+        color: colors.longGrid,
         lineWidth: 2,
         lineStyle: 1,
         axisLabelVisible: true,
@@ -178,7 +191,7 @@ export default function TradingChart({
     if (resistanceLevel && side === 'short') {
       const line = seriesRef.current.createPriceLine({
         price: resistanceLevel,
-        color: 'rgba(239, 68, 68, 0.5)',
+        color: colors.shortGrid,
         lineWidth: 2,
         lineStyle: 1,
         axisLabelVisible: true,
@@ -186,7 +199,7 @@ export default function TradingChart({
       });
       priceLinesRef.current.push(line);
     }
-  }, [gridLevels, filledLevelIndices, side, supportLevel, resistanceLevel]);
+  }, [gridLevels, filledLevelIndices, side, supportLevel, resistanceLevel, theme]);
 
   return (
     <div className="relative">

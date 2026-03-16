@@ -8,12 +8,12 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        'grid-long': '#10b981',
-        'grid-short': '#ef4444',
-        'grid-neutral': '#6366f1',
-        'grid-fill': '#facc15',
-        profit: '#10b981',
-        loss: '#ef4444',
+        'grid-long': 'var(--grid-long)',
+        'grid-short': 'var(--grid-short)',
+        'grid-neutral': 'var(--grid-neutral)',
+        'grid-fill': 'var(--grid-fill)',
+        profit: 'var(--grid-long)',
+        loss: 'var(--grid-short)',
       },
       fontFamily: {
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
