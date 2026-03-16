@@ -64,8 +64,10 @@ export function processFill(
   // Check if this fill closes an existing open position
   const matchIdx = state.openPositions.findIndex(
     p => p.side === fill.side &&
-         p.levelIndex === fill.levelIndex &&
-         p.entryType !== fill.type // Buy closes a short position entry, sell closes a buy position entry
+         p.entryType !== fill.type &&
+         (fill.type === 'sell'
+           ? p.levelIndex === fill.levelIndex - 1  // sell closes buy one level below
+           : p.levelIndex === fill.levelIndex + 1) // buy closes sell one level above
   );
 
   if (matchIdx >= 0) {
@@ -177,6 +179,10 @@ export function createSnapshot(
     equity,
     realizedPnl: state.realizedPnl,
     unrealizedPnl: unrealized.total,
+    longRealizedPnl: state.longRealizedPnl,
+    shortRealizedPnl: state.shortRealizedPnl,
+    longUnrealizedPnl: unrealized.long,
+    shortUnrealizedPnl: unrealized.short,
     longEquity: (totalCapital / 2) + state.longRealizedPnl + unrealized.long,
     shortEquity: (totalCapital / 2) + state.shortRealizedPnl + unrealized.short,
     longOrdersActive,

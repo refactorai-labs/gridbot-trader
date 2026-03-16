@@ -399,8 +399,10 @@ export default function SimulatorPage() {
                     totalEquity={currentSnapshot?.equity ?? initialCapital}
                     realizedPnl={currentSnapshot?.realizedPnl ?? 0}
                     unrealizedPnl={currentSnapshot?.unrealizedPnl ?? 0}
-                    longPnl={simulation?.longPnl ?? 0}
-                    shortPnl={simulation?.shortPnl ?? 0}
+                    longRealizedPnl={currentSnapshot?.longRealizedPnl ?? 0}
+                    shortRealizedPnl={currentSnapshot?.shortRealizedPnl ?? 0}
+                    longUnrealizedPnl={currentSnapshot?.longUnrealizedPnl ?? 0}
+                    shortUnrealizedPnl={currentSnapshot?.shortUnrealizedPnl ?? 0}
                     longMultiplier={lastAdaptiveEvent?.longMultiplier ?? 1}
                     shortMultiplier={lastAdaptiveEvent?.shortMultiplier ?? 1}
                     trend={lastAdaptiveEvent ? 'neutral' : 'neutral'}

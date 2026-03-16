@@ -113,6 +113,10 @@ export interface SnapshotData {
   equity: number;
   realizedPnl: number;
   unrealizedPnl: number;
+  longRealizedPnl: number;
+  shortRealizedPnl: number;
+  longUnrealizedPnl: number;
+  shortUnrealizedPnl: number;
   longEquity: number;
   shortEquity: number;
   longOrdersActive: number;

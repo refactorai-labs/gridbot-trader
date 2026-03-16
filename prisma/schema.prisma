@@ -145,12 +145,16 @@ model PnlSnapshot {
   candleIdx Int
   timestamp DateTime
 
-  price         Float
-  equity        Float
-  realizedPnl   Float
-  unrealizedPnl Float
-  longEquity    Float
-  shortEquity   Float
+  price              Float
+  equity             Float
+  realizedPnl        Float
+  unrealizedPnl      Float
+  longRealizedPnl    Float @default(0)
+  shortRealizedPnl   Float @default(0)
+  longUnrealizedPnl  Float @default(0)
+  shortUnrealizedPnl Float @default(0)
+  longEquity         Float
+  shortEquity        Float
 
   longOrdersActive  Int
   shortOrdersActive Int
