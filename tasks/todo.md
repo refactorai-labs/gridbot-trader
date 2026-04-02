@@ -1,23 +1,24 @@
-# Add Grid Profit Breakdown (Long/Short)
+# Fix: Short grid not placing orders when starting price is above grid
 
-## Plan
+## Root Cause
+`initializeOrders()` in `orderMatcher.ts` only places:
+- Long: buy orders at levels **below** current price
+- Short: sell orders at levels **above** current price
 
-### Problem
-The CombinedPnL panel shows Total P&L (realized + unrealized) and a long/short breakdown, but the long/short values come from `simulation.longPnl`/`shortPnl` (final end values), NOT from the live snapshot. Also, there's no separate "Grid Profit" metric (realized-only, like Pionex shows).
+When starting price (2309) is above the short grid's upper bound (2300), **no short sell orders are placed** because all levels are below the price. The short side is permanently inactive.
 
-### Changes needed
-
-1. **`src/lib/types.ts`** — Add `longRealizedPnl`, `shortRealizedPnl`, `longUnrealizedPnl`, `shortUnrealizedPnl` to `SnapshotData`
-2. **`src/lib/simulation/pnlTracker.ts`** — Update `createSnapshot` to include per-side realized and unrealized values
-3. **`src/components/simulation/CombinedPnL.tsx`** — Redesign to show Grid Profit (realized) separately from Total P&L, with per-side breakdown
-4. **`src/app/page.tsx`** — Pass per-side snapshot values instead of final simulation values
+## Fix
+Handle the edge case where price starts outside the grid bounds:
+- **Short grid, price above all levels**: place BUY orders at all levels (price will drop into grid, buys fill, counter sells placed one level up)
+- **Long grid, price below all levels**: place SELL orders at all levels (price will rise into grid, sells fill, counter buys placed one level down)
 
 ## Tasks
-- [ ] Add per-side P&L fields to SnapshotData type
-- [ ] Update createSnapshot to populate new fields
-- [ ] Update CombinedPnL component with grid profit display
-- [ ] Update page.tsx to pass snapshot data
-- [ ] Test that TypeScript compiles clean
+- [x] Fix `initializeOrders()` in `src/lib/simulation/orderMatcher.ts`
+- [x] Verify TypeScript compiles clean
 
 ## Review
-(To be filled after completion)
+Changed `initializeOrders()` to detect when the starting price is outside the grid range:
+- For SHORT: when `currentPrice > highestLevel`, places buy orders at all levels instead of nothing
+- For LONG: when `currentPrice < lowestLevel`, places sell orders at all levels instead of nothing
+- Normal behavior (price within grid) is unchanged
+- Only file changed: `src/lib/simulation/orderMatcher.ts`

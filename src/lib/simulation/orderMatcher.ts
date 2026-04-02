@@ -21,11 +21,26 @@ export function initializeOrders(
   sizeMultiplier: number = 1.0
 ): PendingOrder[] {
   const orders: PendingOrder[] = [];
+  if (levels.length === 0) return orders;
+
+  const lowestLevel = levels[0].price;
+  const highestLevel = levels[levels.length - 1].price;
 
   for (const level of levels) {
     if (side === 'long') {
-      // Long grid: place buy orders below current price
-      if (level.price < currentPrice) {
+      if (currentPrice < lowestLevel) {
+        // Price below entire grid: place sell orders (already "bought" implicitly)
+        orders.push({
+          id: generateOrderId(),
+          side: 'long',
+          type: 'sell',
+          levelIndex: level.index,
+          price: level.price,
+          size: orderSize,
+          sizeMultiplier,
+        });
+      } else if (level.price < currentPrice) {
+        // Normal: place buy orders below current price
         orders.push({
           id: generateOrderId(),
           side: 'long',
@@ -37,8 +52,19 @@ export function initializeOrders(
         });
       }
     } else {
-      // Short grid: place sell orders above current price
-      if (level.price > currentPrice) {
+      if (currentPrice > highestLevel) {
+        // Price above entire grid: place buy orders (already "sold" implicitly)
+        orders.push({
+          id: generateOrderId(),
+          side: 'short',
+          type: 'buy',
+          levelIndex: level.index,
+          price: level.price,
+          size: orderSize,
+          sizeMultiplier,
+        });
+      } else if (level.price > currentPrice) {
+        // Normal: place sell orders above current price
         orders.push({
           id: generateOrderId(),
           side: 'short',

@@ -25,6 +25,7 @@ interface OpenPosition {
   entryPrice: number;
   size: number;
   levelIndex: number;
+  entryFees: number;
 }
 
 export function createInitialPnLState(): PnLState {
@@ -76,19 +77,23 @@ export function processFill(
     state.openPositions.splice(matchIdx, 1);
 
     let pnl: number;
+    const entryQty = openPos.size / openPos.entryPrice;
+
     if (fill.side === 'long') {
-      // Long grid: buy low, sell high → profit = sell - buy
       if (fill.type === 'sell') {
-        pnl = (fill.fillPrice - openPos.entryPrice) * (fill.size / fill.fillPrice) - fill.fees;
+        // Normal long: bought low, selling high
+        pnl = (fill.fillPrice - openPos.entryPrice) * entryQty - openPos.entryFees - fill.fees;
       } else {
-        pnl = (openPos.entryPrice - fill.fillPrice) * (fill.size / fill.fillPrice) - fill.fees;
+        // Reverse long: sold high, buying back low
+        pnl = (openPos.entryPrice - fill.fillPrice) * entryQty - openPos.entryFees - fill.fees;
       }
     } else {
-      // Short grid: sell high, buy low → profit = sell - buy
       if (fill.type === 'buy') {
-        pnl = (openPos.entryPrice - fill.fillPrice) * (fill.size / openPos.entryPrice) - fill.fees;
+        // Normal short: sold high, buying back low
+        pnl = (openPos.entryPrice - fill.fillPrice) * entryQty - openPos.entryFees - fill.fees;
       } else {
-        pnl = (fill.fillPrice - openPos.entryPrice) * (fill.size / fill.fillPrice) - fill.fees;
+        // Reverse short: bought low, selling high
+        pnl = (fill.fillPrice - openPos.entryPrice) * entryQty - openPos.entryFees - fill.fees;
       }
     }
 
@@ -125,6 +130,7 @@ export function processFill(
     entryPrice: fill.fillPrice,
     size: fill.size,
     levelIndex: fill.levelIndex,
+    entryFees: fill.fees,
   });
 
   return { pnl: 0, pnlPct: 0 };
@@ -166,6 +172,8 @@ export function createSnapshot(
   timestamp: number,
   currentPrice: number,
   totalCapital: number,
+  longCapital: number,
+  shortCapital: number,
   longOrdersActive: number,
   shortOrdersActive: number
 ): SnapshotData {
@@ -183,8 +191,8 @@ export function createSnapshot(
     shortRealizedPnl: state.shortRealizedPnl,
     longUnrealizedPnl: unrealized.long,
     shortUnrealizedPnl: unrealized.short,
-    longEquity: (totalCapital / 2) + state.longRealizedPnl + unrealized.long,
-    shortEquity: (totalCapital / 2) + state.shortRealizedPnl + unrealized.short,
+    longEquity: longCapital + state.longRealizedPnl + unrealized.long,
+    shortEquity: shortCapital + state.shortRealizedPnl + unrealized.short,
     longOrdersActive,
     shortOrdersActive,
     longFillCount: state.longFillCount,

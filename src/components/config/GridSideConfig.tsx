@@ -10,8 +10,17 @@ interface GridSideConfigProps {
 
 export default function GridSideConfig({ side, config, onChange }: GridSideConfigProps) {
   const update = (field: string, value: number | string) => {
-    onChange({ ...config, [field]: value } as GridSideConfigType);
+    const updated = { ...config, [field]: value } as GridSideConfigType;
+    // Auto-calculate totalCapital when orderSize or gridLevels changes
+    if (field === 'orderSize' || field === 'gridLevels') {
+      const orderSize = field === 'orderSize' ? (value as number) : config.orderSize;
+      const gridLevels = field === 'gridLevels' ? (value as number) : config.gridLevels;
+      updated.totalCapital = orderSize * gridLevels;
+    }
+    onChange(updated);
   };
+
+  const calculatedCapital = config.orderSize * config.gridLevels;
 
   const color = side === 'long' ? 'var(--grid-long)' : 'var(--grid-short)';
 
@@ -93,17 +102,12 @@ export default function GridSideConfig({ side, config, onChange }: GridSideConfi
         />
       </div>
 
-      {/* Total capital */}
+      {/* Total capital (auto-calculated) */}
       <div>
-        <label className="form-label">Total Capital ($)</label>
-        <input
-          type="number"
-          className="form-input"
-          min={1}
-          step="any"
-          value={config.totalCapital}
-          onChange={(e) => update('totalCapital', parseFloat(e.target.value) || 5000)}
-        />
+        <label className="form-label">Total Capital</label>
+        <div className="form-input" style={{ background: 'var(--bg-secondary)', cursor: 'default', opacity: 0.8 }}>
+          ${calculatedCapital.toLocaleString()}
+        </div>
       </div>
 
       {/* Profit mode */}

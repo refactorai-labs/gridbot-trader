@@ -177,7 +177,8 @@ export async function runSimulation(simulationId: string): Promise<void> {
 
         const snapshot = createSnapshot(
           pnlState, i, candle.timestamp, candle.close,
-          totalCapital, longActive, shortActive
+          totalCapital, longConfig.totalCapital, shortConfig.totalCapital,
+          longActive, shortActive
         );
         allSnapshots.push(snapshot);
       }
