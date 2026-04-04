@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Grid3X3, Loader2, AlertCircle } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import ConfigPanel from '@/components/config/ConfigPanel';
-import TradingChart from '@/components/charts/TradingChart';
+import TradingChart, { GridFill } from '@/components/charts/TradingChart';
 import DCAChart from '@/components/simulation/DCAChart';
 import DCAPnL from '@/components/simulation/DCAPnL';
 import PlaybackControls from '@/components/simulation/PlaybackControls';
@@ -174,6 +174,23 @@ export default function SimulatorPage() {
       if (order.fillCandleIdx != null && order.fillCandleIdx <= currentIdx) {
         if (order.side === 'long') longFilledLevels.add(order.level);
         else shortFilledLevels.add(order.level);
+      }
+    }
+  }
+
+  // Grid fill markers for trade visualization
+  const longFills: GridFill[] = [];
+  const shortFills: GridFill[] = [];
+  if (replayData) {
+    for (const order of replayData.gridOrders) {
+      if (order.fillCandleIdx != null && order.fillPrice != null) {
+        const fill: GridFill = {
+          candleIdx: order.fillCandleIdx,
+          price: order.fillPrice,
+          type: order.orderType === 'buy' ? 'buy' : 'sell',
+        };
+        if (order.side === 'long') longFills.push(fill);
+        else shortFills.push(fill);
       }
     }
   }
@@ -574,6 +591,7 @@ export default function SimulatorPage() {
                           gridLevels={replayData.longLevels}
                           side="long"
                           filledLevelIndices={longFilledLevels}
+                          fills={longFills}
                           currentCandleIdx={currentIdx}
                           visibleCandleCount={50}
                           height={380}
@@ -587,6 +605,7 @@ export default function SimulatorPage() {
                           gridLevels={replayData.shortLevels}
                           side="short"
                           filledLevelIndices={shortFilledLevels}
+                          fills={shortFills}
                           currentCandleIdx={currentIdx}
                           visibleCandleCount={50}
                           height={380}

@@ -80,6 +80,17 @@ const CHART_COLORS_DARK = {
   resistanceZone: 'rgba(239, 68, 68, 0.08)',
   upCandle: '#10b981',
   downCandle: '#ef4444',
+  // Grid zone visualization
+  longZoneFill: 'rgba(16, 185, 129, 0.06)',
+  shortZoneFill: 'rgba(239, 68, 68, 0.06)',
+  longGridLine: 'rgba(16, 185, 129, 0.20)',
+  shortGridLine: 'rgba(239, 68, 68, 0.20)',
+  longGridFilled: 'rgba(16, 185, 129, 0.55)',
+  shortGridFilled: 'rgba(239, 68, 68, 0.55)',
+  longBoundary: 'rgba(16, 185, 129, 0.15)',
+  shortBoundary: 'rgba(239, 68, 68, 0.15)',
+  buyMarker: '#22c55e',
+  sellMarker: '#ef4444',
 };
 
 const CHART_COLORS_LIGHT = {
@@ -97,6 +108,17 @@ const CHART_COLORS_LIGHT = {
   resistanceZone: 'rgba(220, 38, 38, 0.08)',
   upCandle: '#059669',
   downCandle: '#dc2626',
+  // Grid zone visualization
+  longZoneFill: 'rgba(5, 150, 105, 0.06)',
+  shortZoneFill: 'rgba(220, 38, 38, 0.06)',
+  longGridLine: 'rgba(5, 150, 105, 0.20)',
+  shortGridLine: 'rgba(220, 38, 38, 0.20)',
+  longGridFilled: 'rgba(5, 150, 105, 0.55)',
+  shortGridFilled: 'rgba(220, 38, 38, 0.55)',
+  longBoundary: 'rgba(5, 150, 105, 0.15)',
+  shortBoundary: 'rgba(220, 38, 38, 0.15)',
+  buyMarker: '#16a34a',
+  sellMarker: '#dc2626',
 };
 
 export function getChartColors() {
