@@ -378,3 +378,46 @@ body::before {
   color: var(--text-primary);
   border-color: var(--grid-neutral);
 }
+
+/* Toggle switch */
+.toggle-switch {
+  @apply relative inline-flex items-center cursor-pointer;
+  width: 32px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.toggle-switch input {
+  @apply sr-only;
+}
+.toggle-track {
+  @apply absolute inset-0 rounded-full transition-colors duration-200;
+  background: var(--input-border);
+}
+.toggle-switch input:checked + .toggle-track {
+  background: var(--grid-neutral);
+}
+.toggle-knob {
+  @apply absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full transition-transform duration-200;
+  background: var(--text-primary);
+}
+.toggle-switch input:checked ~ .toggle-knob {
+  transform: translateX(14px);
+}
+
+/* Accordion section */
+.accordion-section {
+  border-top: 1px solid var(--card-border);
+}
+.accordion-header {
+  @apply flex items-center gap-2 w-full py-2.5 cursor-pointer;
+  color: var(--text-secondary);
+}
+.accordion-header:hover {
+  color: var(--text-primary);
+}
+.accordion-body {
+  @apply pb-3;
+}
+.accordion-dot {
+  @apply w-1.5 h-1.5 rounded-full flex-shrink-0;
+}

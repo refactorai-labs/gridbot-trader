@@ -4,10 +4,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Grid3X3, Loader2, AlertCircle } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import ConfigPanel from '@/components/config/ConfigPanel';
-import DataManager from '@/components/DataManager';
 import TradingChart from '@/components/charts/TradingChart';
 import DCAChart from '@/components/simulation/DCAChart';
-import DCAConfig from '@/components/simulation/DCAConfig';
 import DCAPnL from '@/components/simulation/DCAPnL';
 import PlaybackControls from '@/components/simulation/PlaybackControls';
 import CombinedPnL from '@/components/simulation/CombinedPnL';
@@ -522,78 +520,25 @@ export default function SimulatorPage() {
       {/* Main layout */}
       <div className="flex gap-4">
         {/* Config sidebar */}
-        <aside className={`flex-shrink-0 transition-all duration-300 ${configCollapsed ? 'w-[200px]' : 'w-[340px]'} sticky top-4 self-start max-h-[calc(100vh-40px)] overflow-y-auto flex flex-col gap-4`}>
+        <aside className={`flex-shrink-0 transition-all duration-300 ${configCollapsed ? 'w-[200px]' : 'w-[340px]'} sticky top-4 self-start max-h-[calc(100vh-40px)] overflow-y-auto`}>
           <ConfigPanel
             onRunSimulation={handleRunSimulation}
             isRunning={isRunning}
             isCollapsed={configCollapsed}
             onToggleCollapse={() => setConfigCollapsed(!configCollapsed)}
+            gridLongEnabled={gridLongEnabled}
+            gridShortEnabled={gridShortEnabled}
+            dcaLongEnabled={dcaLongEnabled}
+            dcaShortEnabled={dcaShortEnabled}
+            onGridLongToggle={setGridLongEnabled}
+            onGridShortToggle={setGridShortEnabled}
+            onDcaLongToggle={setDcaLongEnabled}
+            onDcaShortToggle={setDcaShortEnabled}
+            dcaLongConfig={dcaLongConfig}
+            dcaShortConfig={dcaShortConfig}
+            onDcaLongConfigChange={setDcaLongConfig}
+            onDcaShortConfigChange={setDcaShortConfig}
           />
-
-          {!configCollapsed && (
-            <>
-              <DataManager />
-
-              {/* Strategy Toggles */}
-              <div className="card p-4 flex flex-col gap-3">
-                <span className="card-header text-xs">Strategy Toggles</span>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={gridLongEnabled}
-                      onChange={(e) => setGridLongEnabled(e.target.checked)}
-                      className="accent-indigo-500"
-                    />
-                    <span className="text-xs font-mono" style={{ color: 'var(--grid-long)' }}>Grid Long</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={gridShortEnabled}
-                      onChange={(e) => setGridShortEnabled(e.target.checked)}
-                      className="accent-indigo-500"
-                    />
-                    <span className="text-xs font-mono" style={{ color: 'var(--grid-short)' }}>Grid Short</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={dcaLongEnabled}
-                      onChange={(e) => setDcaLongEnabled(e.target.checked)}
-                      className="accent-indigo-500"
-                    />
-                    <span className="text-xs font-mono" style={{ color: 'var(--grid-long)' }}>DCA Long</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={dcaShortEnabled}
-                      onChange={(e) => setDcaShortEnabled(e.target.checked)}
-                      className="accent-indigo-500"
-                    />
-                    <span className="text-xs font-mono" style={{ color: 'var(--grid-short)' }}>DCA Short</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* DCA Config panels */}
-              {dcaLongEnabled && (
-                <DCAConfig
-                  direction="LONG"
-                  config={dcaLongConfig}
-                  onChange={setDcaLongConfig}
-                />
-              )}
-              {dcaShortEnabled && (
-                <DCAConfig
-                  direction="SHORT"
-                  config={dcaShortConfig}
-                  onChange={setDcaShortConfig}
-                />
-              )}
-            </>
-          )}
         </aside>
 
         {/* Main content */}

@@ -61,3 +61,73 @@ Initial level split was 6 long / 4 short (1.5x), leading to 1.75x P&L difference
 - [x] Cleanup — Removed GeckoTerminal, updated schema, build passes
 
 See `CHANGES.md` for full details.
+
+---
+
+# Config Panel Redesign — Make All Strategies Visible
+
+## Problem
+When DCA strategies are enabled alongside grid bots, the sidebar becomes extremely tall with nested scrolling:
+1. **ConfigPanel** has its own `overflow-y-auto` + `maxHeight: calc(100vh - 120px)` — takes nearly the full viewport
+2. Below it: DataManager → Strategy Toggles → DCA Long Config → DCA Short Config
+3. Grid config (inside ConfigPanel) gets scrolled out of view
+4. Two nested scroll containers (ConfigPanel + sidebar) create confusing UX
+
+## Solution
+Restructure the sidebar into a **unified accordion layout** — one scroll container with collapsible sections. Each strategy section has an inline enable/disable toggle in its header.
+
+### Layout (top to bottom):
+```
+┌─ Configuration [collapse button] ─────┐
+│                                        │
+│ ▼ General Settings                     │
+│   Name, Pair, Timeframe, Dates, Fee   │
+│                                        │
+│ ▼ Grid Long  ●───○                     │
+│   Levels, Type, Bounds, Order Size...  │
+│                                        │
+│ ▼ Grid Short  ●───○                    │
+│   ...                                  │
+│                                        │
+│ ▶ DCA Long  ○───●                      │
+│   (collapsed, expandable)              │
+│                                        │
+│ ▶ DCA Short  ○───●                     │
+│   (collapsed, expandable)              │
+│                                        │
+│ ▶ Adaptive Layer  ○───●                │
+│   EMA Period, Vol. Multiplier          │
+│                                        │
+│ ▶ Data Manager                         │
+│   Pair, Date range, Download           │
+│                                        │
+│  [▶ Run Simulation]                    │
+└────────────────────────────────────────┘
+```
+
+## Todo
+
+- [x] 1. **Refactor ConfigPanel** — Remove nested scroll, convert General Settings + Grid configs into collapsible sections. Accept strategy toggle state + DCA config as props.
+- [x] 2. **Integrate DCA configs** — Move DCA Long/Short config sections into ConfigPanel with inline toggle switches in section headers.
+- [x] 3. **Integrate DataManager** — Move into ConfigPanel as a collapsible section.
+- [x] 4. **Update page.tsx** — Simplify sidebar to just render ConfigPanel (one card). Pass strategy toggles and DCA config state down.
+- [x] 5. **Visual polish** — Consistent section headers with toggle switches, smooth transitions, proper spacing.
+- [x] 6. **Test** — Build passes, all strategy combinations supported.
+
+## Review
+
+### Changes Made
+1. **`src/components/config/ConfigPanel.tsx`** — Complete rewrite. Now a single unified card with 7 collapsible accordion sections: General, Grid Long, Grid Short, DCA Long, DCA Short, Adaptive Layer, Data Manager. Each strategy section has an inline toggle switch in its header. DCA and DataManager functionality moved inline (no separate components needed in sidebar). Removed nested `overflow-y-auto` / `maxHeight`.
+
+2. **`src/components/config/GridSideConfig.tsx`** — Removed redundant side header (colored dot + "Long Grid" / "Short Grid" title) since the accordion header now provides this.
+
+3. **`src/app/page.tsx`** — Simplified sidebar from 5 separate cards to a single `<ConfigPanel>`. Removed `DataManager` and `DCAConfig` imports from sidebar. All strategy toggle state and DCA config state passed as props.
+
+4. **`src/app/globals.css`** — Added CSS for toggle switches (`.toggle-switch`, `.toggle-track`, `.toggle-knob`) and accordion sections (`.accordion-section`, `.accordion-header`, `.accordion-body`). Works with both light and dark themes via existing CSS variables.
+
+### What's Better
+- **No nested scrolling** — One scroll container (the sidebar `<aside>`) handles all content
+- **Everything always accessible** — All config sections visible via accordion, even with all strategies enabled
+- **Inline toggle switches** — Enable/disable strategies directly from section headers
+- **Collapsed by default** — DCA and Adaptive sections start collapsed, reducing initial visual clutter
+- **No business logic changes** — Same state management, same simulation flow

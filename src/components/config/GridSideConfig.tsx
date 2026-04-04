@@ -26,17 +26,6 @@ export default function GridSideConfig({ side, config, onChange }: GridSideConfi
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Side header */}
-      <div className="flex items-center gap-2">
-        <div
-          className="w-2 h-2 rounded-full"
-          style={{ background: color }}
-        />
-        <span className="text-xs font-mono font-bold uppercase" style={{ color }}>
-          {side} Grid
-        </span>
-      </div>
-
       {/* Grid levels */}
       <div>
         <label className="form-label">Grid Levels</label>
