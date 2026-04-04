@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Settings, Play, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import GridSideConfig from './GridSideConfig';
 import { SimulationConfig, GridSideConfig as GridSideConfigType } from '@/lib/types';
-import { SUPPORTED_PAIRS, DEFAULT_GRID_CONFIG, DEFAULT_SIMULATION } from '@/lib/constants';
+import { SUPPORTED_PAIRS, DEFAULT_GRID_CONFIG, DEFAULT_SIMULATION, TIMEFRAMES } from '@/lib/constants';
 
 interface ConfigPanelProps {
   onRunSimulation: (config: SimulationConfig) => void;
@@ -139,8 +139,9 @@ export default function ConfigPanel({
           value={timeframe}
           onChange={(e) => setTimeframe(e.target.value)}
         >
-          <option value="1h">1 Hour</option>
-          <option value="4h">4 Hours</option>
+          {TIMEFRAMES.map(tf => (
+            <option key={tf.value} value={tf.value}>{tf.label}</option>
+          ))}
         </select>
       </div>
 

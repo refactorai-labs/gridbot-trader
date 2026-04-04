@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrFetchCandles, getCachedCandles } from '@/lib/data/candleCache';
 
-// POST: Fetch candles from GeckoTerminal and cache them
+// POST: Fetch candles from Binance and cache them
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { pair, poolAddress, chain, timeframe, startTime, endTime } = body;
+    const { pair, timeframe, startTime, endTime } = body;
 
-    if (!pair || !poolAddress || !chain || !timeframe || !startTime || !endTime) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    if (!pair || !timeframe || !startTime || !endTime) {
+      return NextResponse.json({ error: 'Missing required fields: pair, timeframe, startTime, endTime' }, { status: 400 });
     }
 
     const candles = await getOrFetchCandles(
-      pair, poolAddress, chain, timeframe,
+      pair, timeframe,
       new Date(startTime), new Date(endTime)
     );
 
@@ -31,17 +31,17 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const poolAddress = searchParams.get('poolAddress');
-    const timeframe = searchParams.get('timeframe') || '1h';
+    const pair = searchParams.get('pair');
+    const timeframe = searchParams.get('timeframe') || '5m';
     const start = searchParams.get('start');
     const end = searchParams.get('end');
 
-    if (!poolAddress || !start || !end) {
-      return NextResponse.json({ error: 'Missing poolAddress, start, or end' }, { status: 400 });
+    if (!pair || !start || !end) {
+      return NextResponse.json({ error: 'Missing pair, start, or end' }, { status: 400 });
     }
 
     const candles = await getCachedCandles(
-      poolAddress, timeframe,
+      pair, timeframe,
       new Date(start), new Date(end)
     );
 

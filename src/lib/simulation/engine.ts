@@ -6,8 +6,15 @@ import { generateGridLevels, getGridSpacing } from './gridGenerator';
 import { initializeOrders, matchOrders, createCounterOrder, resetOrderIdCounter } from './orderMatcher';
 import { createInitialPnLState, processFill, createSnapshot, PnLState } from './pnlTracker';
 import { createInitialAdaptiveState, evaluateAdaptive } from './adaptiveLayer';
-import { getCachedCandles } from '../data/candleCache';
+import { getCachedCandles, getTimeframeMinutes } from '../data/candleCache';
+import { aggregate5mTo } from '../data/aggregator';
+import { SUPPORTED_PAIRS } from '../constants';
 import { findLevels } from '../analysis/technical';
+
+function getBinanceSymbol(poolAddress: string, pair: string): string {
+  const config = SUPPORTED_PAIRS.find(p => p.poolAddress === poolAddress);
+  return config?.binanceSymbol || pair;
+}
 
 export async function runSimulation(simulationId: string): Promise<void> {
   // Reset order ID counter for clean simulation
@@ -35,21 +42,24 @@ export async function runSimulation(simulationId: string): Promise<void> {
   });
 
   try {
-    // 2. Load candles
-    const candles = await getCachedCandles(
-      sim.poolAddress, sim.timeframe, sim.startTime, sim.endTime
+    // 2. Load 5m candles from Binance cache and aggregate
+    const binanceSymbol = getBinanceSymbol(sim.poolAddress, sim.pair);
+    const candles5m = await getCachedCandles(
+      binanceSymbol, '5m', sim.startTime, sim.endTime
     );
 
-    if (candles.length === 0) {
+    if (candles5m.length === 0) {
       throw new Error('No candle data available for the specified range');
     }
 
-    // Load 4H candles for adaptive layer (if enabled)
+    // Aggregate to simulation timeframe if needed
+    const simTimeframeMins = getTimeframeMinutes(sim.timeframe);
+    const candles = simTimeframeMins === 5 ? candles5m : aggregate5mTo(candles5m, simTimeframeMins);
+
+    // Aggregate to 4H for adaptive layer (if enabled)
     let candles4H: OHLC[] = [];
     if (sim.adaptiveEnabled) {
-      candles4H = await getCachedCandles(
-        sim.poolAddress, '4h', sim.startTime, sim.endTime
-      );
+      candles4H = aggregate5mTo(candles5m, 240);
     }
 
     // 3. Generate grid levels
@@ -116,7 +126,9 @@ export async function runSimulation(simulationId: string): Promise<void> {
 
         // Evaluate at 4H boundaries
         const relevantCandles4H = candles4H.slice(0, fourHourIdx);
-        if (relevantCandles4H.length > 0 && (i === 0 || isNew4HBoundary(candle, candles[i - 1]))) {
+        const fourHours = 4 * 60 * 60;
+        const isNew4H = i === 0 || Math.floor(candle.timestamp / fourHours) !== Math.floor(candles[i - 1].timestamp / fourHours);
+        if (relevantCandles4H.length > 0 && isNew4H) {
           const { newState, events } = evaluateAdaptive(
             relevantCandles4H, candle, adaptiveState, support, resistance,
             { emaPeriod: sim.emaPeriod, volumeMultiplier: sim.volumeMultiplier }
@@ -219,14 +231,6 @@ export async function runSimulation(simulationId: string): Promise<void> {
     });
     throw error;
   }
-}
-
-// Check if we crossed a 4H boundary between two consecutive candles
-function isNew4HBoundary(current: OHLC, previous: OHLC): boolean {
-  const fourHours = 4 * 60 * 60;
-  const currentBucket = Math.floor(current.timestamp / fourHours);
-  const previousBucket = Math.floor(previous.timestamp / fourHours);
-  return currentBucket !== previousBucket;
 }
 
 function calculateFinalUnrealized(state: PnLState, currentPrice: number): number {

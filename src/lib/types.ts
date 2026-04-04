@@ -9,16 +9,6 @@ export interface OHLC {
   volume: number;
 }
 
-export interface GeckoTerminalOHLCResponse {
-  data: {
-    id: string;
-    type: string;
-    attributes: {
-      ohlcv_list: [number, number, number, number, number, number][];
-    };
-  };
-}
-
 // Grid types
 export type GridSide = 'long' | 'short';
 export type GridType = 'arithmetic' | 'geometric';
@@ -27,6 +17,8 @@ export type OrderStatus = 'pending' | 'filled' | 'cancelled';
 export type SimulationStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type TrendDirection = 'bullish' | 'bearish' | 'neutral';
 export type PlaybackSpeed = 1 | 2 | 5 | 10;
+export type StrategyType = 'grid' | 'dca';
+export type Direction = 'LONG' | 'SHORT';
 
 export interface GridSideConfig {
   side: GridSide;
@@ -179,4 +171,108 @@ export interface PairConfig {
   pair: string;
   poolAddress: string;
   chain: string;
+  binanceSymbol?: string;
+}
+
+// ──── DCA Strategy Types ────
+
+export type DCATradeState = 'IDLE' | 'OPEN' | 'CLOSING';
+export type StopLossAction = 'CLOSE_TRADE' | 'CLOSE_AND_STOP';
+export type CloseReason = 'TAKE_PROFIT' | 'TRAILING_TP' | 'STOP_LOSS' | 'CLOSE_CONDITION' | 'END_OF_DATA';
+
+export interface DCABreakoutConfig {
+  direction: Direction;
+  baseOrderSize: number;          // USDT
+  leverageType: 'isolated';
+  leverageValue: number;
+  startConditions: IndicatorCondition[];  // AND logic
+  closeConditions?: IndicatorCondition[];
+  // Averaging (safety orders)
+  deviationFirstOrder: number;    // %
+  deviationStepMultiplier: number;
+  averagingOrderSize: number;     // USDT
+  orderSizeMultiplier: number;
+  maxAveragingOrders: number;
+  // Take Profit
+  takeProfitPercent: number;      // % from avg price
+  trailingEnabled: boolean;
+  trailingPercent: number;        // % pullback from peak
+  reinvestProfit: number;         // % of profit reinvested
+  // Stop Loss
+  stopLossEnabled: boolean;
+  stopLossPercent: number;        // % from base order price
+  stopLossAction: StopLossAction;
+}
+
+export interface DCATradeRecord {
+  tradeNumber: number;
+  direction: Direction;
+  baseOrderPrice: number;
+  baseOrderSize: number;
+  avgEntryPrice: number;
+  safetyOrdersFilled: number;
+  closePrice: number;
+  closeReason: CloseReason;
+  pnl: number;
+  pnlPercent: number;
+  openTime: number;   // unix timestamp
+  closeTime: number;
+  durationMinutes: number;
+}
+
+export interface DCATradeState_Live {
+  state: DCATradeState;
+  direction: Direction;
+  baseOrderPrice: number;
+  totalInvested: number;
+  totalQuantity: number;
+  avgEntryPrice: number;
+  safetyOrdersFilled: number;
+  takeProfitPrice: number;
+  stopLossPrice: number;
+  trailingHighPrice: number;  // highest price seen since TP level was hit (for trailing)
+  trailingActive: boolean;
+  openTime: number;
+}
+
+// ──── Indicator Types ────
+
+export type IndicatorType = 'BB_PERCENT_B' | 'RSI' | 'MACD_LINE' | 'MACD_SIGNAL' | 'MACD_HISTOGRAM';
+export type ConditionOperator = 'CROSSING_UP' | 'CROSSING_DOWN' | 'LESS_THAN' | 'GREATER_THAN';
+
+export interface IndicatorCondition {
+  indicator: IndicatorType;
+  params: Record<string, number>;  // e.g. { period: 20, deviation: 2 } for BB
+  condition: ConditionOperator;
+  signalValue: number;
+  timeframe: string;               // '5m', '15m', '1h', '4h'
+}
+
+// ──── Strategy Metrics ────
+
+export interface StrategyMetrics {
+  totalPnl: number;
+  totalPnlPct: number;
+  totalTrades: number;
+  winCount: number;
+  lossCount: number;
+  maxDrawdown: number;
+  maxDrawdownPct: number;
+  sharpeRatio: number;
+  profitFactor: number;
+  avgTradePnl: number;
+  avgTradeDuration: number;  // minutes
+}
+
+// ──── Simulation Config (extended) ────
+
+export interface DCASimulationConfig {
+  name: string;
+  pair: string;
+  timeframe: string;       // always '5m' for DCA
+  startTime: string;
+  endTime: string;
+  feeRate: number;
+  longConfig?: DCABreakoutConfig;
+  shortConfig?: DCABreakoutConfig;
 }

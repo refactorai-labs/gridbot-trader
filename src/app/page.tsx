@@ -4,13 +4,51 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Grid3X3, Loader2, AlertCircle } from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import ConfigPanel from '@/components/config/ConfigPanel';
+import DataManager from '@/components/DataManager';
 import TradingChart from '@/components/charts/TradingChart';
+import DCAChart from '@/components/simulation/DCAChart';
+import DCAConfig from '@/components/simulation/DCAConfig';
+import DCAPnL from '@/components/simulation/DCAPnL';
 import PlaybackControls from '@/components/simulation/PlaybackControls';
 import CombinedPnL from '@/components/simulation/CombinedPnL';
 import AdaptiveStatus from '@/components/simulation/AdaptiveStatus';
 import TradeLog from '@/components/results/TradeLog';
 import PerformanceSummary from '@/components/results/PerformanceSummary';
-import { SimulationConfig, ReplayData, SimulationSummary, PlaybackSpeed, SnapshotData } from '@/lib/types';
+import {
+  SimulationConfig, ReplayData, SimulationSummary, PlaybackSpeed, SnapshotData,
+  DCABreakoutConfig, DCATradeRecord, Direction,
+} from '@/lib/types';
+import { DCATradeSnapshot } from '@/lib/strategies/dcaTypes';
+import { SUPPORTED_PAIRS } from '@/lib/constants';
+import OptimizerTab from '@/components/OptimizerTab';
+
+function getDefaultDCAConfig(direction: Direction): DCABreakoutConfig {
+  return {
+    direction,
+    baseOrderSize: 100,
+    leverageType: 'isolated',
+    leverageValue: 1,
+    startConditions: [{
+      indicator: 'BB_PERCENT_B',
+      params: { period: 20, deviation: 2 },
+      condition: 'LESS_THAN',
+      signalValue: direction === 'LONG' ? 0.2 : 0.8,
+      timeframe: '5m',
+    }],
+    deviationFirstOrder: 1,
+    deviationStepMultiplier: 1.5,
+    averagingOrderSize: 100,
+    orderSizeMultiplier: 1.2,
+    maxAveragingOrders: 5,
+    takeProfitPercent: 2,
+    trailingEnabled: false,
+    trailingPercent: 0.5,
+    reinvestProfit: 0,
+    stopLossEnabled: true,
+    stopLossPercent: 5,
+    stopLossAction: 'CLOSE_TRADE',
+  };
+}
 
 export default function SimulatorPage() {
   // Config state
@@ -19,10 +57,27 @@ export default function SimulatorPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
 
-  // Simulation state
+  // Strategy toggles
+  const [gridLongEnabled, setGridLongEnabled] = useState(true);
+  const [gridShortEnabled, setGridShortEnabled] = useState(true);
+  const [dcaLongEnabled, setDcaLongEnabled] = useState(false);
+  const [dcaShortEnabled, setDcaShortEnabled] = useState(false);
+
+  // DCA config
+  const [dcaLongConfig, setDcaLongConfig] = useState<DCABreakoutConfig>(getDefaultDCAConfig('LONG'));
+  const [dcaShortConfig, setDcaShortConfig] = useState<DCABreakoutConfig>(getDefaultDCAConfig('SHORT'));
+
+  // Grid simulation state
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<SimulationSummary | null>(null);
   const [replayData, setReplayData] = useState<ReplayData | null>(null);
+
+  // DCA simulation state
+  const [dcaLongSnapshots, setDcaLongSnapshots] = useState<DCATradeSnapshot[]>([]);
+  const [dcaShortSnapshots, setDcaShortSnapshots] = useState<DCATradeSnapshot[]>([]);
+  const [dcaLongTrades, setDcaLongTrades] = useState<DCATradeRecord[]>([]);
+  const [dcaShortTrades, setDcaShortTrades] = useState<DCATradeRecord[]>([]);
+  const [dcaCandles, setDcaCandles] = useState<{ timestamp: number; open: number; high: number; low: number; close: number; volume: number }[]>([]);
 
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -31,7 +86,10 @@ export default function SimulatorPage() {
   const playbackRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Active tab
-  const [activeTab, setActiveTab] = useState<'trades' | 'performance'>('performance');
+  const [activeTab, setActiveTab] = useState<'trades' | 'performance' | 'optimizer'>('performance');
+
+  // Track selected pair index for DCA candle fetching
+  const [selectedPairIdx, setSelectedPairIdx] = useState(0);
 
   // Reload last simulation on mount
   useEffect(() => {
@@ -122,15 +180,28 @@ export default function SimulatorPage() {
     }
   }
 
+  // DCA P&L for combined display
+  const dcaLongCurrentSnapshot = dcaLongSnapshots.reduce<DCATradeSnapshot | undefined>(
+    (closest, s) => (s.candleIdx <= currentIdx && (!closest || s.candleIdx > closest.candleIdx) ? s : closest),
+    undefined
+  );
+  const dcaShortCurrentSnapshot = dcaShortSnapshots.reduce<DCATradeSnapshot | undefined>(
+    (closest, s) => (s.candleIdx <= currentIdx && (!closest || s.candleIdx > closest.candleIdx) ? s : closest),
+    undefined
+  );
+
+  // Total candles (grid or DCA, whichever is available)
+  const totalCandles = replayData?.totalCandles ?? dcaCandles.length;
+
   // Playback timer
   useEffect(() => {
-    if (isPlaying && replayData) {
+    if (isPlaying && totalCandles > 0) {
       playbackRef.current = setInterval(() => {
         setCurrentIdx(prev => {
           const next = prev + 1;
-          if (next >= replayData.totalCandles) {
+          if (next >= totalCandles) {
             setIsPlaying(false);
-            return replayData.totalCandles - 1;
+            return totalCandles - 1;
           }
           return next;
         });
@@ -143,151 +214,250 @@ export default function SimulatorPage() {
         playbackRef.current = null;
       }
     };
-  }, [isPlaying, speed, replayData]);
+  }, [isPlaying, speed, totalCandles]);
 
-  // Run simulation handler
+  // Run simulation handler (grid + DCA)
   const handleRunSimulation = useCallback(async (config: SimulationConfig) => {
     setError(null);
     setIsRunning(true);
     setStatusMessage('Fetching candle data...');
     setReplayData(null);
     setSimulation(null);
+    setDcaLongSnapshots([]);
+    setDcaShortSnapshots([]);
+    setDcaLongTrades([]);
+    setDcaShortTrades([]);
+    setDcaCandles([]);
     setCurrentIdx(0);
     setIsPlaying(false);
 
+    const selectedPair = SUPPORTED_PAIRS[selectedPairIdx];
+
     try {
-      // Step 1: Fetch and cache candle data
-      const candleRes = await fetch('/api/candles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pair: config.pair,
-          poolAddress: config.poolAddress,
-          chain: config.chain,
-          timeframe: config.timeframe,
-          startTime: config.startTime,
-          endTime: config.endTime,
-        }),
-      });
-
-      if (!candleRes.ok) {
-        const err = await candleRes.json();
-        throw new Error(err.error || 'Failed to fetch candles');
-      }
-
-      const candleData = await candleRes.json();
-      setStatusMessage(`Cached ${candleData.count} candles. Running simulation...`);
-
-      // If adaptive is enabled, also fetch 4H candles
-      if (config.adaptiveEnabled && config.timeframe !== '4h') {
-        const res4h = await fetch('/api/candles', {
+      // ── Grid simulation (if enabled) ──
+      if (gridLongEnabled || gridShortEnabled) {
+        const candleRes = await fetch('/api/candles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            pair: config.pair,
-            poolAddress: config.poolAddress,
-            chain: config.chain,
-            timeframe: '4h',
+            pair: selectedPair.binanceSymbol,
+            timeframe: '5m',
             startTime: config.startTime,
             endTime: config.endTime,
           }),
         });
-        if (res4h.ok) {
-          const data4h = await res4h.json();
-          setStatusMessage(`Cached ${candleData.count} + ${data4h.count} 4H candles. Running simulation...`);
+
+        if (!candleRes.ok) {
+          const err = await candleRes.json();
+          throw new Error(err.error || 'Failed to fetch candles');
         }
-      }
 
-      // Step 2: Create and run simulation
-      const simRes = await fetch('/api/simulations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
+        const candleData = await candleRes.json();
+        setStatusMessage(`Cached ${candleData.count} candles. Running grid simulation...`);
 
-      if (!simRes.ok) {
-        const err = await simRes.json();
-        throw new Error(err.error || 'Failed to create simulation');
-      }
-
-      const { id } = await simRes.json();
-      setSimulationId(id);
-      localStorage.setItem('lastSimulationId', id);
-      setStatusMessage('Simulation running...');
-
-      // Step 3: Poll for completion
-      let attempts = 0;
-      while (attempts < 120) { // Max 2 minutes
-        await new Promise(r => setTimeout(r, 1000));
-        attempts++;
-
-        const statusRes = await fetch(`/api/simulations/${id}`);
-        if (!statusRes.ok) continue;
-
-        const { simulation: sim } = await statusRes.json();
-
-        if (sim.status === 'completed') {
-          setStatusMessage('Loading results...');
-          setSimulation({
-            id: sim.id,
-            name: sim.name,
-            pair: sim.pair,
-            timeframe: sim.timeframe,
-            status: sim.status,
-            createdAt: sim.createdAt,
-            startTime: sim.startTime,
-            endTime: sim.endTime,
-            totalPnl: sim.totalPnl,
-            totalPnlPct: sim.totalPnlPct,
-            longPnl: sim.longPnl,
-            shortPnl: sim.shortPnl,
-            totalTrades: sim.totalTrades,
-            maxDrawdown: sim.maxDrawdown,
-            maxDrawdownPct: sim.maxDrawdownPct,
-            totalCandles: sim.totalCandles,
-            winCount: sim.winCount,
-            lossCount: sim.lossCount,
+        // Fetch 4H candles for adaptive layer
+        if (config.adaptiveEnabled && config.timeframe !== '4h') {
+          const res4h = await fetch('/api/candles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pair: selectedPair.binanceSymbol,
+              timeframe: '4h',
+              startTime: config.startTime,
+              endTime: config.endTime,
+            }),
           });
+          if (res4h.ok) {
+            const data4h = await res4h.json();
+            setStatusMessage(`Cached ${candleData.count} + ${data4h.count} 4H candles. Running...`);
+          }
+        }
 
-          // Load replay data
-          const replayRes = await fetch(`/api/simulations/${id}/replay`);
-          if (replayRes.ok) {
-            const replay = await replayRes.json();
-            setReplayData(replay);
-            setConfigCollapsed(true);
+        // Create and run grid simulation
+        const simRes = await fetch('/api/simulations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config),
+        });
+
+        if (!simRes.ok) {
+          const err = await simRes.json();
+          throw new Error(err.error || 'Failed to create simulation');
+        }
+
+        const { id } = await simRes.json();
+        setSimulationId(id);
+        localStorage.setItem('lastSimulationId', id);
+        setStatusMessage('Grid simulation running...');
+
+        // Poll for completion
+        let attempts = 0;
+        while (attempts < 120) {
+          await new Promise(r => setTimeout(r, 1000));
+          attempts++;
+
+          const statusRes = await fetch(`/api/simulations/${id}`);
+          if (!statusRes.ok) continue;
+
+          const { simulation: sim } = await statusRes.json();
+
+          if (sim.status === 'completed') {
+            setStatusMessage('Loading grid results...');
+            setSimulation({
+              id: sim.id,
+              name: sim.name,
+              pair: sim.pair,
+              timeframe: sim.timeframe,
+              status: sim.status,
+              createdAt: sim.createdAt,
+              startTime: sim.startTime,
+              endTime: sim.endTime,
+              totalPnl: sim.totalPnl,
+              totalPnlPct: sim.totalPnlPct,
+              longPnl: sim.longPnl,
+              shortPnl: sim.shortPnl,
+              totalTrades: sim.totalTrades,
+              maxDrawdown: sim.maxDrawdown,
+              maxDrawdownPct: sim.maxDrawdownPct,
+              totalCandles: sim.totalCandles,
+              winCount: sim.winCount,
+              lossCount: sim.lossCount,
+            });
+
+            const replayRes = await fetch(`/api/simulations/${id}/replay`);
+            if (replayRes.ok) {
+              const replay = await replayRes.json();
+              setReplayData(replay);
+              setConfigCollapsed(true);
+            }
+            break;
           }
 
-          setStatusMessage('');
-          setIsRunning(false);
-          return;
-        }
+          if (sim.status === 'failed') {
+            throw new Error(sim.errorMessage || 'Grid simulation failed');
+          }
 
-        if (sim.status === 'failed') {
-          throw new Error(sim.errorMessage || 'Simulation failed');
+          setStatusMessage(`Grid simulation running... (${attempts}s)`);
         }
-
-        setStatusMessage(`Simulation running... (${attempts}s)`);
       }
 
-      throw new Error('Simulation timed out');
+      // ── DCA simulation (if enabled) ──
+      if (dcaLongEnabled || dcaShortEnabled) {
+        setStatusMessage('Running DCA simulation...');
+
+        const binanceSymbol = selectedPair.binanceSymbol;
+        if (!binanceSymbol) {
+          throw new Error('No Binance symbol configured for DCA');
+        }
+
+        // Ensure 5m candles are cached
+        const candle5mRes = await fetch('/api/candles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pair: binanceSymbol,
+            timeframe: '5m',
+            startTime: config.startTime,
+            endTime: config.endTime,
+          }),
+        });
+
+        if (!candle5mRes.ok) {
+          const err = await candle5mRes.json();
+          throw new Error(err.error || 'Failed to fetch 5m candles for DCA');
+        }
+
+        // Run DCA simulation
+        const dcaBody: Record<string, unknown> = {
+          strategyType: 'dca',
+          pair: binanceSymbol,
+          timeframe: '5m',
+          startTime: config.startTime,
+          endTime: config.endTime,
+          feeRate: config.feeRate,
+        };
+        if (dcaLongEnabled) dcaBody.longConfig = dcaLongConfig;
+        if (dcaShortEnabled) dcaBody.shortConfig = dcaShortConfig;
+
+        const dcaRes = await fetch('/api/simulations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(dcaBody),
+        });
+
+        if (!dcaRes.ok) {
+          const err = await dcaRes.json();
+          throw new Error(err.error || 'DCA simulation failed');
+        }
+
+        const dcaResult = await dcaRes.json();
+
+        // Split snapshots and trades by direction
+        const allSnapshots: DCATradeSnapshot[] = dcaResult.snapshots || [];
+        const allTrades: DCATradeRecord[] = dcaResult.trades || [];
+
+        // If only one direction is enabled, all results belong to it
+        if (dcaLongEnabled && !dcaShortEnabled) {
+          setDcaLongSnapshots(allSnapshots);
+          setDcaLongTrades(allTrades);
+        } else if (dcaShortEnabled && !dcaLongEnabled) {
+          setDcaShortSnapshots(allSnapshots);
+          setDcaShortTrades(allTrades);
+        } else {
+          // Both enabled — split by direction
+          setDcaLongTrades(allTrades.filter(t => t.direction === 'LONG'));
+          setDcaShortTrades(allTrades.filter(t => t.direction === 'SHORT'));
+          // Snapshots don't have direction directly, but they're interleaved
+          // The DCA engine returns combined snapshots sorted by timestamp
+          // For display, we'll use the combined set for both charts
+          setDcaLongSnapshots(allSnapshots);
+          setDcaShortSnapshots(allSnapshots);
+        }
+
+        // Fetch the 5m candles for DCA chart rendering (if no grid replay data)
+        if (!replayData) {
+          const params = new URLSearchParams({
+            pair: binanceSymbol,
+            timeframe: '5m',
+            start: new Date(config.startTime).toISOString(),
+            end: new Date(config.endTime).toISOString(),
+          });
+          const candleGetRes = await fetch(`/api/candles?${params}`);
+          if (candleGetRes.ok) {
+            const candleGetData = await candleGetRes.json();
+            if (candleGetData.candles) {
+              setDcaCandles(candleGetData.candles);
+            }
+          }
+        }
+
+        setConfigCollapsed(true);
+      }
+
+      setStatusMessage('');
+      setIsRunning(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
       setIsRunning(false);
       setStatusMessage('');
     }
-  }, []);
+  }, [selectedPairIdx, gridLongEnabled, gridShortEnabled, dcaLongEnabled, dcaShortEnabled, dcaLongConfig, dcaShortConfig, replayData]);
+
+  // Determine which candles to use for DCA charts
+  const dcaChartCandles = replayData?.candles ?? dcaCandles;
 
   // Current time display
-  const currentTime = replayData && currentIdx < replayData.candles.length
-    ? new Date(replayData.candles[currentIdx].timestamp * 1000).toLocaleString()
+  const currentCandles = replayData?.candles ?? dcaCandles;
+  const currentTime = currentCandles.length > 0 && currentIdx < currentCandles.length
+    ? new Date(currentCandles[currentIdx].timestamp * 1000).toLocaleString()
     : '';
 
-  // Total capital from config
-  const totalCapital = replayData
-    ? (currentSnapshot?.longEquity ?? 0) + (currentSnapshot?.shortEquity ?? 0)
-    : 0;
+  // Total capital
   const initialCapital = simulation ? (currentSnapshot?.equity ?? 10000) - (currentSnapshot?.realizedPnl ?? 0) - (currentSnapshot?.unrealizedPnl ?? 0) : 10000;
+
+  // Has any data to show?
+  const hasData = replayData || dcaLongSnapshots.length > 0 || dcaShortSnapshots.length > 0;
 
   return (
     <div className="min-h-screen p-4">
@@ -302,7 +472,7 @@ export default function SimulatorPage() {
               GRID BOT SIMULATOR
             </h1>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              Dual adaptive grid trading backtester
+              Multi-strategy backtesting platform
             </p>
           </div>
         </div>
@@ -352,25 +522,90 @@ export default function SimulatorPage() {
       {/* Main layout */}
       <div className="flex gap-4">
         {/* Config sidebar */}
-        <div className={`flex-shrink-0 transition-all duration-300 ${configCollapsed ? 'w-[200px]' : 'w-[340px]'}`}>
+        <aside className={`flex-shrink-0 transition-all duration-300 ${configCollapsed ? 'w-[200px]' : 'w-[340px]'} sticky top-4 self-start max-h-[calc(100vh-40px)] overflow-y-auto flex flex-col gap-4`}>
           <ConfigPanel
             onRunSimulation={handleRunSimulation}
             isRunning={isRunning}
             isCollapsed={configCollapsed}
             onToggleCollapse={() => setConfigCollapsed(!configCollapsed)}
           />
-        </div>
+
+          {!configCollapsed && (
+            <>
+              <DataManager />
+
+              {/* Strategy Toggles */}
+              <div className="card p-4 flex flex-col gap-3">
+                <span className="card-header text-xs">Strategy Toggles</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={gridLongEnabled}
+                      onChange={(e) => setGridLongEnabled(e.target.checked)}
+                      className="accent-indigo-500"
+                    />
+                    <span className="text-xs font-mono" style={{ color: 'var(--grid-long)' }}>Grid Long</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={gridShortEnabled}
+                      onChange={(e) => setGridShortEnabled(e.target.checked)}
+                      className="accent-indigo-500"
+                    />
+                    <span className="text-xs font-mono" style={{ color: 'var(--grid-short)' }}>Grid Short</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dcaLongEnabled}
+                      onChange={(e) => setDcaLongEnabled(e.target.checked)}
+                      className="accent-indigo-500"
+                    />
+                    <span className="text-xs font-mono" style={{ color: 'var(--grid-long)' }}>DCA Long</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dcaShortEnabled}
+                      onChange={(e) => setDcaShortEnabled(e.target.checked)}
+                      className="accent-indigo-500"
+                    />
+                    <span className="text-xs font-mono" style={{ color: 'var(--grid-short)' }}>DCA Short</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* DCA Config panels */}
+              {dcaLongEnabled && (
+                <DCAConfig
+                  direction="LONG"
+                  config={dcaLongConfig}
+                  onChange={setDcaLongConfig}
+                />
+              )}
+              {dcaShortEnabled && (
+                <DCAConfig
+                  direction="SHORT"
+                  config={dcaShortConfig}
+                  onChange={setDcaShortConfig}
+                />
+              )}
+            </>
+          )}
+        </aside>
 
         {/* Main content */}
-        <div className="flex-1 flex flex-col gap-4 min-w-0">
-          {replayData ? (
+        <main className="flex-1 flex flex-col gap-4 min-w-0">
+          {hasData ? (
             <>
               {/* Playback controls */}
               <PlaybackControls
                 isPlaying={isPlaying}
                 speed={speed}
                 currentIdx={currentIdx}
-                totalCandles={replayData.totalCandles}
+                totalCandles={totalCandles}
                 currentTime={currentTime}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
@@ -378,23 +613,105 @@ export default function SimulatorPage() {
                 onSpeedChange={setSpeed}
               />
 
-              {/* Dual chart layout */}
-              <div className="flex gap-4">
-                {/* Long chart */}
-                <div className="flex-1 card overflow-hidden">
-                  <TradingChart
-                    candles={replayData.candles}
-                    gridLevels={replayData.longLevels}
-                    side="long"
-                    filledLevelIndices={longFilledLevels}
-                    currentCandleIdx={currentIdx}
-                    visibleCandleCount={50}
-                    height={380}
-                  />
+              {/* Grid Bot Row */}
+              {replayData && (gridLongEnabled || gridShortEnabled) && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <span className="text-xs font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                      Grid Bot
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    {gridLongEnabled && (
+                      <div className="card overflow-hidden">
+                        <TradingChart
+                          candles={replayData.candles}
+                          gridLevels={replayData.longLevels}
+                          side="long"
+                          filledLevelIndices={longFilledLevels}
+                          currentCandleIdx={currentIdx}
+                          visibleCandleCount={50}
+                          height={380}
+                        />
+                      </div>
+                    )}
+                    {gridShortEnabled && (
+                      <div className="card overflow-hidden">
+                        <TradingChart
+                          candles={replayData.candles}
+                          gridLevels={replayData.shortLevels}
+                          side="short"
+                          filledLevelIndices={shortFilledLevels}
+                          currentCandleIdx={currentIdx}
+                          visibleCandleCount={50}
+                          height={380}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
+              )}
 
-                {/* Center P&L column */}
-                <div className="flex flex-col gap-3 w-[200px] flex-shrink-0">
+              {/* DCA Breakout Row */}
+              {(dcaLongEnabled || dcaShortEnabled) && dcaChartCandles.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <span className="text-xs font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                      DCA Breakout
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    {dcaLongEnabled && (
+                      <div className="card overflow-hidden">
+                        <DCAChart
+                          candles={dcaChartCandles}
+                          side="LONG"
+                          snapshots={dcaLongSnapshots}
+                          trades={dcaLongTrades}
+                          currentCandleIdx={currentIdx}
+                          height={400}
+                        />
+                      </div>
+                    )}
+                    {dcaShortEnabled && (
+                      <div className="card overflow-hidden">
+                        <DCAChart
+                          candles={dcaChartCandles}
+                          side="SHORT"
+                          snapshots={dcaShortSnapshots}
+                          trades={dcaShortTrades}
+                          currentCandleIdx={currentIdx}
+                          height={400}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* DCA P&L panels */}
+                  <div className="grid grid-cols-2 gap-4 mt-4">
+                    {dcaLongEnabled && dcaLongSnapshots.length > 0 && (
+                      <DCAPnL
+                        snapshots={dcaLongSnapshots}
+                        trades={dcaLongTrades}
+                        currentIdx={currentIdx}
+                        direction="LONG"
+                      />
+                    )}
+                    {dcaShortEnabled && dcaShortSnapshots.length > 0 && (
+                      <DCAPnL
+                        snapshots={dcaShortSnapshots}
+                        trades={dcaShortTrades}
+                        currentIdx={currentIdx}
+                        direction="SHORT"
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Combined P&L */}
+              <div className="flex gap-4">
+                <div className="w-[240px] flex-shrink-0 flex flex-col gap-3">
                   <CombinedPnL
                     totalEquity={currentSnapshot?.equity ?? initialCapital}
                     realizedPnl={currentSnapshot?.realizedPnl ?? 0}
@@ -408,25 +725,19 @@ export default function SimulatorPage() {
                     trend={lastAdaptiveEvent ? 'neutral' : 'neutral'}
                     deRiskPhase="none"
                     initialCapital={initialCapital}
+                    dcaLongPnl={dcaLongEnabled && dcaLongCurrentSnapshot ? dcaLongCurrentSnapshot.realizedPnlCumulative : undefined}
+                    dcaShortPnl={dcaShortEnabled && dcaShortCurrentSnapshot ? dcaShortCurrentSnapshot.realizedPnlCumulative : undefined}
+                    dcaLongTrades={dcaLongEnabled ? dcaLongTrades.length : undefined}
+                    dcaShortTrades={dcaShortEnabled ? dcaShortTrades.length : undefined}
                   />
-                  <AdaptiveStatus
-                    events={replayData.adaptiveEvents}
-                    currentCandleIdx={currentIdx}
-                  />
+                  {replayData && (
+                    <AdaptiveStatus
+                      events={replayData.adaptiveEvents}
+                      currentCandleIdx={currentIdx}
+                    />
+                  )}
                 </div>
-
-                {/* Short chart */}
-                <div className="flex-1 card overflow-hidden">
-                  <TradingChart
-                    candles={replayData.candles}
-                    gridLevels={replayData.shortLevels}
-                    side="short"
-                    filledLevelIndices={shortFilledLevels}
-                    currentCandleIdx={currentIdx}
-                    visibleCandleCount={50}
-                    height={380}
-                  />
-                </div>
+                <div className="flex-1" />
               </div>
 
               {/* Results tabs */}
@@ -444,6 +755,12 @@ export default function SimulatorPage() {
                   >
                     Trade Log
                   </button>
+                  <button
+                    className={`tab-btn ${activeTab === 'optimizer' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('optimizer')}
+                  >
+                    Optimizer
+                  </button>
                 </div>
 
                 <div className="mt-4">
@@ -452,6 +769,14 @@ export default function SimulatorPage() {
                   )}
                   {activeTab === 'trades' && replayData && (
                     <TradeLog trades={replayData.gridOrders} />
+                  )}
+                  {activeTab === 'optimizer' && (
+                    <OptimizerTab
+                      pair={SUPPORTED_PAIRS[selectedPairIdx]?.pair ?? 'WETH/USDC'}
+                      binanceSymbol={SUPPORTED_PAIRS[selectedPairIdx]?.binanceSymbol ?? 'ETHUSDT'}
+                      startTime={simulation?.startTime ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}
+                      endTime={simulation?.endTime ?? new Date().toISOString()}
+                    />
                   )}
                 </div>
               </div>
@@ -466,12 +791,12 @@ export default function SimulatorPage() {
                 </h2>
                 <p className="text-sm max-w-md" style={{ color: 'var(--text-muted)' }}>
                   Set your grid parameters, select a trading pair and date range,
-                  then hit Run Simulation to see the dual grid strategy in action.
+                  then hit Run Simulation to see the strategies in action.
                 </p>
               </div>
             </div>
           )}
-        </div>
+        </main>
       </div>
     </div>
   );

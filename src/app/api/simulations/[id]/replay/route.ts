@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getCachedCandles } from '@/lib/data/candleCache';
+import { getCachedCandles, getTimeframeMinutes } from '@/lib/data/candleCache';
+import { aggregate5mTo } from '@/lib/data/aggregator';
+import { SUPPORTED_PAIRS } from '@/lib/constants';
 import { generateGridLevels } from '@/lib/simulation/gridGenerator';
 
 // GET: Fetch replay data for a simulation
@@ -10,8 +12,8 @@ export async function GET(
 ) {
   try {
     const { searchParams } = new URL(request.url);
-    const from = parseInt(searchParams.get('from') || '0');
-    const to = parseInt(searchParams.get('to') || '10000');
+    const fromParam = searchParams.get('from');
+    const toParam = searchParams.get('to');
 
     const simulation = await prisma.simulation.findUnique({
       where: { id: params.id },
@@ -29,11 +31,19 @@ export async function GET(
       }, { status: 400 });
     }
 
-    // Load candles
-    const candles = await getCachedCandles(
-      simulation.poolAddress, simulation.timeframe,
+    // Load 5m candles and aggregate to sim timeframe (matches engine behavior)
+    const pairConfig = SUPPORTED_PAIRS.find(p => p.poolAddress === simulation.poolAddress);
+    const binanceSymbol = pairConfig?.binanceSymbol || simulation.pair;
+    const candles5m = await getCachedCandles(
+      binanceSymbol, '5m',
       simulation.startTime, simulation.endTime
     );
+    const simTimeframeMins = getTimeframeMinutes(simulation.timeframe);
+    const candles = simTimeframeMins === 5 ? candles5m : aggregate5mTo(candles5m, simTimeframeMins);
+
+    // Compute range — default to all candles when no params given
+    const from = fromParam ? parseInt(fromParam) : 0;
+    const to = toParam ? parseInt(toParam) : candles.length - 1;
 
     // Slice candles to requested range
     const slicedCandles = candles.slice(from, to + 1);

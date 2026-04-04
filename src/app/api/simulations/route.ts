@@ -1,12 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { SimulationConfig } from '@/lib/types';
+import { SimulationConfig, DCASimulationConfig } from '@/lib/types';
 import { runSimulation } from '@/lib/simulation/engine';
+import { runDCASimulation } from '@/lib/simulation/dcaEngine';
+import { getOrFetchCandles } from '@/lib/data/candleCache';
 
 // POST: Create and run a new simulation
 export async function POST(request: NextRequest) {
   try {
-    const config: SimulationConfig = await request.json();
+    const body = await request.json();
+
+    // Route to DCA simulation if strategyType is 'dca'
+    if (body.strategyType === 'dca') {
+      return handleDCASimulation(body);
+    }
+
+    // Existing grid simulation path
+    const config: SimulationConfig = body;
 
     // Validate required fields
     if (!config.pair || !config.startTime || !config.endTime) {
@@ -71,6 +81,64 @@ export async function POST(request: NextRequest) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+async function handleDCASimulation(body: DCASimulationConfig & { strategyType: string }) {
+  const config: DCASimulationConfig = body;
+
+  if (!config.pair || !config.startTime || !config.endTime) {
+    return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+  }
+
+  if (!config.longConfig && !config.shortConfig) {
+    return NextResponse.json({ error: 'At least one direction config required' }, { status: 400 });
+  }
+
+  // Fetch 5m candles
+  const candles5m = await getOrFetchCandles(
+    config.pair,
+    '5m',
+    new Date(config.startTime),
+    new Date(config.endTime)
+  );
+
+  if (candles5m.length === 0) {
+    return NextResponse.json({ error: 'No candle data available for the specified range' }, { status: 400 });
+  }
+
+  // Run DCA simulation
+  const result = await runDCASimulation(config, candles5m);
+
+  // Store trade results in DCATradeLog
+  if (result.trades.length > 0) {
+    const simulationId = `dca_${Date.now()}`;
+    await prisma.dCATradeLog.createMany({
+      data: result.trades.map(t => ({
+        simulationId,
+        tradeNumber: t.tradeNumber,
+        direction: t.direction,
+        baseOrderPrice: t.baseOrderPrice,
+        baseOrderSize: t.baseOrderSize,
+        avgEntryPrice: t.avgEntryPrice,
+        safetyOrdersFilled: t.safetyOrdersFilled,
+        closePrice: t.closePrice,
+        closeReason: t.closeReason,
+        pnl: t.pnl,
+        pnlPercent: t.pnlPercent,
+        openTime: BigInt(Math.floor(t.openTime * 1000)),
+        closeTime: BigInt(Math.floor(t.closeTime * 1000)),
+        durationMinutes: Math.floor(t.durationMinutes),
+      })),
+    });
+  }
+
+  return NextResponse.json({
+    status: 'completed',
+    trades: result.trades,
+    snapshots: result.snapshots,
+    metrics: result.metrics,
+    candleCount: candles5m.length,
+  });
 }
 
 // GET: List all simulations

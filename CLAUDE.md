@@ -12,3 +12,37 @@
 10. MAKE ALL FIXES AND CODE CHANGES AS SIMPLE AS HUMANLY POSSIBLE. THEY SHOULD ONLY IMPACT NECESSARY CODE RELEVANT TO THE TASK AND NOTHING ELSE. IT SHOULD IMPACT AS LITTLE CODE AS POSSIBLE. YOUR GOAL IS TO NOT INTRODUCE ANY BUGS. IT'S ALL ABOUT SIMPLICITY.
 11. Never speculate about code you have not opened. If the user references a specific file, you MUST read the file before answering. Make sure to investigate and read relevant files BEFORE answering questions about the codebase. Never make any claims about
 code before investigating unless you are certain of the correct answer - give grounded and hallucination-free answers.
+
+# Project Structure
+
+## Multi-Strategy Backtesting Platform
+- **Data source**: Binance `/api/v3/klines` (5m candles, cached in SQLite)
+- **Strategies**: Grid Bot (Long/Short) + DCA Breakout (Long/Short)
+- **Indicators**: BB%B, RSI, MACD with multi-timeframe support
+
+## Key Directories
+```
+src/lib/
+  data/           — Binance API, candle cache, aggregator (5m → 1H/4H)
+  indicators/     — BB%B, RSI, MACD, condition evaluator
+  strategies/     — DCA breakout strategy, entry triggers, order manager
+  simulation/     — Grid engine + DCA engine, P&L tracker, order matcher
+  analysis/       — Technical analysis helpers (SMA, EMA)
+  optimizer/      — Random search, walk-forward validation
+
+src/components/
+  simulation/     — PlaybackControls, CombinedPnL, DCAChart, DCAConfig, DCAPnL
+  charts/         — TradingChart (lightweight-charts)
+  config/         — ConfigPanel, GridSideConfig
+
+src/app/api/
+  candles/        — Binance candle fetch + cache
+  simulations/    — Grid + DCA simulation CRUD
+  simulate/       — Headless simulation endpoint (optimizer)
+```
+
+## Database Models (Prisma/SQLite)
+- `BinanceCandle` — cached 5m candle data (pair + openTime + interval)
+- `DCATradeLog` — DCA trade results per simulation
+- `Simulation`, `GridConfiguration`, `GridOrder` — existing grid bot models
+- `PnlSnapshot`, `AdaptiveEvent` — equity curve + adaptive layer events

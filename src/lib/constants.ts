@@ -1,24 +1,27 @@
 import { PairConfig } from './types';
 
-// Known trading pairs with their GeckoTerminal pool addresses
-// Using highest-liquidity USDC pools on Ethereum mainnet
+// Known trading pairs with pool addresses and Binance symbols
 export const SUPPORTED_PAIRS: PairConfig[] = [
   {
     label: 'ETH/USD',
     pair: 'WETH/USDC',
     poolAddress: '0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640', // Uniswap V3 WETH/USDC 0.05%
     chain: 'eth',
+    binanceSymbol: 'ETHUSDT',
   },
   {
     label: 'BTC/USD',
     pair: 'WBTC/USDC',
     poolAddress: '0x99ac8ca7087fa4a2a1fb6357269965a2014abc35', // Uniswap V3 WBTC/USDC 0.3%
     chain: 'eth',
+    binanceSymbol: 'BTCUSDT',
   },
 ];
 
 // Timeframe configurations
 export const TIMEFRAMES = [
+  { value: '5m', label: '5m' },
+  { value: '15m', label: '15m' },
   { value: '1h', label: '1H', apiTimeframe: 'hour' as const, aggregate: 1 },
   { value: '4h', label: '4H', apiTimeframe: 'hour' as const, aggregate: 4 },
 ] as const;
@@ -42,12 +45,10 @@ export const DEFAULT_SIMULATION = {
   timeframe: '1h',
 };
 
-// GeckoTerminal API config
-export const GECKO_API = {
-  baseUrl: 'https://api.geckoterminal.com/api/v2',
-  maxRetries: 3,
-  initialRetryDelay: 2000,
-  requestDelay: 2100, // ~28 requests/min (under 30/min limit)
+// Binance API config
+export const BINANCE_API = {
+  baseUrl: 'https://api.binance.com',
+  requestDelay: 2500,
   candlesPerRequest: 1000,
 };
 

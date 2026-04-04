@@ -1,24 +1,63 @@
-# Fix: Short grid not placing orders when starting price is above grid
+# Investigation: Grid Short P&L lower than Long
 
-## Root Cause
-`initializeOrders()` in `orderMatcher.ts` only places:
-- Long: buy orders at levels **below** current price
-- Short: sell orders at levels **above** current price
+## Root Cause Analysis
 
-When starting price (2309) is above the short grid's upper bound (2300), **no short sell orders are placed** because all levels are below the price. The short side is permanently inactive.
+**Finding: NOT a calculation bug — this is structural grid behavior.**
 
-## Fix
-Handle the edge case where price starts outside the grid bounds:
-- **Short grid, price above all levels**: place BUY orders at all levels (price will drop into grid, buys fill, counter sells placed one level up)
-- **Long grid, price below all levels**: place SELL orders at all levels (price will rise into grid, sells fill, counter buys placed one level down)
+The P&L difference between long and short sides is caused by **asymmetric initial level counts**:
+- The simulation uses `candles[0].close` as the starting price
+- Long gets buy orders at levels BELOW the starting price
+- Short gets sell orders at levels ABOVE the starting price
+- If the starting price isn't exactly at the grid center, one side gets more levels
 
-## Tasks
-- [x] Fix `initializeOrders()` in `src/lib/simulation/orderMatcher.ts`
-- [x] Verify TypeScript compiles clean
+### Test Results (unit test: `src/__tests__/gridPnl.test.ts`)
 
-## Review
-Changed `initializeOrders()` to detect when the starting price is outside the grid range:
-- For SHORT: when `currentPrice > highestLevel`, places buy orders at all levels instead of nothing
-- For LONG: when `currentPrice < lowestLevel`, places sell orders at all levels instead of nothing
-- Normal behavior (price within grid) is unchanged
-- Only file changed: `src/lib/simulation/orderMatcher.ts`
+**Centered start (price = grid center):**
+| Side | Realized P&L | Fills | Round-trips |
+|------|-------------|-------|-------------|
+| Long | $51.79 | 79 | 39 |
+| Short | $49.57 | 80 | 40 |
+| **Ratio** | **0.957** | | |
+
+**Off-center start (price = center + 0.75%):**
+| Side | Realized P&L | Fills | Round-trips |
+|------|-------------|-------|-------------|
+| Long | $64.50 | 100 | 49 |
+| Short | $36.86 | 60 | 30 |
+| **Ratio** | **1.75x** | | |
+
+Initial level split was 6 long / 4 short (1.5x), leading to 1.75x P&L difference.
+
+### Verified Components
+- [x] `pnlTracker.ts` — P&L formula correct for both long and short round-trips
+- [x] `orderMatcher.ts` — Fill detection matches old behavior (`low <= buy`, `high >= sell`)
+- [x] `orderMatcher.ts` — Counter-order placement correct (buy→sell+1, sell→buy-1)
+- [x] `orderMatcher.ts` — `initializeOrders` correctly handles edge cases
+- [x] `engine.ts` — Fill processing order doesn't affect total P&L
+- [x] `CombinedPnL.tsx` — Display reads directly from snapshot data, no transformation bugs
+
+## Fix Applied
+
+- [x] Reverted `entryQty` formula in `pnlTracker.ts` from `(size - fees) / price` back to `size / price`
+  - The previous change double-counted entry fees (once in reduced qty, once as direct subtraction)
+  - Impact was symmetric and negligible (~$0.06 over 40 round-trips) but incorrect
+
+## Notes for User
+- The P&L asymmetry is proportional to how far the starting price is from the grid center
+- With more grid levels (e.g., 30+), the off-by-one effect is smaller
+- This is the same behavior real grid bots (Binance, Pionex) exhibit
+
+---
+
+## Completed Work
+
+- [x] Phase 1 — Binance Data Layer (binanceApi, aggregator, DataManager, candleCache rewrite)
+- [x] Phase 2 — Indicator Engine (BB%B, RSI, MACD, conditionEvaluator)
+- [x] Phase 3 — DCA Breakout Strategy (dcaBreakout, dcaOrderManager, entryTriggers, dcaEngine)
+- [x] Phase 4 — Grid Engine 5m Upgrade + Fee Fix (intra-candle path, pnlTracker fix)
+- [x] Phase 5 — UI 2x2 Chart Layout (DCAChart, DCAConfig, DCAPnL, page.tsx refactor)
+- [x] Phase 6 — Optimizer (randomSearch, walkForward, fitnessFunction, OptimizerTab)
+- [x] Tests — 58 passing (indicators, dcaOrderManager, optimizer)
+- [x] Cleanup — Removed GeckoTerminal, updated schema, build passes
+
+See `CHANGES.md` for full details.

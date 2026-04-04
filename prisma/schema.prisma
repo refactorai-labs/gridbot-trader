@@ -164,25 +164,41 @@ model PnlSnapshot {
   @@index([simulationId, candleIdx])
 }
 
-// Cached OHLCV candle data
-model CandleCache {
-  id String @id @default(cuid())
+// Binance OHLCV candle data cache
+model BinanceCandle {
+  id       Int    @id @default(autoincrement())
+  pair     String
+  openTime BigInt
+  open     Float
+  high     Float
+  low      Float
+  close    Float
+  volume   Float
+  interval String
 
-  pair        String
-  poolAddress String
-  chain       String
-  timeframe   String
+  @@unique([pair, openTime, interval])
+  @@index([pair, interval, openTime])
+}
 
-  timestamp DateTime
-  open      Float
-  high      Float
-  low       Float
-  close     Float
-  volume    Float
+// DCA trade log for backtesting results
+model DCATradeLog {
+  id              Int    @id @default(autoincrement())
+  simulationId    String
+  tradeNumber     Int
+  direction       String
+  baseOrderPrice  Float
+  baseOrderSize   Float
+  avgEntryPrice   Float
+  safetyOrdersFilled Int
+  closePrice      Float
+  closeReason     String
+  pnl             Float
+  pnlPercent      Float
+  openTime        BigInt
+  closeTime       BigInt
+  durationMinutes Int
 
-  @@unique([poolAddress, timeframe, timestamp])
-  @@index([poolAddress, timeframe])
-  @@index([pair, timeframe, timestamp])
+  @@index([simulationId])
 }
 
 // Saved configuration presets

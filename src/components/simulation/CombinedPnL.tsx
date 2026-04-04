@@ -16,6 +16,11 @@ interface CombinedPnLProps {
   trend: TrendDirection;
   deRiskPhase: string;
   initialCapital: number;
+  // DCA strategy (optional — backward compatible)
+  dcaLongPnl?: number;
+  dcaShortPnl?: number;
+  dcaLongTrades?: number;
+  dcaShortTrades?: number;
 }
 
 function formatPnl(value: number): string {
@@ -41,8 +46,14 @@ export default function CombinedPnL({
   trend,
   deRiskPhase,
   initialCapital,
+  dcaLongPnl,
+  dcaShortPnl,
+  dcaLongTrades,
+  dcaShortTrades,
 }: CombinedPnLProps) {
-  const totalPnl = realizedPnl + unrealizedPnl;
+  const hasDCA = dcaLongPnl !== undefined || dcaShortPnl !== undefined;
+  const dcaTotalPnl = (dcaLongPnl ?? 0) + (dcaShortPnl ?? 0);
+  const totalPnl = realizedPnl + unrealizedPnl + (hasDCA ? dcaTotalPnl : 0);
   const isProfit = totalPnl >= 0;
   const isGridProfit = realizedPnl >= 0;
   const longTotal = longRealizedPnl + longUnrealizedPnl;
@@ -101,6 +112,61 @@ export default function CombinedPnL({
           </div>
         </div>
       </div>
+
+      {/* DCA Profit section — only shown when DCA data present */}
+      {hasDCA && (
+        <>
+          <div style={{ height: 1, background: 'var(--card-border)' }} />
+          <div>
+            <div className="stat-label flex items-center gap-1.5">
+              <span>DCA Profit</span>
+              <span className="badge badge-fill" style={{ fontSize: 9, padding: '1px 4px', lineHeight: '1.2' }}>
+                realized
+              </span>
+            </div>
+            <div className={`text-sm font-mono font-bold ${dcaTotalPnl >= 0 ? 'text-profit' : 'text-loss'}`}>
+              {formatPnl(dcaTotalPnl)}
+              <span className="text-xs ml-1 font-normal">
+                {formatPct(dcaTotalPnl, initialCapital)}
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {dcaLongPnl !== undefined && (
+              <div className="stat-card" style={{ padding: '6px 8px' }}>
+                <div className="flex items-center gap-1 mb-0.5">
+                  <TrendingUp size={9} className="text-grid-long" />
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>DCA Long</span>
+                </div>
+                <div className={`font-mono font-bold ${dcaLongPnl >= 0 ? 'text-profit' : 'text-loss'}`} style={{ fontSize: 11 }}>
+                  {formatPnl(dcaLongPnl)}
+                </div>
+                {dcaLongTrades !== undefined && (
+                  <div className="font-mono" style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
+                    {dcaLongTrades} trades
+                  </div>
+                )}
+              </div>
+            )}
+            {dcaShortPnl !== undefined && (
+              <div className="stat-card" style={{ padding: '6px 8px' }}>
+                <div className="flex items-center gap-1 mb-0.5">
+                  <TrendingDown size={9} className="text-grid-short" />
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>DCA Short</span>
+                </div>
+                <div className={`font-mono font-bold ${dcaShortPnl >= 0 ? 'text-profit' : 'text-loss'}`} style={{ fontSize: 11 }}>
+                  {formatPnl(dcaShortPnl)}
+                </div>
+                {dcaShortTrades !== undefined && (
+                  <div className="font-mono" style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
+                    {dcaShortTrades} trades
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Divider */}
       <div style={{ height: 1, background: 'var(--card-border)' }} />

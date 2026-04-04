@@ -81,6 +81,26 @@ export function initializeOrders(
   return orders;
 }
 
+// Generate a deterministic intra-candle price path for fill ordering
+function getIntraCandlePath(candle: OHLC): number[] {
+  if (candle.close >= candle.open) {
+    // Bullish: open -> low -> high -> close
+    return [candle.open, candle.low, candle.high, candle.close];
+  } else {
+    // Bearish: open -> high -> low -> close
+    return [candle.open, candle.high, candle.low, candle.close];
+  }
+}
+
+// Check if a price level is crossed between two path points
+function isBuyFilled(orderPrice: number, from: number, to: number): boolean {
+  return to <= orderPrice && (from >= orderPrice || to <= orderPrice);
+}
+
+function isSellFilled(orderPrice: number, from: number, to: number): boolean {
+  return to >= orderPrice && (from <= orderPrice || to >= orderPrice);
+}
+
 // Match pending orders against a candle's price range
 export function matchOrders(
   candle: OHLC,
@@ -91,53 +111,45 @@ export function matchOrders(
   shortLevels: GridLevel[]
 ): Fill[] {
   const fills: Fill[] = [];
+  const filledLevels = new Set<string>(); // "side:levelIndex" — max 1 fill per level per candle
 
-  // Separate buy and sell orders
-  const buyOrders = pendingOrders
-    .filter(o => o.type === 'buy' && o.sizeMultiplier > 0)
-    .sort((a, b) => a.price - b.price); // Lowest first
+  const path = getIntraCandlePath(candle);
 
-  const sellOrders = pendingOrders
-    .filter(o => o.type === 'sell' && o.sizeMultiplier > 0)
-    .sort((a, b) => b.price - a.price); // Highest first
+  const activeOrders = pendingOrders.filter(o => o.sizeMultiplier > 0);
 
-  // Check buy fills: filled if candle.low <= order.price
-  for (const order of buyOrders) {
-    if (candle.low <= order.price) {
-      const effectiveSize = order.size * order.sizeMultiplier;
-      const fees = effectiveSize * feeRate;
+  // Walk each segment of the price path
+  for (let seg = 0; seg < path.length - 1; seg++) {
+    const from = path[seg];
+    const to = path[seg + 1];
 
-      fills.push({
-        orderId: order.id,
-        side: order.side,
-        type: 'buy',
-        levelIndex: order.levelIndex,
-        fillPrice: order.price,
-        candleIdx,
-        timestamp: candle.timestamp,
-        size: effectiveSize,
-        fees,
-      });
-    }
-  }
+    for (const order of activeOrders) {
+      const levelKey = `${order.side}:${order.levelIndex}`;
+      if (filledLevels.has(levelKey)) continue;
 
-  // Check sell fills: filled if candle.high >= order.price
-  for (const order of sellOrders) {
-    if (candle.high >= order.price) {
-      const effectiveSize = order.size * order.sizeMultiplier;
-      const fees = effectiveSize * feeRate;
+      let filled = false;
+      if (order.type === 'buy') {
+        filled = isBuyFilled(order.price, from, to);
+      } else {
+        filled = isSellFilled(order.price, from, to);
+      }
 
-      fills.push({
-        orderId: order.id,
-        side: order.side,
-        type: 'sell',
-        levelIndex: order.levelIndex,
-        fillPrice: order.price,
-        candleIdx,
-        timestamp: candle.timestamp,
-        size: effectiveSize,
-        fees,
-      });
+      if (filled) {
+        filledLevels.add(levelKey);
+        const effectiveSize = order.size * order.sizeMultiplier;
+        const fees = effectiveSize * feeRate;
+
+        fills.push({
+          orderId: order.id,
+          side: order.side,
+          type: order.type,
+          levelIndex: order.levelIndex,
+          fillPrice: order.price,
+          candleIdx,
+          timestamp: candle.timestamp,
+          size: effectiveSize,
+          fees,
+        });
+      }
     }
   }
 

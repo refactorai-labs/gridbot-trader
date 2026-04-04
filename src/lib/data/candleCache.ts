@@ -1,31 +1,33 @@
-// Database cache for OHLCV candle data
-// Avoids re-fetching from GeckoTerminal
+// Database cache for OHLCV candle data (Binance)
 
 import prisma from '../prisma';
 import { OHLC } from '../types';
-import { fetchCandlesForRange } from './geckoterminal';
+import { fetchBinanceKlines } from './binanceApi';
 
-// Get cached candles from database
+// Get cached Binance candles from database
 export async function getCachedCandles(
-  poolAddress: string,
-  timeframe: string,
+  pair: string,
+  interval: string,
   startTime: Date,
   endTime: Date
 ): Promise<OHLC[]> {
-  const candles = await prisma.candleCache.findMany({
+  const startMs = BigInt(startTime.getTime());
+  const endMs = BigInt(endTime.getTime());
+
+  const candles = await prisma.binanceCandle.findMany({
     where: {
-      poolAddress,
-      timeframe,
-      timestamp: {
-        gte: startTime,
-        lte: endTime,
+      pair,
+      interval,
+      openTime: {
+        gte: startMs,
+        lte: endMs,
       },
     },
-    orderBy: { timestamp: 'asc' },
+    orderBy: { openTime: 'asc' },
   });
 
   return candles.map(c => ({
-    timestamp: Math.floor(c.timestamp.getTime() / 1000),
+    timestamp: Number(c.openTime) / 1000, // BigInt ms -> seconds
     open: c.open,
     high: c.high,
     low: c.low,
@@ -34,67 +36,50 @@ export async function getCachedCandles(
   }));
 }
 
-// Store candles in database cache
+// Store candles in BinanceCandle table using batch INSERT OR IGNORE (SQLite)
 export async function storeCandlesInCache(
   pair: string,
-  poolAddress: string,
-  chain: string,
-  timeframe: string,
+  interval: string,
   candles: OHLC[]
 ): Promise<number> {
   if (candles.length === 0) return 0;
 
-  // Use upsert-like behavior with createMany + skipDuplicates
-  const data = candles.map(c => ({
-    pair,
-    poolAddress,
-    chain,
-    timeframe,
-    timestamp: new Date(c.timestamp * 1000),
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
-    volume: c.volume,
-  }));
-
-  // Insert candles one by one, skipping duplicates via upsert
-  let stored = 0;
-
-  for (const candle of data) {
-    try {
-      await prisma.candleCache.upsert({
-        where: {
-          poolAddress_timeframe_timestamp: {
-            poolAddress: candle.poolAddress,
-            timeframe: candle.timeframe,
-            timestamp: candle.timestamp,
-          },
-        },
-        update: {}, // No update needed — data is immutable
-        create: candle,
-      });
-      stored++;
-    } catch {
-      // Skip duplicates silently
-    }
+  // Validate pair/interval are alphanumeric to prevent injection
+  if (!/^[A-Za-z0-9]+$/.test(pair) || !/^[0-9]+[a-z]$/.test(interval)) {
+    throw new Error(`Invalid pair "${pair}" or interval "${interval}"`);
   }
 
-  return stored;
+  // Batch in chunks of 500 to avoid SQLite variable limits
+  const BATCH_SIZE = 500;
+  let totalStored = 0;
+
+  for (let i = 0; i < candles.length; i += BATCH_SIZE) {
+    const batch = candles.slice(i, i + BATCH_SIZE);
+    const values = batch.map(c => {
+      const openTimeMs = BigInt(c.timestamp * 1000);
+      return `('${pair}', ${openTimeMs}, ${c.open}, ${c.high}, ${c.low}, ${c.close}, ${c.volume}, '${interval}')`;
+    }).join(',\n');
+
+    const result = await prisma.$executeRawUnsafe(`
+      INSERT OR IGNORE INTO BinanceCandle (pair, openTime, open, high, low, close, volume, interval)
+      VALUES ${values}
+    `);
+    totalStored += result;
+  }
+
+  return totalStored;
 }
 
 // Fetch candles, caching in database. Returns cached data if available.
 export async function getOrFetchCandles(
   pair: string,
-  poolAddress: string,
-  chain: string,
   timeframe: string,
   startTime: Date,
   endTime: Date,
   onProgress?: (fetched: number) => void
 ): Promise<OHLC[]> {
   // Check cache first
-  const cached = await getCachedCandles(poolAddress, timeframe, startTime, endTime);
+  const cached = await getCachedCandles(pair, timeframe, startTime, endTime);
 
   // Calculate expected candle count for the range
   const timeframeMins = getTimeframeMinutes(timeframe);
@@ -106,18 +91,20 @@ export async function getOrFetchCandles(
     return cached;
   }
 
-  // Fetch from API and cache
-  const fetched = await fetchCandlesForRange(
-    chain, poolAddress, timeframe, startTime, endTime, onProgress
+  // Fetch from Binance API
+  const fetched = await fetchBinanceKlines(
+    pair, timeframe,
+    startTime.getTime(), endTime.getTime(),
+    onProgress
   );
 
   // Store in cache
-  await storeCandlesInCache(pair, poolAddress, chain, timeframe, fetched);
+  await storeCandlesInCache(pair, timeframe, fetched);
 
   return fetched;
 }
 
-function getTimeframeMinutes(timeframe: string): number {
+export function getTimeframeMinutes(timeframe: string): number {
   switch (timeframe) {
     case '5m': return 5;
     case '15m': return 15;
