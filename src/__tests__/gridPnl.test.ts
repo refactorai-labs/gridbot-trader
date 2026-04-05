@@ -155,6 +155,44 @@ describe('Grid P&L: Long vs Short', () => {
     }
   });
 
+  it('should initialize orders on ALL levels for LONG (full grid coverage)', () => {
+    resetOrderIdCounter();
+    const levels = generateGridLevels(2800, 3200, 10, 'long', 'arithmetic');
+    // Price at 3000 — middle of grid
+    const orders = initializeOrders(3000, levels, 'long', 100);
+
+    // Should have an order at every level (except the one at exactly currentPrice, if any)
+    const levelsNotAtPrice = levels.filter(l => l.price !== 3000);
+    expect(orders.length).toBe(levelsNotAtPrice.length);
+
+    // BUY orders below price, SELL orders above price
+    const buys = orders.filter(o => o.type === 'buy');
+    const sells = orders.filter(o => o.type === 'sell');
+    expect(buys.every(o => o.price < 3000)).toBe(true);
+    expect(sells.every(o => o.price > 3000)).toBe(true);
+    expect(buys.length).toBeGreaterThan(0);
+    expect(sells.length).toBeGreaterThan(0);
+  });
+
+  it('should initialize orders on ALL levels for SHORT (full grid coverage)', () => {
+    resetOrderIdCounter();
+    const levels = generateGridLevels(2800, 3200, 10, 'short', 'arithmetic');
+    // Price at 3000 — middle of grid
+    const orders = initializeOrders(3000, levels, 'short', 100);
+
+    // Should have an order at every level (except the one at exactly currentPrice, if any)
+    const levelsNotAtPrice = levels.filter(l => l.price !== 3000);
+    expect(orders.length).toBe(levelsNotAtPrice.length);
+
+    // SELL orders above price, BUY orders below price
+    const sells = orders.filter(o => o.type === 'sell');
+    const buys = orders.filter(o => o.type === 'buy');
+    expect(sells.every(o => o.price > 3000)).toBe(true);
+    expect(buys.every(o => o.price < 3000)).toBe(true);
+    expect(sells.length).toBeGreaterThan(0);
+    expect(buys.length).toBeGreaterThan(0);
+  });
+
   it('should trace a simple long round-trip correctly', () => {
     // Price starts at 3000, goes down to 2900, comes back to 3000
     const candles: OHLC[] = [

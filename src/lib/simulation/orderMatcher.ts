@@ -50,6 +50,17 @@ export function initializeOrders(
           size: orderSize,
           sizeMultiplier,
         });
+      } else if (level.price > currentPrice) {
+        // Complementary: place sell orders above current price (implied "already bought")
+        orders.push({
+          id: generateOrderId(),
+          side: 'long',
+          type: 'sell',
+          levelIndex: level.index,
+          price: level.price,
+          size: orderSize,
+          sizeMultiplier,
+        });
       }
     } else {
       if (currentPrice > highestLevel) {
@@ -69,6 +80,17 @@ export function initializeOrders(
           id: generateOrderId(),
           side: 'short',
           type: 'sell',
+          levelIndex: level.index,
+          price: level.price,
+          size: orderSize,
+          sizeMultiplier,
+        });
+      } else if (level.price < currentPrice) {
+        // Complementary: place buy orders below current price (implied "already shorted")
+        orders.push({
+          id: generateOrderId(),
+          side: 'short',
+          type: 'buy',
           levelIndex: level.index,
           price: level.price,
           size: orderSize,

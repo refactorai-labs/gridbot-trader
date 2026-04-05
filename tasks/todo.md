@@ -1,36 +1,28 @@
-# Change Purple/Indigo to Dark Blue
+# Fix: SHORT Grid Not Trading When Price Is In Range
+
+## Problem
+The SHORT side only places SELL orders above the starting price, leaving levels below empty. Similarly, LONG only places BUY orders below. Real grid bots populate all levels with complementary orders on the opposite side of price.
 
 ## Tasks
-- [x] Update `globals.css` dark theme vars (`--grid-neutral`, `--adaptive-accent`, `--input-focus`)
-- [x] Update `globals.css` light theme vars
-- [x] Update `.btn-primary` gradient and shadows (with light theme override)
-- [x] Convert all hard-coded `rgba(...)` to use `var(--grid-neutral-rgb)` for theme-awareness
-- [x] Add global `input[type="checkbox"]` accent-color rule
-- [x] Remove Tailwind `accent-*` classes from DCAConfig.tsx and ConfigPanel.tsx
-- [x] Update BB color in DCAChart.tsx to be theme-aware
-- [x] Update selected row rgba in OptimizerTab.tsx to use CSS variable
-- [x] Update header icon box + status message rgba in page.tsx to use CSS variable
+- [x] Add `else if (level.price > currentPrice)` branch for LONG → place SELL orders above price
+- [x] Add `else if (level.price < currentPrice)` branch for SHORT → place BUY orders below price
+- [x] Add 2 unit tests verifying full grid coverage for both sides
+- [x] Run existing tests to confirm no regressions
+- [x] Write review summary
 
 ## Review
 
-**Problem found during design review:** The initial implementation used `#1e3a8a` (blue-900) everywhere — a very dark blue that's nearly invisible on the dark theme's near-black background (`rgb(8, 10, 18)`). Contrast ratio was ~2:1, far below usable.
+**Changes made:**
 
-**Solution: Theme-adaptive blue palette using `--grid-neutral-rgb`**
+1. **`src/lib/simulation/orderMatcher.ts`** — Added two `else if` branches in `initializeOrders`:
+   - **LONG**: Levels above `currentPrice` now get SELL orders (implied "already bought" positions)
+   - **SHORT**: Levels below `currentPrice` now get BUY orders (implied "already shorted" positions)
+   - ~12 lines added, no existing code modified
 
-| Element | Dark Theme | Light Theme |
-|---------|-----------|-------------|
-| `--grid-neutral` | `#3b82f6` (blue-500) | `#1e40af` (blue-800) |
-| `--adaptive-accent` | `#2563eb` (blue-600) | `#1e3a8a` (blue-900) |
-| `--grid-neutral-rgb` | `59, 130, 246` | `30, 64, 175` |
-| `.btn-primary` gradient | `#2563eb` → `#1d4ed8` | `#1e40af` → `#172554` |
+2. **`src/__tests__/gridPnl.test.ts`** — Added 2 unit tests:
+   - `should initialize orders on ALL levels for LONG` — verifies BUYs below + SELLs above
+   - `should initialize orders on ALL levels for SHORT` — verifies SELLs above + BUYs below
 
-**Key design decisions:**
-- Introduced `--grid-neutral-rgb` CSS variable containing the RGB triplet, so all `rgba()` overlays (badges, active states, focus rings, shadows) automatically adapt per theme
-- Dark theme uses brighter blue for visibility; light theme uses darker blue for authority
-- Button gets explicit light theme override for the darker gradient
-- Checkbox accent colors now use global CSS rule (`accent-color: var(--grid-neutral)`) instead of Tailwind classes — cleaner and theme-aware
-- DCAChart BB overlay uses JS-based theme detection since canvas colors can't use CSS variables
+**Test results:** All 6 tests pass. The "off-center start" test now shows PnL ratio of 1.00x (both sides fully utilized) instead of the previous asymmetric behavior.
 
-**Files changed:** `globals.css`, `DCAConfig.tsx`, `ConfigPanel.tsx`, `DCAChart.tsx`, `OptimizerTab.tsx`, `page.tsx`
-
-**Impact:** Color values only — no logic changes.
+**Impact:** Only `initializeOrders` logic changed. No other files modified. The `matchOrders`, `createCounterOrder`, and `processFill` functions are all order-type agnostic and handle the new complementary orders correctly without changes.
