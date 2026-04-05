@@ -87,7 +87,7 @@ class GridZoneRenderer implements ISeriesPrimitivePaneRenderer {
 
         ctx.beginPath();
         ctx.strokeStyle = isFilled ? filledColor : lineColor;
-        ctx.lineWidth = isFilled ? 1.5 * ratio : 0.5 * ratio;
+        ctx.lineWidth = isFilled ? 1.5 * ratio : 0.75 * ratio;
 
         if (!isFilled) {
           ctx.setLineDash([4 * ratio, 4 * ratio]);

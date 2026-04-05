@@ -83,8 +83,8 @@ const CHART_COLORS_DARK = {
   // Grid zone visualization
   longZoneFill: 'rgba(16, 185, 129, 0.06)',
   shortZoneFill: 'rgba(239, 68, 68, 0.06)',
-  longGridLine: 'rgba(16, 185, 129, 0.20)',
-  shortGridLine: 'rgba(239, 68, 68, 0.20)',
+  longGridLine: 'rgba(16, 185, 129, 0.35)',
+  shortGridLine: 'rgba(239, 68, 68, 0.35)',
   longGridFilled: 'rgba(16, 185, 129, 0.55)',
   shortGridFilled: 'rgba(239, 68, 68, 0.55)',
   longBoundary: 'rgba(16, 185, 129, 0.15)',
@@ -111,8 +111,8 @@ const CHART_COLORS_LIGHT = {
   // Grid zone visualization
   longZoneFill: 'rgba(5, 150, 105, 0.06)',
   shortZoneFill: 'rgba(220, 38, 38, 0.06)',
-  longGridLine: 'rgba(5, 150, 105, 0.20)',
-  shortGridLine: 'rgba(220, 38, 38, 0.20)',
+  longGridLine: 'rgba(5, 150, 105, 0.35)',
+  shortGridLine: 'rgba(220, 38, 38, 0.35)',
   longGridFilled: 'rgba(5, 150, 105, 0.55)',
   shortGridFilled: 'rgba(220, 38, 38, 0.55)',
   longBoundary: 'rgba(5, 150, 105, 0.15)',
