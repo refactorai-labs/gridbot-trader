@@ -119,7 +119,7 @@ export default function DCAChart({
     });
 
     // Bollinger Bands lines
-    const bbColor = 'rgba(99, 102, 241, 0.4)';
+    const bbColor = theme === 'dark' ? 'rgba(59, 130, 246, 0.4)' : 'rgba(30, 64, 175, 0.4)';
     const bbUpper = chart.addLineSeries({
       color: bbColor,
       lineWidth: 1,

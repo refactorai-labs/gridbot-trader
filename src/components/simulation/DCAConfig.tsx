@@ -172,7 +172,6 @@ export default function DCAConfig({ config, onChange, direction }: DCAConfigProp
               type="checkbox"
               checked={config.trailingEnabled}
               onChange={(e) => update({ trailingEnabled: e.target.checked })}
-              className="accent-indigo-500"
             />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Trailing TP</span>
           </label>
@@ -199,7 +198,6 @@ export default function DCAConfig({ config, onChange, direction }: DCAConfigProp
               type="checkbox"
               checked={config.stopLossEnabled}
               onChange={(e) => update({ stopLossEnabled: e.target.checked })}
-              className="accent-indigo-500"
             />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
               {config.stopLossEnabled ? 'Enabled' : 'Disabled'}

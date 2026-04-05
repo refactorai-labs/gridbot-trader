@@ -149,7 +149,7 @@ function DCAConfigInline({ config, onChange }: { config: DCABreakoutConfig; onCh
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={config.trailingEnabled}
               onChange={(e) => update({ trailingEnabled: e.target.checked })}
-              className="accent-indigo-500" />
+ />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Trailing TP</span>
           </label>
           {config.trailingEnabled && (
@@ -167,7 +167,7 @@ function DCAConfigInline({ config, onChange }: { config: DCABreakoutConfig; onCh
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={config.stopLossEnabled}
               onChange={(e) => update({ stopLossEnabled: e.target.checked })}
-              className="accent-indigo-500" />
+ />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
               {config.stopLossEnabled ? 'Enabled' : 'Disabled'}
             </span>

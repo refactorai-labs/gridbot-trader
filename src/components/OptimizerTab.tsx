@@ -397,7 +397,7 @@ export default function OptimizerTab({ pair, binanceSymbol, startTime, endTime }
                       key={idx}
                       className="cursor-pointer"
                       style={{
-                        background: isSelected ? 'rgba(99, 102, 241, 0.08)' : undefined,
+                        background: isSelected ? 'rgba(var(--grid-neutral-rgb), 0.08)' : undefined,
                       }}
                       onClick={() => setSelectedRow(isSelected ? null : idx)}
                     >

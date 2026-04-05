@@ -480,7 +480,7 @@ export default function SimulatorPage() {
       {/* Header */}
       <header className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg" style={{ background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
+          <div className="p-2 rounded-lg" style={{ background: 'rgba(var(--grid-neutral-rgb), 0.1)', border: '1px solid rgba(var(--grid-neutral-rgb), 0.2)' }}>
             <Grid3X3 size={20} style={{ color: 'var(--grid-neutral)' }} />
           </div>
           <div>
@@ -525,8 +525,8 @@ export default function SimulatorPage() {
       {/* Status message */}
       {statusMessage && (
         <div className="mb-4 p-3 rounded-lg flex items-center gap-2" style={{
-          background: 'rgba(99, 102, 241, 0.08)',
-          border: '1px solid rgba(99, 102, 241, 0.15)',
+          background: 'rgba(var(--grid-neutral-rgb), 0.08)',
+          border: '1px solid rgba(var(--grid-neutral-rgb), 0.15)',
         }}>
           <Loader2 size={16} className="animate-spin" style={{ color: 'var(--grid-neutral)' }} />
           <span className="text-sm font-mono" style={{ color: 'var(--text-secondary)' }}>
