@@ -1,20 +1,21 @@
-# Fix: "Fit All" Chart Zoom Using `fitContent()` API
+# Fix: Revert Broken autoScale and Apply Correctly on Mode Toggle Only
 
 ## Tasks
-- [x] 1. Add `fitAll` prop to TradingChart, use `fitContent()` when true
-- [x] 2. Add `fitAll` prop to DCAChart, use `fitContent()` when true
-- [x] 3. Revert `visibleCandleCount` to fixed defaults in page.tsx, pass `fitAll={fitAllCharts}`
-- [x] 4. Verify build compiles
+- [x] Remove `autoScale: true` from `updateCandles` callback in `TradingChart.tsx`
+- [x] Remove `autoScale: true` from `updateChart` callback in `DCAChart.tsx`
+- [x] Add dedicated `useEffect([fitAll])` for autoScale reset in `TradingChart.tsx`
+- [x] Add dedicated `useEffect([fitAll])` for autoScale reset in `DCAChart.tsx`
 
 ## Review
 
-### Changes Made (3 files)
+**Changes made:**
+- `src/components/charts/TradingChart.tsx`: Removed `priceScale('right').applyOptions({ autoScale: true })` from the `updateCandles` callback (fired every tick), added a new `useEffect` that only fires when `fitAll` toggles.
+- `src/components/simulation/DCAChart.tsx`: Same pattern — removed autoScale from `updateChart` callback, added dedicated `useEffect([fitAll])`.
 
-**`src/components/charts/TradingChart.tsx`** — Added `fitAll?: boolean` prop. When `fitAll` is true, calls `chartRef.current.timeScale().fitContent()` instead of `setVisibleLogicalRange`. Added `fitAll` to the `useCallback` dependency array.
+**Root cause:** The previous fix applied `autoScale: true` inside the data update callbacks, which fire on every playback tick. This caused:
+1. Grid zones disappearing on TradingChart because `priceToCoordinate()` returned `null` during constant scale reconfiguration
+2. Race conditions between `setData()` + `fitContent()`/`setVisibleLogicalRange()` and the autoScale reset
 
-**`src/components/simulation/DCAChart.tsx`** — Same change: added `fitAll?: boolean` prop with `fitContent()` conditional logic and dependency array update.
+**Fix:** Move autoScale reset to a dedicated `useEffect` that only depends on `[fitAll]`, so it fires only when the user toggles between Fit All and Follow modes.
 
-**`src/app/page.tsx`** — Reverted `visibleCandleCount` from `fitAllCharts ? totalCandles : N` ternaries back to fixed defaults (`50` for TradingChart, `80` for DCAChart). Added `fitAll={fitAllCharts}` prop to all four chart instances.
-
-### Root Cause
-The previous implementation passed `totalCandles` (26000+) as `visibleCandleCount`, causing `setVisibleLogicalRange({from: 0, to: 25000+})` to render sub-pixel candles in ~600px. The lightweight-charts `fitContent()` API handles this correctly with proper margins.
+**Impact:** Minimal — removed 1 line and added 5 lines per file. No other logic changed.

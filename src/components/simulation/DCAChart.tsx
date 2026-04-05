@@ -245,6 +245,13 @@ export default function DCAChart({
     updateChart();
   }, [updateChart]);
 
+  // Reset Y-axis auto-scale when view mode changes
+  useEffect(() => {
+    if (chartRef.current) {
+      chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+    }
+  }, [fitAll]);
+
   // Update price lines (TP, SL, avg entry)
   useEffect(() => {
     if (!candleSeriesRef.current) return;

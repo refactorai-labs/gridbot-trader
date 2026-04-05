@@ -449,6 +449,13 @@ export default function TradingChart({
     updateCandles();
   }, [updateCandles]);
 
+  // Reset Y-axis auto-scale when view mode changes
+  useEffect(() => {
+    if (chartRef.current) {
+      chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+    }
+  }, [fitAll]);
+
   // Update grid zone primitive
   useEffect(() => {
     if (!primitiveRef.current) return;
