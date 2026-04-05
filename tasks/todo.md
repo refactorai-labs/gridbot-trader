@@ -1,34 +1,20 @@
-# Grid Trade Bubble Markers
+# Fix: "Fit All" Chart Zoom Using `fitContent()` API
 
 ## Tasks
-- [x] 1. Add `fills` field to `GridZoneConfig` interface
-- [x] 2. Store `chart` ref in `GridZonePrimitive` via `attached()`, pass to pane view & renderer
-- [x] 3. Implement `draw(target)` in `GridZoneRenderer` to render hollow circle bubbles at fill coordinates
-- [x] 4. Update the primitive update effect to include fills (filtered by `currentCandleIdx`)
-- [x] 5. Remove `setMarkers()` effect and unused `SeriesMarker` import
-- [x] 6. Build and verify — passes clean
+- [x] 1. Add `fitAll` prop to TradingChart, use `fitContent()` when true
+- [x] 2. Add `fitAll` prop to DCAChart, use `fitContent()` when true
+- [x] 3. Revert `visibleCandleCount` to fixed defaults in page.tsx, pass `fitAll={fitAllCharts}`
+- [x] 4. Verify build compiles
 
 ## Review
 
-### Changes Made
+### Changes Made (3 files)
 
-**`src/components/charts/TradingChart.tsx`** — Single file, minimal changes:
+**`src/components/charts/TradingChart.tsx`** — Added `fitAll?: boolean` prop. When `fitAll` is true, calls `chartRef.current.timeScale().fitContent()` instead of `setVisibleLogicalRange`. Added `fitAll` to the `useCallback` dependency array.
 
-1. **Imports**: Replaced `SeriesMarker` with `IChartApiBase` (needed for `timeScale()` coordinate conversion)
-2. **`GridZoneConfig`**: Added `fills` array field for trade bubble data
-3. **`GridZoneRenderer`**: Added `_chart` field; implemented `draw(target)` method that renders hollow circle bubbles at exact (time, price) coordinates using:
-   - `timeScale().timeToCoordinate()` for X, `priceToCoordinate()` for Y
-   - HiDPI-aware bitmap coordinate scaling (`horizontalPixelRatio` / `verticalPixelRatio`)
-   - Three-layer rendering: outer glow (12% opacity), interior fill (18% opacity), crisp ring stroke
-   - Green for buys, red for sells (uses existing `buyMarker`/`sellMarker` colors)
-4. **`GridZonePaneView`**: Accepts and passes `chart` ref to renderer
-5. **`GridZonePrimitive`**: Stores `param.chart` in `attached()`, passes to pane view
-6. **Primitive update effect**: Now builds a `visibleFills` array from `fills` prop (filtered by `currentCandleIdx`) and includes it in `updateConfig()`
-7. **Removed**: Entire `setMarkers()` useEffect block and `SeriesMarker` import
+**`src/components/simulation/DCAChart.tsx`** — Same change: added `fitAll?: boolean` prop with `fitContent()` conditional logic and dependency array update.
 
-### What's Better
-- **Exact positioning** — bubbles render at the exact (time, price) of each fill, not above/below bars
-- **Foreground rendering** — `draw()` renders ON TOP of candles (unlike `drawBackground()`)
-- **Visual clarity** — hollow rings with subtle glow are less intrusive than arrow markers
-- **Playback-aware** — bubbles appear/disappear correctly during playback scrubbing
-- **HiDPI correct** — proper pixel ratio scaling for Retina displays
+**`src/app/page.tsx`** — Reverted `visibleCandleCount` from `fitAllCharts ? totalCandles : N` ternaries back to fixed defaults (`50` for TradingChart, `80` for DCAChart). Added `fitAll={fitAllCharts}` prop to all four chart instances.
+
+### Root Cause
+The previous implementation passed `totalCandles` (26000+) as `visibleCandleCount`, causing `setVisibleLogicalRange({from: 0, to: 25000+})` to render sub-pixel candles in ~600px. The lightweight-charts `fitContent()` API handles this correctly with proper margins.

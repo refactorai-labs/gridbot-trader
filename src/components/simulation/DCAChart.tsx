@@ -23,6 +23,8 @@ interface DCAChartProps {
   snapshots: DCATradeSnapshot[];
   trades: DCATradeRecord[];
   currentCandleIdx: number;
+  visibleCandleCount?: number;
+  fitAll?: boolean;
   height?: number;
 }
 
@@ -32,6 +34,8 @@ export default function DCAChart({
   snapshots,
   trades,
   currentCandleIdx,
+  visibleCandleCount = 80,
+  fitAll,
   height = 400,
 }: DCAChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -226,12 +230,16 @@ export default function DCAChart({
 
     // Auto-scroll
     if (chartRef.current) {
-      chartRef.current.timeScale().setVisibleLogicalRange({
-        from: Math.max(0, chartData.length - 80),
-        to: chartData.length,
-      });
+      if (fitAll) {
+        chartRef.current.timeScale().fitContent();
+      } else {
+        chartRef.current.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, chartData.length - visibleCandleCount),
+          to: chartData.length,
+        });
+      }
     }
-  }, [candles, currentCandleIdx, trades, side, theme]);
+  }, [candles, currentCandleIdx, trades, side, theme, visibleCandleCount, fitAll]);
 
   useEffect(() => {
     updateChart();

@@ -81,6 +81,7 @@ export default function SimulatorPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState<PlaybackSpeed>(1);
   const [currentIdx, setCurrentIdx] = useState(0);
+  const [fitAllCharts, setFitAllCharts] = useState(false);
   const playbackRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Active tab
@@ -569,10 +570,12 @@ export default function SimulatorPage() {
                 currentIdx={currentIdx}
                 totalCandles={totalCandles}
                 currentTime={currentTime}
+                isFitAll={fitAllCharts}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
                 onSeek={(idx) => { setCurrentIdx(idx); setIsPlaying(false); }}
                 onSpeedChange={setSpeed}
+                onToggleFitAll={() => setFitAllCharts(f => !f)}
               />
 
               {/* Grid Bot Row */}
@@ -594,6 +597,7 @@ export default function SimulatorPage() {
                           fills={longFills}
                           currentCandleIdx={currentIdx}
                           visibleCandleCount={50}
+                          fitAll={fitAllCharts}
                           height={380}
                         />
                       </div>
@@ -608,6 +612,7 @@ export default function SimulatorPage() {
                           fills={shortFills}
                           currentCandleIdx={currentIdx}
                           visibleCandleCount={50}
+                          fitAll={fitAllCharts}
                           height={380}
                         />
                       </div>
@@ -633,6 +638,8 @@ export default function SimulatorPage() {
                           snapshots={dcaLongSnapshots}
                           trades={dcaLongTrades}
                           currentCandleIdx={currentIdx}
+                          visibleCandleCount={80}
+                          fitAll={fitAllCharts}
                           height={400}
                         />
                       </div>
@@ -645,6 +652,8 @@ export default function SimulatorPage() {
                           snapshots={dcaShortSnapshots}
                           trades={dcaShortTrades}
                           currentCandleIdx={currentIdx}
+                          visibleCandleCount={80}
+                          fitAll={fitAllCharts}
                           height={400}
                         />
                       </div>

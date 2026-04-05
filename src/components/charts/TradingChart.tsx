@@ -299,6 +299,7 @@ interface TradingChartProps {
   filledLevelIndices: Set<number>;
   fills?: GridFill[];
   visibleCandleCount?: number;
+  fitAll?: boolean;
   currentCandleIdx?: number;
   supportLevel?: number;
   resistanceLevel?: number;
@@ -312,6 +313,7 @@ export default function TradingChart({
   filledLevelIndices,
   fills,
   visibleCandleCount,
+  fitAll,
   currentCandleIdx,
   height = 400,
 }: TradingChartProps) {
@@ -431,13 +433,17 @@ export default function TradingChart({
     seriesRef.current.setData(chartData);
 
     // Auto-scroll to latest candle
-    if (chartRef.current && visibleCandleCount) {
-      chartRef.current.timeScale().setVisibleLogicalRange({
-        from: Math.max(0, chartData.length - visibleCandleCount),
-        to: chartData.length,
-      });
+    if (chartRef.current) {
+      if (fitAll) {
+        chartRef.current.timeScale().fitContent();
+      } else if (visibleCandleCount) {
+        chartRef.current.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, chartData.length - visibleCandleCount),
+          to: chartData.length,
+        });
+      }
     }
-  }, [candles, currentCandleIdx, visibleCandleCount, theme]);
+  }, [candles, currentCandleIdx, visibleCandleCount, fitAll, theme]);
 
   useEffect(() => {
     updateCandles();
