@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Settings, Play, Loader2, ChevronDown, ChevronUp, ChevronRight, Download, Database } from 'lucide-react';
 import GridSideConfig from './GridSideConfig';
+import { ConditionEditor } from '@/components/simulation/DCAConfig';
 import { SimulationConfig, GridSideConfig as GridSideConfigType, DCABreakoutConfig, Direction } from '@/lib/types';
 import { SUPPORTED_PAIRS, DEFAULT_GRID_CONFIG, DEFAULT_SIMULATION, TIMEFRAMES } from '@/lib/constants';
 
@@ -75,8 +76,9 @@ function DCASubSection({ title, children, defaultOpen = true }: {
 
 // ── Inline DCA config (renders inside accordion) ──────────────
 
-function DCAConfigInline({ config, onChange }: { config: DCABreakoutConfig; onChange: (c: DCABreakoutConfig) => void }) {
+function DCAConfigInline({ config, onChange, direction }: { config: DCABreakoutConfig; onChange: (c: DCABreakoutConfig) => void; direction: Direction }) {
   const update = (partial: Partial<DCABreakoutConfig>) => onChange({ ...config, ...partial });
+  const isLong = direction === 'LONG';
 
   return (
     <div className="flex flex-col gap-3">
@@ -96,10 +98,44 @@ function DCAConfigInline({ config, onChange }: { config: DCABreakoutConfig; onCh
       </DCASubSection>
 
       <DCASubSection title="Entry Conditions" defaultOpen={false}>
-        <div className="text-xs font-mono px-2 py-1.5 rounded"
-          style={{ color: 'var(--text-muted)', backgroundColor: 'var(--hover-bg)' }}>
-          Using default breakout trigger (BB%B)
+        <ConditionEditor
+          condition={config.startConditions[0]}
+          onChange={(cond) => update({ startConditions: [cond] })}
+          direction={direction}
+        />
+      </DCASubSection>
+
+      <DCASubSection title="Exit Conditions" defaultOpen={false}>
+        <div className="flex items-center gap-2 mb-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!config.closeConditions?.length}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  update({
+                    closeConditions: [{
+                      indicator: 'BB_PERCENT_B',
+                      params: { period: 20, deviation: 2 },
+                      condition: isLong ? 'CROSSING_UP' : 'CROSSING_DOWN',
+                      signalValue: isLong ? 0.8 : 0.2,
+                      timeframe: '5m',
+                    }],
+                  });
+                } else {
+                  update({ closeConditions: undefined });
+                }
+              }} />
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {config.closeConditions?.length ? 'Enabled' : 'Disabled'}
+            </span>
+          </label>
         </div>
+        {config.closeConditions?.length ? (
+          <ConditionEditor
+            condition={config.closeConditions[0]}
+            onChange={(cond) => update({ closeConditions: [cond] })}
+            direction={direction}
+          />
+        ) : null}
       </DCASubSection>
 
       <DCASubSection title="Safety Orders">
@@ -477,7 +513,7 @@ export default function ConfigPanel({
         toggle={dcaLongEnabled}
         onToggle={onDcaLongToggle}
       >
-        <DCAConfigInline config={dcaLongConfig} onChange={onDcaLongConfigChange} />
+        <DCAConfigInline config={dcaLongConfig} onChange={onDcaLongConfigChange} direction="LONG" />
       </AccordionSection>
 
       {/* ── DCA Short ── */}
@@ -488,7 +524,7 @@ export default function ConfigPanel({
         toggle={dcaShortEnabled}
         onToggle={onDcaShortToggle}
       >
-        <DCAConfigInline config={dcaShortConfig} onChange={onDcaShortConfigChange} />
+        <DCAConfigInline config={dcaShortConfig} onChange={onDcaShortConfigChange} direction="SHORT" />
       </AccordionSection>
 
       {/* ── Adaptive Layer ── */}

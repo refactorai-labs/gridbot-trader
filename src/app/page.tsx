@@ -29,7 +29,7 @@ function getDefaultDCAConfig(direction: Direction): DCABreakoutConfig {
     startConditions: [{
       indicator: 'BB_PERCENT_B',
       params: { period: 20, deviation: 2 },
-      condition: 'LESS_THAN',
+      condition: direction === 'LONG' ? 'CROSSING_DOWN' : 'CROSSING_UP',
       signalValue: direction === 'LONG' ? 0.2 : 0.8,
       timeframe: '5m',
     }],
