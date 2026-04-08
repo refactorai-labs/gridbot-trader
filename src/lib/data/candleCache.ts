@@ -55,11 +55,14 @@ export async function storeCandlesInCache(
 
   for (let i = 0; i < candles.length; i += BATCH_SIZE) {
     const batch = candles.slice(i, i + BATCH_SIZE);
-    const values = batch.map(c => {
-      const openTimeMs = BigInt(c.timestamp * 1000);
-      return `('${pair}', ${openTimeMs}, ${c.open}, ${c.high}, ${c.low}, ${c.close}, ${c.volume}, '${interval}')`;
-    }).join(',\n');
+    const values = batch
+      .filter(c => isFinite(c.open) && isFinite(c.high) && isFinite(c.low) && isFinite(c.close) && isFinite(c.volume))
+      .map(c => {
+        const openTimeMs = BigInt(c.timestamp * 1000);
+        return `('${pair}', ${openTimeMs}, ${c.open}, ${c.high}, ${c.low}, ${c.close}, ${c.volume}, '${interval}')`;
+      }).join(',\n');
 
+    if (!values) continue;
     const result = await prisma.$executeRawUnsafe(`
       INSERT OR IGNORE INTO BinanceCandle (pair, openTime, open, high, low, close, volume, interval)
       VALUES ${values}

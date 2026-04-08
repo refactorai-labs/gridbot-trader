@@ -238,8 +238,12 @@ function calculateFinalUnrealized(state: PnLState, currentPrice: number): number
   for (const pos of state.openPositions) {
     if (pos.side === 'long' && pos.entryType === 'buy') {
       unrealized += (currentPrice - pos.entryPrice) * (pos.size / pos.entryPrice);
+    } else if (pos.side === 'long' && pos.entryType === 'sell') {
+      unrealized += (pos.entryPrice - currentPrice) * (pos.size / pos.entryPrice);
     } else if (pos.side === 'short' && pos.entryType === 'sell') {
       unrealized += (pos.entryPrice - currentPrice) * (pos.size / pos.entryPrice);
+    } else if (pos.side === 'short' && pos.entryType === 'buy') {
+      unrealized += (currentPrice - pos.entryPrice) * (pos.size / pos.entryPrice);
     }
   }
   return unrealized;

@@ -1,25 +1,23 @@
-# Fix: No DCA Trades After CROSSING_DOWN Default Change
+# Bug Fixes — 4 Confirmed Bugs from Codebase Review
 
 ## Tasks
 
-- [x] Step 1: Fix default operator in page.tsx — make direction-dependent (LONG→CROSSING_DOWN, SHORT→CROSSING_UP)
-- [x] Step 2: Fix MACD param keys in DCAConfig.tsx — change `fast`/`slow`/`signal` to `fastLength`/`slowLength`/`signalLength`
-- [x] Step 3: Make handleIndicatorChange reset operator based on direction
-- [x] Step 4: Build verification — npm run build passes
+- [x] Bug 1 (HIGH): Fix unrealized P&L to include complementary positions (pnlTracker.ts + engine.ts)
+- [x] Bug 2 (MEDIUM): Wrap JSON.parse in try-catch in AdaptiveStatus.tsx
+- [x] Bug 3 (LOW): Add error message on failed DCA candle fetch in page.tsx
+- [x] Bug 4 (LOW): Validate numeric fields before SQL interpolation in candleCache.ts
+- [x] Build verification — npm run build passes
 
 ## Review
 
-**3 bugs fixed across 2 files:**
+**4 bugs fixed across 5 files:**
 
-1. **`src/app/page.tsx`** (line 32)
-   - Default operator is now direction-dependent: `CROSSING_DOWN` for LONG, `CROSSING_UP` for SHORT
-   - Previously hardcoded `CROSSING_DOWN` for both → SHORT never triggered (BB%B rarely reaches 0.8 to cross down from it)
+1. **`src/lib/simulation/pnlTracker.ts`** — `calculateUnrealizedPnl()` now handles complementary positions (`long+sell`, `short+buy`) that were silently skipped. Added 2 `else` branches.
 
-2. **`src/components/simulation/DCAConfig.tsx`** — MACD param keys
-   - Changed `fast`→`fastLength`, `slow`→`slowLength`, `signal`→`signalLength` in `INDICATOR_PARAMS`
-   - Now matches backend expectations in `conditionEvaluator.ts` (lines 39, 46, 53)
-   - Previously, custom MACD params were silently ignored (always fell back to 12/26/9)
+2. **`src/lib/simulation/engine.ts`** — `calculateFinalUnrealized()` same fix — added `long+sell` and `short+buy` branches so final equity calculation is complete.
 
-3. **`src/components/simulation/DCAConfig.tsx`** — handleIndicatorChange
-   - Now resets operator to direction-aware default when switching indicators
-   - Prevents stale operator from previous indicator carrying over
+3. **`src/components/simulation/AdaptiveStatus.tsx`** — Wrapped `JSON.parse(event.detailsJson)` in try-catch. Malformed JSON now returns `null` (skipped) instead of crashing the component tree.
+
+4. **`src/app/page.tsx`** — Added `else` branch after `if (candleGetRes.ok)` to call `setStatusMessage('Failed to load DCA candles')` on fetch failure.
+
+5. **`src/lib/data/candleCache.ts`** — Added `isFinite()` filter on OHLCV values before SQL interpolation. Skips candles with NaN/Infinity. Also added `if (!values) continue` guard for empty batches.

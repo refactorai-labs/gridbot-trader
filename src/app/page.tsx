@@ -444,6 +444,8 @@ export default function SimulatorPage() {
             if (candleGetData.candles) {
               setDcaCandles(candleGetData.candles);
             }
+          } else {
+            setStatusMessage('Failed to load DCA candles');
           }
         }
 

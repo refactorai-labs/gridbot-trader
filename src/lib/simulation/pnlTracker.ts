@@ -149,11 +149,17 @@ export function calculateUnrealizedPnl(
       if (pos.entryType === 'buy') {
         // Bought, not yet sold — unrealized = current - entry
         longUnrealized += (currentPrice - pos.entryPrice) * (pos.size / pos.entryPrice);
+      } else {
+        // Complementary sell — sold, waiting to buy back lower
+        longUnrealized += (pos.entryPrice - currentPrice) * (pos.size / pos.entryPrice);
       }
     } else {
       if (pos.entryType === 'sell') {
         // Sold, not yet bought back — unrealized = entry - current
         shortUnrealized += (pos.entryPrice - currentPrice) * (pos.size / pos.entryPrice);
+      } else {
+        // Complementary buy — bought, waiting to sell higher
+        shortUnrealized += (currentPrice - pos.entryPrice) * (pos.size / pos.entryPrice);
       }
     }
   }

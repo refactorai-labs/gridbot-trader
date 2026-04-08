@@ -42,7 +42,13 @@ export default function AdaptiveStatus({ events, currentCandleIdx }: AdaptiveSta
       </div>
       <div className="flex flex-col gap-1.5 max-h-32 overflow-y-auto">
         {visibleEvents.map((event, i) => {
-          const details = JSON.parse(event.detailsJson);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let details: any;
+          try {
+            details = JSON.parse(event.detailsJson);
+          } catch {
+            return null;
+          }
           return (
             <div
               key={i}
