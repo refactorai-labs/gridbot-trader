@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Play, Square, ChevronDown, ChevronUp, Check, X, Loader2 } from 'lucide-react';
 import { DCA_PARAM_RANGES, ParamRange, generateRandomParams } from '@/lib/optimizer/randomSearch';
 import { DEFAULT_CONSTRAINTS, FitnessConstraints } from '@/lib/optimizer/fitnessFunction';
-import { StrategyMetrics, DCABreakoutConfig, DCASimulationConfig } from '@/lib/types';
+import { StrategyMetrics, DCABreakoutConfig, DCASimulationConfig, IndicatorCondition } from '@/lib/types';
+import { ConditionEditor } from '@/components/simulation/DCAConfig';
 
 interface OptimizerTabProps {
   pair: string;
@@ -32,6 +33,55 @@ export default function OptimizerTab({ pair, binanceSymbol, startTime, endTime }
   const [iterations, setIterations] = useState(100);
   const [wfWindows, setWfWindows] = useState(3);
   const [direction, setDirection] = useState<'LONG' | 'SHORT'>('LONG');
+
+  // Strategy conditions
+  const [entryCondition, setEntryCondition] = useState<IndicatorCondition>({
+    indicator: 'BB_PERCENT_B',
+    params: { period: 20, deviation: 2 },
+    condition: 'CROSSING_DOWN',
+    signalValue: 0.2,
+    timeframe: '5m',
+  });
+  const [exitEnabled, setExitEnabled] = useState(false);
+  const [exitCondition, setExitCondition] = useState<IndicatorCondition>({
+    indicator: 'BB_PERCENT_B',
+    params: { period: 20, deviation: 2 },
+    condition: 'CROSSING_UP',
+    signalValue: 0.8,
+    timeframe: '5m',
+  });
+
+  // Flip operator/signalValue on direction change — but only if the current value
+  // still matches the previous direction's default, so user customizations survive.
+  useEffect(() => {
+    const prevDir = direction === 'LONG' ? 'SHORT' : 'LONG';
+    const opDefault = (dir: 'LONG' | 'SHORT', role: 'entry' | 'exit') =>
+      role === 'entry'
+        ? (dir === 'LONG' ? 'CROSSING_DOWN' : 'CROSSING_UP')
+        : (dir === 'LONG' ? 'CROSSING_UP' : 'CROSSING_DOWN');
+    const sigDefault = (indicator: string, dir: 'LONG' | 'SHORT', role: 'entry' | 'exit') => {
+      if (indicator === 'BB_PERCENT_B') {
+        return role === 'entry' ? (dir === 'LONG' ? 0.2 : 0.8) : (dir === 'LONG' ? 0.8 : 0.2);
+      }
+      if (indicator === 'RSI') {
+        return role === 'entry' ? (dir === 'LONG' ? 30 : 70) : (dir === 'LONG' ? 70 : 30);
+      }
+      return null; // unknown indicator → don't auto-flip signalValue
+    };
+    const flip = (role: 'entry' | 'exit') => (prev: IndicatorCondition): IndicatorCondition => {
+      const next = { ...prev };
+      if (prev.condition === opDefault(prevDir, role)) {
+        next.condition = opDefault(direction, role);
+      }
+      const prevSig = sigDefault(prev.indicator, prevDir, role);
+      if (prevSig !== null && prev.signalValue === prevSig) {
+        next.signalValue = sigDefault(prev.indicator, direction, role) as number;
+      }
+      return next;
+    };
+    setEntryCondition(flip('entry'));
+    setExitCondition(flip('exit'));
+  }, [direction]);
 
   // Constraints
   const [constraints, setConstraints] = useState<FitnessConstraints>({ ...DEFAULT_CONSTRAINTS });
@@ -82,12 +132,34 @@ export default function OptimizerTab({ pair, binanceSymbol, startTime, endTime }
 
   // Build a DCABreakoutConfig from random params
   const buildDCAConfig = useCallback((params: Record<string, any>): DCABreakoutConfig => {
+    // Clone entry condition and override indicator params from optimizer
+    const entry: IndicatorCondition = { ...entryCondition, params: { ...entryCondition.params } };
+    if (entry.indicator === 'BB_PERCENT_B') {
+      if (params.bbPeriod != null) entry.params.period = params.bbPeriod;
+      if (params.bbDeviation != null) entry.params.deviation = params.bbDeviation;
+    } else if (entry.indicator === 'RSI') {
+      if (params.rsiLength != null) entry.params.length = params.rsiLength;
+    }
+
+    let closeConditions: IndicatorCondition[] | undefined;
+    if (exitEnabled) {
+      const exit: IndicatorCondition = { ...exitCondition, params: { ...exitCondition.params } };
+      if (exit.indicator === 'BB_PERCENT_B') {
+        if (params.bbPeriod != null) exit.params.period = params.bbPeriod;
+        if (params.bbDeviation != null) exit.params.deviation = params.bbDeviation;
+      } else if (exit.indicator === 'RSI') {
+        if (params.rsiLength != null) exit.params.length = params.rsiLength;
+      }
+      closeConditions = [exit];
+    }
+
     return {
       direction,
       baseOrderSize: params.baseOrderSize ?? 100,
       leverageType: 'isolated',
       leverageValue: 1,
-      startConditions: [],
+      startConditions: [entry],
+      closeConditions,
       deviationFirstOrder: params.deviationFirstOrder ?? 2,
       deviationStepMultiplier: params.deviationStepMultiplier ?? 1.5,
       averagingOrderSize: params.averagingOrderSize ?? 100,
@@ -101,7 +173,7 @@ export default function OptimizerTab({ pair, binanceSymbol, startTime, endTime }
       stopLossPercent: params.stopLossPercent ?? 10,
       stopLossAction: 'CLOSE_TRADE',
     };
-  }, [direction]);
+  }, [direction, entryCondition, exitEnabled, exitCondition]);
 
   const runOptimizer = useCallback(async () => {
     setIsRunning(true);
@@ -347,6 +419,40 @@ export default function OptimizerTab({ pair, binanceSymbol, startTime, endTime }
               )}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Strategy Conditions */}
+      <div className="card p-4">
+        <span className="card-header text-xs block mb-3">Strategy Conditions</span>
+        <div className="space-y-4">
+          <div>
+            <span className="text-xs font-mono block mb-2" style={{ color: 'var(--text-muted)' }}>ENTRY CONDITION</span>
+            <ConditionEditor
+              condition={entryCondition}
+              onChange={setEntryCondition}
+              direction={direction}
+            />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={exitEnabled}
+                  onChange={(e) => setExitEnabled(e.target.checked)}
+                />
+                <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>EXIT CONDITION</span>
+              </label>
+            </div>
+            {exitEnabled && (
+              <ConditionEditor
+                condition={exitCondition}
+                onChange={setExitCondition}
+                direction={direction}
+              />
+            )}
+          </div>
         </div>
       </div>
 

@@ -57,4 +57,7 @@ export const DCA_PARAM_RANGES: ParamRange[] = [
   { name: 'takeProfitPercent', type: 'continuous', min: 0.5, max: 10.0 },
   { name: 'trailingPercent', type: 'continuous', min: 0.1, max: 3.0 },
   { name: 'stopLossPercent', type: 'continuous', min: 1.0, max: 20.0 },
+  { name: 'bbPeriod', type: 'discrete', min: 20, max: 100, step: 5 },
+  { name: 'bbDeviation', type: 'continuous', min: 0.5, max: 3.0 },
+  { name: 'rsiLength', type: 'discrete', min: 7, max: 28, step: 1 },
 ];

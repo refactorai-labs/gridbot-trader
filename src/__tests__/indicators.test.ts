@@ -332,3 +332,111 @@ describe('ConditionEvaluator', () => {
     }
   });
 });
+
+// ──── BB Population Stddev ────
+
+describe('BB population stddev (÷ n, not ÷ n-1)', () => {
+  it('should use population stddev that differs from sample stddev', () => {
+    // Textbook dataset where pop vs sample stddev differ meaningfully
+    // Dataset: [2, 4, 4, 4, 5, 5, 7, 9]  (n=8)
+    // Mean = 5.0
+    // Population variance = 32/8 = 4.0   → stddev = 2.0
+    // Sample variance     = 32/7 ≈ 4.571 → stddev ≈ 2.138
+    const data = [2, 4, 4, 4, 5, 5, 7, 9];
+    const result = computeBB(data, 8, 1);
+
+    const mean = 5.0;
+    const popStddev = 2.0;
+
+    expect(result.middle[7]).toBeCloseTo(mean, 6);
+    expect(result.upper[7]).toBeCloseTo(mean + popStddev, 4);
+    expect(result.lower[7]).toBeCloseTo(mean - popStddev, 4);
+
+    // Verify it's NOT using sample stddev (≈2.138)
+    const sampleStddev = Math.sqrt(32 / 7);
+    expect(result.upper[7]).not.toBeCloseTo(mean + sampleStddev, 2);
+  });
+});
+
+// ──── RSI Wilder Smoothing ────
+
+describe('RSI Wilder smoothing', () => {
+  it('should use exact (prev*(n-1) + val) / n formula at warmup boundary', () => {
+    // 15 prices → 14 changes → first RSI at index 14, second at index 15
+    const prices = [
+      44.34, 44.09, 44.15, 43.61, 44.33,
+      44.83, 45.10, 45.42, 45.84, 46.08,
+      45.89, 46.03, 45.61, 46.28, 46.28,
+      46.00,
+    ];
+    const n = 14;
+    const result = computeRSI(prices, n);
+
+    // Manually compute first avgGain/avgLoss from changes 1..14
+    const changes: number[] = [];
+    for (let i = 1; i <= n; i++) changes.push(prices[i] - prices[i - 1]);
+
+    const avgGain0 = changes.filter(c => c > 0).reduce((s, c) => s + c, 0) / n;
+    const avgLoss0 = changes.filter(c => c < 0).reduce((s, c) => s + Math.abs(c), 0) / n;
+
+    // Wilder smoothing for index 15 (change = 46.00 - 46.28 = -0.28)
+    const change15 = prices[15] - prices[14]; // -0.28
+    const gain15 = change15 > 0 ? change15 : 0;
+    const loss15 = change15 < 0 ? Math.abs(change15) : 0;
+    const avgGain1 = (avgGain0 * (n - 1) + gain15) / n;
+    const avgLoss1 = (avgLoss0 * (n - 1) + loss15) / n;
+    const expectedRSI = 100 - 100 / (1 + avgGain1 / avgLoss1);
+
+    expect(result.values[15]).toBeCloseTo(expectedRSI, 10);
+  });
+
+  it('should retain memory after a price shock', () => {
+    // Alternating prices (gains and losses) then sudden big spike
+    // Wilder smoothing should damp the spike — RSI should NOT jump to 100
+    const prices = [
+      100, 101, 100, 101, 100, 101, 100, 101,
+      100, 101, 100, 101, 100, 101, 100, // 15 prices, RSI starts at index 14
+      101, 100, 101, 100, 101,            // 5 more alternating
+      110,                                 // big spike
+    ];
+    const result = computeRSI(prices, 14);
+    const lastRSI = result.values[result.values.length - 1];
+
+    // avgLoss is nonzero from alternating, so spike shouldn't produce RSI=100
+    expect(lastRSI).toBeGreaterThan(50);
+    expect(lastRSI).toBeLessThan(100);
+  });
+});
+
+// ──── BB%B Breakout Conditions ────
+
+describe('BB%B breakout conditions', () => {
+  it('price above upper band → %B > 1.0', () => {
+    // Create data where last price is well above upper band
+    const stable = Array.from({ length: 19 }, () => 100);
+    const closes = [...stable, 120]; // spike above band
+    const result = computeBB(closes, 20, 2);
+    expect(result.percentB[19]).toBeGreaterThan(1.0);
+  });
+
+  it('price below lower band → %B < 0.0', () => {
+    const stable = Array.from({ length: 19 }, () => 100);
+    const closes = [...stable, 80]; // crash below band
+    const result = computeBB(closes, 20, 2);
+    expect(result.percentB[19]).toBeLessThan(0.0);
+  });
+
+  it('price at SMA → %B = 0.5', () => {
+    // Symmetric alternating data: mean=100, stddev=1
+    // Last price = 100 (the mean) → %B = (100 - lower) / (upper - lower) = 0.5
+    const closes = [
+      99, 101, 99, 101, 99, 101, 99, 101, 99, 101,
+      99, 101, 99, 101, 99, 101, 99, 101, 99, 101, 100,
+    ];
+    const result = computeBB(closes, 20, 2);
+    // Window is indices 1-20: ten 101s, nine 99s, one 100
+    // Mean = (10*101 + 9*99 + 100) / 20 = 2001/20 = 100.05
+    // Price 100 is very close to mean → %B ≈ 0.5
+    expect(result.percentB[20]).toBeCloseTo(0.5, 1);
+  });
+});
