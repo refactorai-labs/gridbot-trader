@@ -223,7 +223,7 @@ _(To be filled in after Phase 7 acceptance.)_
 
 ## Current Thorough Review — 2026-04-26
 
-**Status:** In progress.
+**Status:** Complete.
 
 ### Review checklist
 - [x] Review current combo supervisor execution semantics: dual long/short behavior, grid seeding, order matching, stop-loss, cooldown, reopen, tier scaling, funding, slippage, leverage accounting. _(agent-assisted)_
@@ -296,3 +296,153 @@ Per-candle `candles5m.slice(0, i+1)` and aggregated slices on each of ~420K cand
 - `src/__tests__/combo.test.ts` — mkTick helper defaults candleHigh/Low to price.
 - `src/__tests__/comboSupervisor.test.ts` — hard assertions, tighter bounds, funding cost regression sentinel.
 - `package.json` — added tsx devDependency.
+
+---
+
+## Combo Correctness Fix Plan — 2026-04-26
+
+**Status:** Complete.
+
+Goal: fix the four current review findings with the smallest source impact possible, then add deterministic regression tests so these issues do not return.
+
+### Fix 1 — P1: SL checked before same-candle fills
+**Root cause:** `runSide()` performs SL/state-machine checks before `matchOrders()`. Any exposure opened by an existing pending order later in the same candle cannot be stopped until a later candle.
+
+**Plan:**
+- [x] 1.1 Extend normal grid fill metadata with an optional deterministic path segment index from `matchOrders()` so the supervisor knows where in the candle path a fill occurred.
+- [x] 1.2 Add a small supervisor helper that checks only the remaining path after a fill segment for SL touch. This avoids falsely stopping a position on a wick that happened before the entry fill.
+- [x] 1.3 Add a minimal state-machine method for supervisor-forced SL transition, so post-fill same-candle SL emits the same `sl_triggered`/`cooldown_entered` events and enters `COOLDOWN` instead of only closing P&L.
+- [x] 1.4 After each processed combo fill that leaves side exposure open, recompute that side's position snapshot, calculate SL, and if the remaining candle path hits SL: force-close the side, tear down its grid, and skip additional pending/counter-order work for that side on that candle.
+- [x] 1.5 Regression test: pending long buy fills during a candle and the later candle path crosses long SL; assert same-candle SL fill exists, side enters cooldown event path, and no position remains.
+
+### Fix 2 — P1: Position direction conflated with grid side
+**Root cause:** Combo grids seed both entry orders and complementary inventory-style orders. A long-side `sell` or short-side `buy` can become an open position even though the combo bot has no explicit inventory model.
+
+**Plan:**
+- [x] 2.1 Keep existing full-grid behavior for the legacy grid engine and tests.
+- [x] 2.2 In combo `seedGrid()`, filter the initial pending orders to entry-direction orders only: long side starts with buys below price; short side starts with sells above price.
+- [x] 2.3 Let counter-orders created after real entries continue to close those entries. This preserves grid cycling without inventing pre-existing inventory.
+- [x] 2.4 Regression test: initial combo long grid cannot open with a sell-first position; initial combo short grid cannot open with a buy-first position.
+
+### Fix 3 — P2: Regular grid fills bypass slippage
+**Root cause:** `matchOrders()` emits fills at exact order price. Combo only applies slippage to forced SL and unused market helper paths.
+
+**Plan:**
+- [x] 3.1 Keep `matchOrders()` price-exact by default for legacy tests and simple grid math.
+- [x] 3.2 In combo supervisor, apply non-SL `applySlippage()` to every matched grid fill before `processFill()`.
+- [x] 3.3 Recompute fill fees consistently after slippage if needed; keep notional invariant (`fill.size` is leveraged USD notional) unchanged.
+- [x] 3.4 Regression test: a normal combo buy fills above its grid price when slippage is enabled.
+
+### Fix 4 — P2: Funding does not update max drawdown
+**Root cause:** funding changes realized P&L but drawdown bookkeeping is only updated in fill/close code paths.
+
+**Plan:**
+- [x] 4.1 Extract a tiny `updateDrawdown(pnlState, totalCapital)` helper inside `supervisor.ts` to avoid repeating drawdown math.
+- [x] 4.2 Use that helper after funding application, forced SL closes, and market cycle closes.
+- [x] 4.3 Regression test: with open exposure and funding but no closing trade, `pnlState.maxDrawdown` / `maxDrawdownPct` reflect the funding loss.
+
+### Test hardening included in this pass
+- [x] 5.1 Add assertions to the remaining trace-only long round-trip test or convert it into a meaningful deterministic grid round-trip fixture.
+- [x] 5.2 Strengthen SL slippage assertion to compare against the un-slipped SL price, not candle close.
+- [x] 5.3 Add explicit wick-based SL tests for long low-below-SL/close-above-SL and short high-above-SL/close-below-SL.
+- [x] 5.4 Add near-exact funding drawdown assertions; leverage bounds remain covered by existing regression test.
+
+### Verification gate
+- [x] 6.1 Run `npm test`.
+- [x] 6.2 Run `npm run build`.
+- [x] 6.3 Add a short review section summarizing the final implementation choices and remaining known limitations.
+
+### Implementation review
+
+- `matchOrders()` now records the deterministic intra-candle path segment for each fill. Legacy grid pricing remains exact; the added metadata is optional on `Fill`.
+- Combo supervisor now applies regular non-SL slippage before P&L processing. SL slippage remains handled by forced-close logic.
+- Combo `seedGrid()` now filters initial pending orders to true entry direction only: long starts with buy orders and short starts with sell orders. This removes implicit inventory/reverse-position openings from combo while leaving legacy full-grid initialization unchanged.
+- After each combo grid fill, the supervisor recomputes side exposure and checks only the remaining candle path for SL. If hit, it force-closes the side, tears down its grid, emits state-machine SL/cooldown events, and skips further same-side fills on that candle.
+- Drawdown bookkeeping now uses a shared helper and is updated after funding, forced SL closes, and cycle market closes.
+- Tests added/strengthened for entry-only combo seeding, regular combo slippage, same-candle fill-then-SL, funding drawdown, wick SL on both sides, SL slippage versus raw SL price, and the previous long round-trip trace test.
+- Verification: `npm test` passes (135 tests / 7 files); `npm run build` passes.
+
+---
+
+## Combo Correctness Follow-up Fix Plan — 2026-04-26
+
+**Status:** Complete.
+
+Follow-up from review of the previous correction pass. Goal: address the high-risk behavioral issues without reintroducing implicit inventory.
+
+### Fix A — H1: Entry-only grid can miss straight-line breakout
+- [x] A1 Add an explicit one-grid-unit market entry on `breakout_entered`, using quote capital `allocatedCap / gridLevels * sizeMultiplier` so leverage is still applied exactly once by `openMarketPosition()`.
+- [x] A2 Keep entry-direction grid seeding for averaging/counter-order behavior after the initial entry.
+- [x] A3 Add regression test: monotone post-breakout trend creates a real long buy fill even without pullback.
+
+### Fix B — H2: Drawdown ignores unrealized losses
+- [x] B1 Change drawdown helper to include `calculateUnrealizedPnl(..., currentPrice).total`.
+- [x] B2 Update drawdown once per candle after fills/funding/state transitions, and keep close-path updates consistent.
+- [x] B3 Add regression test: an open underwater position produces max drawdown before it closes.
+
+### Fix C — Shared path semantics
+- [x] C1 Export `getIntraCandlePath()` from `orderMatcher.ts`.
+- [x] C2 Use the exported helper in combo supervisor so `pathSegment` and same-candle SL use the same path definition.
+- [x] C3 Add a path-segment invariant test.
+
+### Fix D — State-machine contract guard
+- [x] D1 Guard `forceStopLoss()` so it only acts from phases where exposure can be live (`BREAKOUT`, `RUNNING`, `REOPENING`).
+- [x] D2 Add/adjust tests around forced same-candle SL, including short side.
+
+### Small cleanups
+- [x] E1 Avoid non-SL slippage helper call when `basisBp === 0`.
+- [x] E2 Add funding sign assertion for positive funding on a long position.
+- [x] E3 Document why same-candle post-fill SL is computed in the supervisor.
+
+### Verification
+- [x] F1 Run `npm test`.
+- [x] F2 Run `npm run build`.
+- [x] F3 Update this section with final summary.
+
+### Follow-up implementation review
+
+- Breakout and tier-1 reopen now create an explicit one-grid-unit market position before seeding the entry-direction averaging grid. This restores reliable exposure in straight-line trends without reviving implicit inventory orders.
+- Drawdown now includes unrealized P&L and is updated once per candle, plus after funding/close paths. This makes underwater open exposure visible to max drawdown before it realizes.
+- `getIntraCandlePath()` is exported from `orderMatcher.ts` and reused by the combo supervisor, so `pathSegment` and same-candle SL semantics share one path definition.
+- `forceStopLoss()` now ignores invalid lifecycle phases and only acts when live exposure can legitimately exist.
+- Added tests for monotone breakout entry, unrealized drawdown, shared path-segment metadata, short same-candle SL, and positive long funding sign.
+- Verification: `npm test` passes (139 tests / 7 files); `npm run build` passes.
+
+---
+
+## Combo Market Entry TP Fix Plan — 2026-04-26
+
+**Status:** In progress.
+
+Goal: make the explicit breakout/reopen market entry realize profit through a paired TP order, without relying on grid-level index collisions or implicit inventory.
+
+### Market entry lifecycle
+- [x] 1.1 Add optional `positionId` to `PendingOrder`, `Fill`, and internal open positions.
+- [x] 1.2 Make `processFill()` close by `positionId` before falling back to legacy grid-level adjacency.
+- [x] 1.3 Give explicit market entries a stable `positionId` and a sentinel level index that cannot collide with grid levels.
+- [x] 1.4 After seeding the combo grid, add one TP pending order at the nearest favorable grid level with the same `positionId`.
+- [x] 1.5 Keep legacy grid behavior unchanged for orders without `positionId`.
+
+### Sizing/accounting
+- [x] 2.1 Keep the market entry to one grid unit.
+- [x] 2.2 Reserve that one grid unit from the averaging grid budget so intended notional does not silently grow.
+- [x] 2.3 Add comments clarifying quote-notional fee semantics.
+
+### Tests
+- [x] 3.1 Add test: monotone favorable trend closes the market entry at TP and realizes profit.
+- [x] 3.2 Add test: market-entry TP closes by `positionId`, not by `levelIndex`.
+- [x] 3.3 Add test/coverage that legacy grid round-trips still work through level adjacency.
+
+### Verification
+- [x] 4.1 Run `npm test`.
+- [x] 4.2 Run `npm run build`.
+- [x] 4.3 Update this section with final summary.
+
+### Market entry TP implementation review
+
+- Explicit combo market entries now get a stable `positionId` and a sentinel negative `levelIndex`, so they no longer depend on grid-level/candle-index collisions.
+- `processFill()` now closes opposite-side fills by matching `positionId` first. Legacy grid orders without a `positionId` continue using the existing adjacent-level matching behavior.
+- Breakout/reopen market entries now seed a paired TP order at the nearest favorable grid level using the same `positionId`.
+- The averaging grid budget reserves the one-grid-unit market entry before calculating grid base order size.
+- Tests now assert that monotone favorable long trends close the market entry at TP and realize profit, while legacy grid round-trips still pass through adjacency.
+- Verification: `npm test` passes (140 tests / 7 files); `npm run build` passes.

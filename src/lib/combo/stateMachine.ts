@@ -93,6 +93,26 @@ export class ComboBotStateMachine {
     return { ...this.state };
   }
 
+  forceStopLoss(inp: TickInputs, slPriceVal: number): ComboEvent[] {
+    if (!['BREAKOUT', 'RUNNING', 'REOPENING'].includes(this.state.phase)) {
+      return [];
+    }
+    const instr: BotInstruction = {
+      allowNewOrders: false,
+      sizeMultiplier: 0,
+      slPrice: null,
+      slHit: false,
+      closePosition: false,
+    };
+    const events: ComboEvent[] = [];
+    this.enterCooldownFromSL(inp, slPriceVal, instr, events);
+    if (this.state.phase === 'COOLDOWN') {
+      this.state.currentTier = 0;
+      this.candlesInTier = 0;
+    }
+    return events;
+  }
+
   tick(inp: TickInputs): TickResult {
     const events: ComboEvent[] = [];
     const instr: BotInstruction = {

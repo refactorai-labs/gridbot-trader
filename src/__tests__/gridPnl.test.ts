@@ -169,6 +169,24 @@ describe('Grid P&L: Long vs Short', () => {
     expect(result.realizedPnl).toBeGreaterThan(0);
   });
 
+  it('records the intra-candle path segment that filled each order', () => {
+    resetOrderIdCounter();
+    const levels = generateGridLevels(2800, 3200, 5, 'long', 'arithmetic');
+    const orders = initializeOrders(3000, levels, 'long', 100);
+    const fills = matchOrders(
+      { timestamp: 1700000000, open: 3000, high: 3010, low: 2900, close: 2950, volume: 100 },
+      0,
+      orders,
+      0.001,
+      levels,
+      [],
+    );
+
+    expect(fills.length).toBeGreaterThan(0);
+    expect(fills.every(f => typeof f.pathSegment === 'number')).toBe(true);
+    expect(fills.every(f => f.pathSegment! >= 0 && f.pathSegment! <= 2)).toBe(true);
+  });
+
   it('should initialize orders on ALL levels for LONG (full grid coverage)', () => {
     resetOrderIdCounter();
     const levels = generateGridLevels(2800, 3200, 10, 'long', 'arithmetic');
@@ -212,7 +230,7 @@ describe('Grid P&L: Long vs Short', () => {
     const candles: OHLC[] = [
       { timestamp: 1700000000, open: 3000, high: 3010, low: 2990, close: 3000, volume: 100 },
       { timestamp: 1700000300, open: 3000, high: 3000, low: 2900, close: 2900, volume: 100 },
-      { timestamp: 1700000600, open: 2900, high: 3010, low: 2900, close: 3000, volume: 100 },
+      { timestamp: 1700000600, open: 2900, high: 3030, low: 2900, close: 3000, volume: 100 },
     ];
 
     const result = runGridSim(candles, 'long', 2800, 3100, 5, 100, 0.001, 5000);
@@ -225,5 +243,9 @@ describe('Grid P&L: Long vs Short', () => {
     for (const f of result.allFills) {
       console.log(`  ${f.type} @ ${f.fillPrice} (level ${f.levelIndex}, side=${f.side}, pnl=${f.pnl?.toFixed(4)})`);
     }
+
+    expect(result.roundTrips).toBeGreaterThanOrEqual(1);
+    expect(result.realizedPnl).toBeGreaterThan(0);
+    expect(result.openPositions).toBe(0);
   });
 });

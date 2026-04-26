@@ -7,10 +7,11 @@ import {
   PendingOrder,
   Fill,
   SnapshotData,
+  OrderType,
 } from '../types';
 import { AdaptiveEngine, AdaptiveSignals, DEFAULT_ADAPTIVE_CONFIG } from './adaptiveEngine';
 import { ComboBotStateMachine, ComboEvent, PositionSnapshot } from './stateMachine';
-import { allocateCapital, atrScaledGridStep } from './sizing';
+import { allocateCapital, atrScaledGridStep, slPrice } from './sizing';
 import {
   PnLState,
   createInitialPnLState,
@@ -24,6 +25,7 @@ import {
   matchOrders,
   createCounterOrder,
   resetOrderIdCounter,
+  getIntraCandlePath,
 } from '../simulation/orderMatcher';
 import {
   applyFundingBetween,
@@ -57,6 +59,8 @@ interface SideGridState {
    *  may have already crossed grid levels earlier in the candle). Reset each iteration. */
   freshlySeeded: boolean;
 }
+
+const MARKET_ENTRY_LEVEL_INDEX = -1;
 
 function emptySideGridState(): SideGridState {
   return { levels: [], pending: [], baseOrderSize: 0, sizeMultiplier: 0, nextSizeMultiplier: null, active: false, freshlySeeded: false };
@@ -187,6 +191,36 @@ function positionSnapshotForSide(
   };
 }
 
+function updateDrawdown(pnlState: PnLState, totalCapital: number, currentPrice: number): void {
+  const unrealized = calculateUnrealizedPnl(pnlState, currentPrice);
+  const equity = totalCapital + pnlState.realizedPnl + unrealized.total;
+  if (equity > pnlState.maxEquity) pnlState.maxEquity = equity;
+  const drawdown = pnlState.maxEquity - equity;
+  if (drawdown > pnlState.maxDrawdown) {
+    pnlState.maxDrawdown = drawdown;
+    pnlState.maxDrawdownPct = pnlState.maxEquity > 0 ? (drawdown / pnlState.maxEquity) * 100 : 0;
+  }
+}
+
+function segmentTouchesSL(side: GridSide, from: number, to: number, sl: number): boolean {
+  return side === 'long'
+    ? Math.min(from, to) <= sl
+    : Math.max(from, to) >= sl;
+}
+
+function remainingPathTouchesSL(candle: OHLC, fill: Fill, side: GridSide, sl: number): boolean {
+  const path = getIntraCandlePath(candle);
+  const seg = Math.max(0, Math.min(fill.pathSegment ?? 0, path.length - 2));
+
+  // The fill occurs inside this segment, so only the path after the fill price
+  // can trigger a same-candle SL for the newly opened exposure.
+  if (segmentTouchesSL(side, fill.fillPrice, path[seg + 1], sl)) return true;
+  for (let i = seg + 1; i < path.length - 1; i++) {
+    if (segmentTouchesSL(side, path[i], path[i + 1], sl)) return true;
+  }
+  return false;
+}
+
 function applyForcedCloseSL(
   pnlState: PnLState,
   side: GridSide,
@@ -198,6 +232,7 @@ function applyForcedCloseSL(
   slippageCfg: SlippageConfig,
   leverage: number,
   totalCapital: number,
+  currentPrice: number,
   outFills: Fill[]
 ): void {
   const positions = pnlState.openPositions.filter(p => p.side === side);
@@ -227,13 +262,7 @@ function applyForcedCloseSL(
     else if (pnl < 0) pnlState.lossCount++;
     pnlState.totalFees += fees;
 
-    const equity = totalCapital + pnlState.realizedPnl;
-    if (equity > pnlState.maxEquity) pnlState.maxEquity = equity;
-    const drawdown = pnlState.maxEquity - equity;
-    if (drawdown > pnlState.maxDrawdown) {
-      pnlState.maxDrawdown = drawdown;
-      pnlState.maxDrawdownPct = pnlState.maxEquity > 0 ? (drawdown / pnlState.maxEquity) * 100 : 0;
-    }
+    updateDrawdown(pnlState, totalCapital, currentPrice);
 
     outFills.push({
       orderId: `sl_${side}_${candleIdx}_${pos.levelIndex}`,
@@ -295,11 +324,14 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
     });
   }
 
+  const longSideCfg = sideCfgOrDefault(cfg.longSide, 'long');
+  const shortSideCfg = sideCfgOrDefault(cfg.shortSide, 'short');
+
   const longSM = cfg.mode !== 'short'
-    ? new ComboBotStateMachine('long', sideCfgOrDefault(cfg.longSide, 'long'))
+    ? new ComboBotStateMachine('long', longSideCfg)
     : null;
   const shortSM = cfg.mode !== 'long'
-    ? new ComboBotStateMachine('short', sideCfgOrDefault(cfg.shortSide, 'short'))
+    ? new ComboBotStateMachine('short', shortSideCfg)
     : null;
 
   resetOrderIdCounter();
@@ -372,6 +404,7 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
         totalFundingCost += fund.totalCost;
         longFundingCost += fund.longCost;
         shortFundingCost += fund.shortCost;
+        updateDrawdown(pnlState, totalCapital, candle.close);
       }
     }
 
@@ -411,6 +444,7 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
           slippageCfg,
           leverage,
           totalCapital,
+          candle.close,
           fills,
         );
         teardownGrid(gridState);
@@ -420,16 +454,38 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
       // cycle_complete closes at market and tears down.
       for (const e of smEvents) {
         if (e.type === 'breakout_entered' || e.type === 'tier1_reopen') {
+          const marketEntrySize = allocatedCap / Math.max(1, gridLevels) * instruction.sizeMultiplier;
+          const gridCapital = Math.max(0, allocatedCap - marketEntrySize);
           seedGrid(
             gridState,
             side,
             candle.close,
             signals.atr,
-            allocatedCap,
+            gridCapital,
             leverage,
             gridLevels,
             instruction.sizeMultiplier,
           );
+          if (!posHasSide(pnlState, side)) {
+            const positionId = `combo_entry_${side}_${i}`;
+            const entryFill = openMarketPosition(
+              pnlState,
+              side,
+              candle,
+              i,
+              marketEntrySize,
+              leverage,
+              feeRate,
+              slippageCfg,
+              signals.atr,
+              positionId,
+              fills,
+            );
+            if (entryFill) {
+              const tpOrder = createMarketEntryTakeProfitOrder(entryFill, gridState.levels);
+              if (tpOrder) gridState.pending.push(tpOrder);
+            }
+          }
         } else if (e.type === 'tier2_scale' || e.type === 'tier3_scale') {
           // Defer the multiplier to the next candle so same-candle fills are not
           // retroactively inflated (matchOrders still runs after runSide this candle).
@@ -470,23 +526,84 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
     ];
     if (combinedPending.length > 0) {
       const orderFills = matchOrders(candle, i, combinedPending, feeRate, longGrid.levels, shortGrid.levels);
+      const stoppedSides = new Set<GridSide>();
       for (const fill of orderFills) {
+        if (stoppedSides.has(fill.side)) continue;
         const gs = fill.side === 'long' ? longGrid : shortGrid;
+        const sm = fill.side === 'long' ? longSM : shortSM;
+        const sideCfg = fill.side === 'long' ? longSideCfg : shortSideCfg;
+        const allocatedCap = fill.side === 'long' ? allocation.longCapital : allocation.shortCapital;
         // Remove the filled pending order
         gs.pending = gs.pending.filter(o => o.id !== fill.orderId);
+        if (slippageCfg.basisBp !== 0) {
+          fill.fillPrice = applySlippage(
+            fill.fillPrice,
+            fill.type,
+            fill.side,
+            0,
+            false,
+            slippageCfg,
+          );
+        }
+        fill.fees = fill.size * feeRate;
         // fill.size is already leveraged notional (baseOrderSize = allocatedCap * leverage / levels).
         // Do NOT multiply by leverage again — that double-counts and was the source of 25× P&L / 125× funding.
         const { pnl, pnlPct } = processFill(pnlState, fill, totalCapital);
         fill.pnl = pnl;
         fill.pnlPct = pnlPct;
 
-        // Create counter-order at the adjacent level (buy filled → sell above; sell filled → buy below).
-        const counter = createCounterOrder(fill, longGrid.levels, shortGrid.levels, gs.baseOrderSize, gs.sizeMultiplier);
-        if (counter) gs.pending.push(counter);
+        const postFillPos = positionSnapshotForSide(pnlState, fill.side, candle.close, allocatedCap);
+        if (postFillPos.hasPosition && postFillPos.avgEntry > 0 && sm) {
+          // The state-machine tick happened before this fill, so any instruction SL
+          // cannot cover exposure opened later in the candle. Recompute from the same
+          // shared sizing formula for this post-fill position snapshot.
+          const sameCandleSL = slPrice(sideCfg, fill.side, postFillPos.avgEntry, signals.atr);
+          if (remainingPathTouchesSL(candle, fill, fill.side, sameCandleSL)) {
+            fills.push(fill);
+            applyForcedCloseSL(
+              pnlState,
+              fill.side,
+              sameCandleSL,
+              i,
+              candle.timestamp,
+              signals.atr,
+              feeRate,
+              slippageCfg,
+              leverage,
+              totalCapital,
+              candle.close,
+              fills,
+            );
+            teardownGrid(gs);
+            stoppedSides.add(fill.side);
+            const slEvents = sm.forceStopLoss({
+              candleIdx: i,
+              timestamp: candle.timestamp,
+              price: candle.close,
+              candleHigh: candle.high,
+              candleLow: candle.low,
+              signals,
+              position: postFillPos,
+              entryConditionMet: false,
+              reopenConditionsMet: false,
+            }, sameCandleSL);
+            for (const e of slEvents) events.push(supervisorEvent(e, 0, 0));
+            continue;
+          }
+        }
+
+        // Market-entry TP fills close by positionId and should not spawn a new grid counter.
+        if (!fill.positionId) {
+          // Create counter-order at the adjacent level (buy filled → sell above; sell filled → buy below).
+          const counter = createCounterOrder(fill, longGrid.levels, shortGrid.levels, gs.baseOrderSize, gs.sizeMultiplier);
+          if (counter) gs.pending.push(counter);
+        }
 
         fills.push(fill);
       }
     }
+
+    updateDrawdown(pnlState, totalCapital, candle.close);
 
     prevTimeSec = candle.timestamp;
 
@@ -554,7 +671,8 @@ function seedGrid(
   const totalNotional = Math.max(0, allocatedCap) * leverage;
   gridState.baseOrderSize = totalNotional / Math.max(1, levelCount);
   gridState.sizeMultiplier = sizeMultiplier;
-  gridState.pending = initializeOrders(centerPrice, gridState.levels, side, gridState.baseOrderSize, sizeMultiplier);
+  gridState.pending = initializeOrders(centerPrice, gridState.levels, side, gridState.baseOrderSize, sizeMultiplier)
+    .filter(o => side === 'long' ? o.type === 'buy' : o.type === 'sell');
   gridState.active = true;
   gridState.freshlySeeded = true;
 }
@@ -568,6 +686,25 @@ function teardownGrid(gridState: SideGridState): void {
   gridState.active = false;
 }
 
+function createMarketEntryTakeProfitOrder(entryFill: Fill, levels: GridLevel[]): PendingOrder | null {
+  const tpLevel = entryFill.side === 'long'
+    ? levels.find(l => l.price > entryFill.fillPrice)
+    : [...levels].reverse().find(l => l.price < entryFill.fillPrice);
+  if (!tpLevel) return null;
+
+  const type: OrderType = entryFill.side === 'long' ? 'sell' : 'buy';
+  return {
+    id: `${entryFill.orderId}_tp`,
+    side: entryFill.side,
+    type,
+    levelIndex: tpLevel.index,
+    price: tpLevel.price,
+    size: entryFill.size,
+    sizeMultiplier: 1,
+    positionId: entryFill.positionId,
+  };
+}
+
 function openMarketPosition(
   pnlState: PnLState,
   side: GridSide,
@@ -578,9 +715,10 @@ function openMarketPosition(
   feeRate: number,
   slippageCfg: SlippageConfig,
   atr: number,
+  positionId: string,
   outFills: Fill[]
-): void {
-  if (sizeUSDT <= 0) return;
+): Fill | null {
+  if (sizeUSDT <= 0) return null;
   const effectiveSize = sizeUSDT * leverage;
   const orderType = side === 'long' ? 'buy' : 'sell';
   const atrFrac = atrFractionOfPrice(atr, candle.close);
@@ -593,26 +731,30 @@ function openMarketPosition(
     entryType: orderType,
     entryPrice,
     size: effectiveSize,
-    levelIndex: candleIdx,
+    levelIndex: MARKET_ENTRY_LEVEL_INDEX,
     entryFees: fees,
+    positionId,
   });
   pnlState.totalFees += fees;
   if (side === 'long') pnlState.longFillCount++;
   else pnlState.shortFillCount++;
 
-  outFills.push({
+  const fill: Fill = {
     orderId: `entry_${side}_${candleIdx}`,
     side,
     type: orderType,
-    levelIndex: candleIdx,
+    levelIndex: MARKET_ENTRY_LEVEL_INDEX,
     fillPrice: entryPrice,
     candleIdx,
     timestamp: candle.timestamp,
     size: effectiveSize,
     fees,
+    positionId,
     pnl: 0,
     pnlPct: 0,
-  });
+  };
+  outFills.push(fill);
+  return fill;
 }
 
 function closeMarketPosition(
@@ -652,13 +794,7 @@ function closeMarketPosition(
     else if (pnl < 0) pnlState.lossCount++;
     pnlState.totalFees += fees;
 
-    const equity = totalCapital + pnlState.realizedPnl;
-    if (equity > pnlState.maxEquity) pnlState.maxEquity = equity;
-    const drawdown = pnlState.maxEquity - equity;
-    if (drawdown > pnlState.maxDrawdown) {
-      pnlState.maxDrawdown = drawdown;
-      pnlState.maxDrawdownPct = pnlState.maxEquity > 0 ? (drawdown / pnlState.maxEquity) * 100 : 0;
-    }
+    updateDrawdown(pnlState, totalCapital, candle.close);
 
     outFills.push({
       orderId: `exit_${side}_${candleIdx}_${pos.levelIndex}`,

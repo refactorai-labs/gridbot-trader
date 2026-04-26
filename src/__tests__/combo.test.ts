@@ -210,6 +210,20 @@ describe('combo/stateMachine transitions', () => {
     expect(r.events.map(e => e.type)).toEqual(expect.arrayContaining(['sl_triggered', 'cooldown_entered']));
   });
 
+  it('RUNNING → COOLDOWN when long SL is pierced by wick but close recovers', () => {
+    const sm = new ComboBotStateMachine('long', SIDE_CFG);
+    sm.tick(mkTick(0, 100, noPos(100), true, false));
+    sm.tick(mkTick(1, 100, withPos(100, 100), false, false));
+    const wickTick = {
+      ...mkTick(2, 100, withPos(100, 100), false, false),
+      candleLow: 95,
+      candleHigh: 101,
+    };
+    const r = sm.tick(wickTick);
+    expect(sm.getState().phase).toBe('COOLDOWN');
+    expect(r.instruction.slHit).toBe(true);
+  });
+
   it('COOLDOWN waits cooldownCandles before considering reopen', () => {
     const sm = new ComboBotStateMachine('long', SIDE_CFG);
     sm.tick(mkTick(0, 100, noPos(100), true, false));
@@ -351,6 +365,20 @@ describe('combo/stateMachine transitions', () => {
     sm.tick(mkTick(1, 100, withPos(100, 100), false, false));
     // For short, SL above entry. slCap=0.04 → SL at 104.
     const r = sm.tick(mkTick(2, 105, withPos(100, 105), false, false));
+    expect(r.instruction.slHit).toBe(true);
+    expect(sm.getState().phase).toBe('COOLDOWN');
+  });
+
+  it('short side: SL fires when wick pierces above SL but close recovers', () => {
+    const sm = new ComboBotStateMachine('short', SIDE_CFG);
+    sm.tick(mkTick(0, 100, noPos(100), true, false));
+    sm.tick(mkTick(1, 100, withPos(100, 100), false, false));
+    const wickTick = {
+      ...mkTick(2, 100, withPos(100, 100), false, false),
+      candleHigh: 105,
+      candleLow: 99,
+    };
+    const r = sm.tick(wickTick);
     expect(r.instruction.slHit).toBe(true);
     expect(sm.getState().phase).toBe('COOLDOWN');
   });

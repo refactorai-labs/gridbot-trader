@@ -26,6 +26,7 @@ interface OpenPosition {
   size: number;
   levelIndex: number;
   entryFees: number;
+  positionId?: string;
 }
 
 export function createInitialPnLState(): PnLState {
@@ -63,13 +64,14 @@ export function processFill(
   }
 
   // Check if this fill closes an existing open position
-  const matchIdx = state.openPositions.findIndex(
-    p => p.side === fill.side &&
-         p.entryType !== fill.type &&
-         (fill.type === 'sell'
-           ? p.levelIndex === fill.levelIndex - 1  // sell closes buy one level below
-           : p.levelIndex === fill.levelIndex + 1) // buy closes sell one level above
-  );
+  const matchIdx = state.openPositions.findIndex(p => {
+    if (p.side !== fill.side || p.entryType === fill.type) return false;
+    if (fill.positionId && p.positionId === fill.positionId) return true;
+    if (fill.positionId || p.positionId) return false;
+    return fill.type === 'sell'
+      ? p.levelIndex === fill.levelIndex - 1  // sell closes buy one level below
+      : p.levelIndex === fill.levelIndex + 1; // buy closes sell one level above
+  });
 
   if (matchIdx >= 0) {
     // This fill closes an open position — calculate round-trip P&L
@@ -131,6 +133,7 @@ export function processFill(
     size: fill.size,
     levelIndex: fill.levelIndex,
     entryFees: fill.fees,
+    positionId: fill.positionId,
   });
 
   return { pnl: 0, pnlPct: 0 };

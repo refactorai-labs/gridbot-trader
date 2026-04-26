@@ -65,6 +65,7 @@ export interface PendingOrder {
   price: number;
   size: number;
   sizeMultiplier: number;
+  positionId?: string;
 }
 
 export interface Fill {
@@ -77,6 +78,8 @@ export interface Fill {
   timestamp: number;
   size: number;
   fees: number;
+  pathSegment?: number;
+  positionId?: string;
   pnl?: number;
   pnlPct?: number;
   counterOrderId?: string;

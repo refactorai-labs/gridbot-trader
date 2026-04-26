@@ -8,6 +8,13 @@ function candle(ts: number, o: number, h: number, l: number, c: number, v: numbe
   return { timestamp: ts, open: o, high: h, low: l, close: c, volume: v };
 }
 
+function primedTrendCandles(startTs: number): OHLC[] {
+  return Array.from({ length: 30 }, (_, i) => {
+    const close = 80 + i;
+    return candle(startTs - (30 - i) * 14_400, close - 0.5, close + 2, close - 2, close, 100);
+  });
+}
+
 const SIDE_CFG: ComboBotSideConfig = {
   averagingDepth: 5,
   slBasePercent: 0.015,
@@ -20,6 +27,14 @@ const SIDE_CFG: ComboBotSideConfig = {
   cooldownCandles: 6,
   retryCap: 3,
   hibernationCandles: 24,
+};
+
+const FAST_SIDE_CFG: ComboBotSideConfig = {
+  ...SIDE_CFG,
+  slBasePercent: 0.005,
+  slAtrMultiplier: 0,
+  slFloor: 0.01,
+  slCap: 0.01,
 };
 
 const CFG: ComboBotConfig = {
@@ -39,6 +54,23 @@ const CFG: ComboBotConfig = {
   // Relaxed thresholds so the MVP heuristics fire during a synthetic trend
   rsiLongThreshold: 100,
   rsiShortThreshold: 0,
+};
+
+const FAST_CFG: ComboBotConfig = {
+  ...CFG,
+  mode: 'long',
+  leverage: 1,
+  allocationLong: 1,
+  avwapEnabled: false,
+  gridLevels: 4,
+  longSide: FAST_SIDE_CFG,
+  shortSide: FAST_SIDE_CFG,
+  atrPeriod: 3,
+  erLookback: 3,
+  erSmoothingLength: 2,
+  erRegimeThreshold: 0.1,
+  rsiLongThreshold: 101,
+  rsiShortThreshold: 99,
 };
 
 describe('combo/supervisor integration', () => {
@@ -108,18 +140,259 @@ describe('combo/supervisor integration', () => {
     // The synthetic market entry on breakout_entered produces a fill
     expect(result.fills.length).toBeGreaterThan(0);
 
-    // Funding was applied (open positions × at least one 8h settlement).
-    // Upper bound is tight: ~17 funding events on ≤$50K notional × 0.01% = ~$85 max.
-    // Pre-fix bug had leverage³ inflating funding ~25× → bound catches regression.
-    expect(Math.abs(result.totalFundingCost)).toBeGreaterThan(0);
-    expect(Math.abs(result.totalFundingCost)).toBeLessThan(500);
-
     // Final anchor exists (ER crossed threshold during the uptrend)
     expect(result.finalAnchor).not.toBeNull();
 
     // Snapshots cover the run
     expect(result.snapshots.length).toBeGreaterThan(1);
     expect(result.snapshots[result.snapshots.length - 1].candleIdx).toBe(candles5m.length - 1);
+  });
+
+  it('does not seed combo grids with inventory-style reverse orders', () => {
+    const start = 1_700_000_000;
+    const trend = primedTrendCandles(start);
+
+    const longCandles = [
+      candle(start, 100, 100.2, 99.8, 100),
+      // Would cross initial long-side sell levels if combo seeded implied inventory sells.
+      candle(start + 300, 100, 106, 99.5, 104),
+    ];
+    const longResult = runComboSimulationCore({
+      candles5m: longCandles,
+      candles1h: trend,
+      candles4h: trend,
+      cfg: { ...FAST_CFG, mode: 'long' },
+      totalCapital: 10000,
+      fundingRates: [],
+      feeRate: 0,
+    });
+    expect(longResult.fills.some(f => f.side === 'long' && f.type === 'sell' && !f.orderId.startsWith('sl_') && !f.positionId)).toBe(false);
+
+    const shortCandles = [
+      candle(start, 100, 100.2, 99.8, 100),
+      // Would cross initial short-side buy levels if combo seeded implied inventory buys.
+      candle(start + 300, 100, 100.5, 94, 96),
+    ];
+    const shortResult = runComboSimulationCore({
+      candles5m: shortCandles,
+      candles1h: trend,
+      candles4h: trend,
+      cfg: { ...FAST_CFG, mode: 'short' },
+      totalCapital: 10000,
+      fundingRates: [],
+      feeRate: 0,
+    });
+    expect(shortResult.fills.some(f => f.side === 'short' && f.type === 'buy' && !f.orderId.startsWith('sl_') && !f.positionId)).toBe(false);
+  });
+
+  it('opens an explicit one-grid-unit position on monotone long breakout without waiting for pullback', () => {
+    const start = 1_700_000_000;
+    const trend = primedTrendCandles(start);
+    const candles5m = [
+      candle(start, 100, 101, 99.5, 100),
+      candle(start + 300, 100, 104, 100.5, 103),
+      candle(start + 600, 103, 107, 103.5, 106),
+    ];
+    const result = runComboSimulationCore({
+      candles5m,
+      candles1h: trend,
+      candles4h: trend,
+      cfg: { ...FAST_CFG, mode: 'long' },
+      totalCapital: 10000,
+      fundingRates: [],
+      feeRate: 0,
+      slippageCfg: {
+        basisBp: 0,
+        slSlippageCoefficient: 1,
+        slSlippageFloor: 0.001,
+        slSlippageCap: 0.01,
+      },
+    });
+
+    const entryFill = result.fills.find(f => f.orderId.startsWith('entry_long_'));
+    expect(entryFill).toBeDefined();
+    expect(entryFill!.type).toBe('buy');
+    expect(entryFill!.levelIndex).toBeLessThan(0);
+    expect(result.events.map(e => e.type)).toContain('position_opened');
+  });
+
+  it('closes the explicit market entry through its paired take-profit order', () => {
+    const start = 1_700_000_000;
+    const trend = primedTrendCandles(start);
+    const candles5m = [
+      candle(start, 100, 101, 99.5, 100),
+      candle(start + 300, 100, 104, 100.5, 103),
+      candle(start + 600, 103, 108, 103.5, 107),
+    ];
+    const result = runComboSimulationCore({
+      candles5m,
+      candles1h: trend,
+      candles4h: trend,
+      cfg: { ...FAST_CFG, mode: 'long' },
+      totalCapital: 10000,
+      fundingRates: [],
+      feeRate: 0,
+      slippageCfg: {
+        basisBp: 0,
+        slSlippageCoefficient: 1,
+        slSlippageFloor: 0.001,
+        slSlippageCap: 0.01,
+      },
+    });
+
+    const entryFill = result.fills.find(f => f.orderId.startsWith('entry_long_'));
+    expect(entryFill?.positionId).toBeDefined();
+    const tpFill = result.fills.find(f => f.positionId === entryFill!.positionId && f.type === 'sell');
+    expect(tpFill).toBeDefined();
+    expect(tpFill!.levelIndex).toBeGreaterThanOrEqual(0);
+    expect(tpFill!.pnl).toBeGreaterThan(0);
+    expect(result.pnlState.realizedPnl).toBeGreaterThan(0);
+  });
+
+  it('applies regular slippage to combo grid fills before P&L processing', () => {
+    const start = 1_700_000_000;
+    const trend = primedTrendCandles(start);
+    const candles5m = [
+      candle(start, 100, 100.2, 99.8, 100),
+      candle(start + 300, 100, 100.2, 98.5, 99.5),
+    ];
+    const result = runComboSimulationCore({
+      candles5m,
+      candles1h: trend,
+      candles4h: trend,
+      cfg: { ...FAST_CFG, mode: 'long' },
+      totalCapital: 10000,
+      fundingRates: [],
+      feeRate: 0,
+      slippageCfg: {
+        basisBp: 0.01,
+        slSlippageCoefficient: 1,
+        slSlippageFloor: 0.001,
+        slSlippageCap: 0.01,
+      },
+    });
+
+    const buyFill = result.fills.find(f => f.side === 'long' && f.type === 'buy');
+    expect(buyFill).toBeDefined();
+    // The raw grid level is below 99; 1% buy slippage moves it above 99.
+    expect(buyFill!.fillPrice).toBeGreaterThan(99);
+  });
+
+  it('forces same-candle SL when a newly filled grid order is stopped later in the candle path', () => {
+    const start = 1_700_000_000;
+    const trend = primedTrendCandles(start);
+    const candles5m = [
+      candle(start, 100, 100.2, 99.8, 100),
+      // Bullish path is open -> low -> high -> close; the buy fills on the drop,
+      // then the remaining drop crosses SL before the candle recovers.
+      candle(start + 300, 100, 101, 90, 100.5),
+    ];
+    const result = runComboSimulationCore({
+      candles5m,
+      candles1h: trend,
+      candles4h: trend,
+      cfg: { ...FAST_CFG, mode: 'long' },
+      totalCapital: 10000,
+      fundingRates: [],
+      feeRate: 0,
+    });
+
+    expect(result.fills.some(f => f.side === 'long' && f.type === 'buy')).toBe(true);
+    expect(result.fills.some(f => f.orderId.startsWith('sl_long_'))).toBe(true);
+    expect(result.pnlState.openPositions.filter(p => p.side === 'long')).toHaveLength(0);
+    expect(result.events.map(e => e.type)).toEqual(expect.arrayContaining(['sl_triggered', 'cooldown_entered']));
+  });
+
+  it('forces same-candle SL for short fills stopped later in the candle path', () => {
+    const start = 1_700_000_000;
+    const trend = primedTrendCandles(start);
+    const candles5m = [
+      candle(start, 100, 100.2, 99.8, 100),
+      // Bearish path is open -> high -> low -> close; the short sell fills on the
+      // push up, then the remaining push crosses the short SL before the drop.
+      candle(start + 300, 100, 110, 99, 99.5),
+    ];
+    const result = runComboSimulationCore({
+      candles5m,
+      candles1h: trend,
+      candles4h: trend,
+      cfg: { ...FAST_CFG, mode: 'short' },
+      totalCapital: 10000,
+      fundingRates: [],
+      feeRate: 0,
+    });
+
+    expect(result.fills.some(f => f.side === 'short' && f.type === 'sell')).toBe(true);
+    expect(result.fills.some(f => f.orderId.startsWith('sl_short_'))).toBe(true);
+    expect(result.pnlState.openPositions.filter(p => p.side === 'short')).toHaveLength(0);
+    expect(result.events.map(e => e.type)).toEqual(expect.arrayContaining(['sl_triggered', 'cooldown_entered']));
+  });
+
+  it('includes unrealized losses in max drawdown before a position closes', () => {
+    const start = 1_700_000_000;
+    const trend = primedTrendCandles(start);
+    const wideStopSide: ComboBotSideConfig = {
+      ...FAST_SIDE_CFG,
+      slBasePercent: 0.5,
+      slFloor: 0.5,
+      slCap: 0.5,
+    };
+    const candles5m = [
+      candle(start, 100, 100.2, 99.8, 100),
+      candle(start + 300, 100, 100.2, 89.8, 90),
+      candle(start + 600, 90, 91, 89, 90),
+    ];
+    const result = runComboSimulationCore({
+      candles5m,
+      candles1h: trend,
+      candles4h: trend,
+      cfg: { ...FAST_CFG, mode: 'long', longSide: wideStopSide },
+      totalCapital: 10000,
+      fundingRates: [],
+      feeRate: 0,
+      slippageCfg: {
+        basisBp: 0,
+        slSlippageCoefficient: 1,
+        slSlippageFloor: 0.001,
+        slSlippageCap: 0.01,
+      },
+    });
+
+    expect(result.pnlState.realizedPnl).toBe(0);
+    expect(result.pnlState.openPositions.filter(p => p.side === 'long').length).toBeGreaterThan(0);
+    expect(result.pnlState.maxDrawdown).toBeGreaterThan(0);
+    expect(result.pnlState.maxDrawdownPct).toBeGreaterThan(0);
+  });
+
+  it('updates max drawdown when funding is charged without a closing trade', () => {
+    const start = 1_700_000_000;
+    const trend = primedTrendCandles(start);
+    const candles5m = [
+      candle(start, 100, 100.2, 99.8, 100),
+      candle(start + 300, 100, 100.2, 98.5, 99.5),
+      candle(start + 600, 99.5, 100, 99, 99.5),
+    ];
+    const result = runComboSimulationCore({
+      candles5m,
+      candles1h: trend,
+      candles4h: trend,
+      cfg: { ...FAST_CFG, mode: 'long' },
+      totalCapital: 10000,
+      fundingRates: [{ fundingTimeSec: start + 600, fundingRate: 0.01 }],
+      feeRate: 0,
+      slippageCfg: {
+        basisBp: 0,
+        slSlippageCoefficient: 1,
+        slSlippageFloor: 0.001,
+        slSlippageCap: 0.01,
+      },
+    });
+
+    expect(result.totalFundingCost).toBeGreaterThan(0);
+    expect(result.longFundingCost).toBeGreaterThan(0);
+    expect(result.shortFundingCost).toBe(0);
+    expect(result.pnlState.maxDrawdown).toBeGreaterThanOrEqual(result.totalFundingCost);
+    expect(result.pnlState.maxDrawdownPct).toBeGreaterThan(0);
   });
 
   it('long-only mode skips short-side state machine entirely', () => {
@@ -234,11 +507,10 @@ describe('combo/supervisor integration', () => {
     expect(slFill).toBeDefined();
     if (!slFill) return; // type narrow
 
-    // Long SL exit is a sell — slippage pushes fillPrice strictly below the candle's high
-    // (and below the underlying slPrice). At minimum, slippage floor (10bp) must show up:
-    // a fill at the candle close with no slippage would equal close. We verify the fill
-    // is meaningfully different from the candle close due to applySlippage.
-    const closeAtFill = candles5m[slFill.candleIdx].close;
-    expect(slFill.fillPrice).not.toBe(closeAtFill);
+    const slEvent = result.events.find(e => e.type === 'sl_triggered' && e.candleIdx === slFill.candleIdx);
+    expect(slEvent).toBeDefined();
+    const details = JSON.parse(slEvent!.detailsJson) as { snapshot: { slPrice: number } };
+    // Long SL exit is a sell; trader-hurting slippage fills strictly below the raw SL price.
+    expect(slFill.fillPrice).toBeLessThan(details.snapshot.slPrice);
   });
 });

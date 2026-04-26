@@ -104,7 +104,7 @@ export function initializeOrders(
 }
 
 // Generate a deterministic intra-candle price path for fill ordering
-function getIntraCandlePath(candle: OHLC): number[] {
+export function getIntraCandlePath(candle: OHLC): number[] {
   if (candle.close >= candle.open) {
     // Bullish: open -> low -> high -> close
     return [candle.open, candle.low, candle.high, candle.close];
@@ -170,6 +170,8 @@ export function matchOrders(
           timestamp: candle.timestamp,
           size: effectiveSize,
           fees,
+          pathSegment: seg,
+          positionId: order.positionId,
         });
       }
     }
