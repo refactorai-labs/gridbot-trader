@@ -243,7 +243,7 @@ function applyForcedCloseSL(
     const atrFrac = atrFractionOfPrice(atr, slPrice);
     const adjustedPrice = applySlippage(slPrice, exitType, side, atrFrac, true, slippageCfg);
     const qty = pos.size / pos.entryPrice;
-    const fees = qty * adjustedPrice * feeRate;
+    const fees = pos.size * feeRate;
 
     let pnl: number;
     if (exitType === 'sell') {
@@ -251,9 +251,6 @@ function applyForcedCloseSL(
     } else {
       pnl = (pos.entryPrice - adjustedPrice) * qty - pos.entryFees - fees;
     }
-    // NOTE: leverage is already baked into `pos.size` (= sizeUSDT × leverage) at open,
-    // so `qty = pos.size / entry` already reflects leveraged notional.
-    // Multiplying again here would double-count.
 
     pnlState.realizedPnl += pnl;
     if (side === 'long') pnlState.longRealizedPnl += pnl;
@@ -777,7 +774,7 @@ function closeMarketPosition(
     const atrFrac = atrFractionOfPrice(atr, candle.close);
     const exitPrice = applySlippage(candle.close, exitType, side, atrFrac, false, slippageCfg);
     const qty = pos.size / pos.entryPrice;
-    const fees = qty * exitPrice * feeRate;
+    const fees = pos.size * feeRate;
 
     let pnl: number;
     if (exitType === 'sell') {
@@ -785,7 +782,6 @@ function closeMarketPosition(
     } else {
       pnl = (pos.entryPrice - exitPrice) * qty - pos.entryFees - fees;
     }
-    // NOTE: leverage is already baked into `pos.size` at open.
 
     pnlState.realizedPnl += pnl;
     if (side === 'long') pnlState.longRealizedPnl += pnl;
