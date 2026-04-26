@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { computeBB, computeBBAtIndex } from '../lib/indicators/bollingerBandsB';
 import { computeRSI, computeRSIAtIndex } from '../lib/indicators/rsi';
 import { computeMACD, computeMACDAtIndex } from '../lib/indicators/macd';
+import { computeATR, computeATRAtIndex, blendedATR } from '../lib/indicators/atr';
+import { computeER, computeERAtIndex } from '../lib/indicators/efficiencyRatio';
+import { computeAVWAP, computeAVWAPAtIndex } from '../lib/indicators/avwap';
 import { ConditionEvaluator } from '../lib/indicators/conditionEvaluator';
 import { emaSeries } from '../lib/analysis/technical';
 import { OHLC, IndicatorCondition } from '../lib/types';
@@ -438,5 +441,328 @@ describe('BB%B breakout conditions', () => {
     // Mean = (10*101 + 9*99 + 100) / 20 = 2001/20 = 100.05
     // Price 100 is very close to mean → %B ≈ 0.5
     expect(result.percentB[20]).toBeCloseTo(0.5, 1);
+  });
+});
+
+// ──── ATR ────
+
+describe('ATR (Wilder)', () => {
+  function c(high: number, low: number, close: number): OHLC {
+    return { timestamp: 0, open: close, high, low, close, volume: 100 };
+  }
+
+  it('returns NaN for indices before warmup', () => {
+    const candles = Array.from({ length: 20 }, () => c(10, 9, 9.5));
+    const result = computeATR(candles, 14);
+    for (let i = 0; i < 13; i++) expect(result.values[i]).toBeNaN();
+    expect(result.values[13]).not.toBeNaN();
+  });
+
+  it('ATR of constant-range candles equals that range', () => {
+    const candles = Array.from({ length: 30 }, () => c(105, 100, 102));
+    const result = computeATR(candles, 14);
+    expect(result.values[29]).toBeCloseTo(5, 6);
+  });
+
+  it('Wilder smoothing: ATR_new = (ATR_prev*(n-1) + TR) / n', () => {
+    const candles: OHLC[] = [];
+    for (let i = 0; i < 15; i++) candles.push(c(101, 99, 100));
+    candles.push(c(110, 90, 100)); // big TR at index 15: max(20, |110-100|, |90-100|) = 20
+
+    const result = computeATR(candles, 14);
+    const atr14 = result.values[13];
+    const expected15 = (atr14 * 13 + 20) / 14;
+    expect(result.values[15]).toBeCloseTo(expected15, 8);
+  });
+
+  it('computeATRAtIndex matches series', () => {
+    const candles: OHLC[] = Array.from({ length: 20 }, (_, i) => c(100 + i, 100 + i - 2, 100 + i - 1));
+    const series = computeATR(candles, 14);
+    const point = computeATRAtIndex(candles, 19, 14);
+    expect(point.value).toBeCloseTo(series.values[19], 10);
+  });
+
+  it('blendedATR takes max of atr4h and atr1h * factor', () => {
+    expect(blendedATR(5, 3, 1.4)).toBeCloseTo(5, 10);     // 5 > 3 * 1.4 = 4.2
+    expect(blendedATR(5, 4, 1.4)).toBeCloseTo(5.6, 10);    // 4 * 1.4 = 5.6 > 5
+    expect(blendedATR(NaN, 4, 1.4)).toBeNaN();
+  });
+});
+
+// ──── Efficiency Ratio ────
+
+describe('Efficiency Ratio (Kaufman)', () => {
+  it('trending series: ER ≈ 0.56 on constructed fixture', () => {
+    // Direction = 5.4, Volatility = 9.6, ratio = 0.5625 (≈ 0.56 per spec §2.2)
+    const closes = [100, 101.5, 101, 102.5, 102, 103.5, 103, 104.5, 104, 105.5, 105.4];
+    const { value } = computeERAtIndex(closes, 10, 10);
+    expect(value).toBeCloseTo(0.5625, 6);
+  });
+
+  it('choppy series: ER = 0.20 on constructed fixture', () => {
+    // Direction = 2, Volatility = 10, ratio = 0.20 (≈ 0.20 per spec §2.2)
+    const closes = [100, 101, 100, 101, 100, 101, 100, 101, 100, 101, 102];
+    const { value } = computeERAtIndex(closes, 10, 10);
+    expect(value).toBeCloseTo(0.2, 6);
+  });
+
+  it('flat series: ER = 0 (zero volatility handled)', () => {
+    const closes = Array.from({ length: 15 }, () => 100);
+    const { value } = computeERAtIndex(closes, 14, 10);
+    expect(value).toBe(0);
+  });
+
+  it('perfect trend: ER = 1.0', () => {
+    const closes = Array.from({ length: 15 }, (_, i) => 100 + i);
+    const { value } = computeERAtIndex(closes, 14, 10);
+    expect(value).toBeCloseTo(1.0, 10);
+  });
+
+  it('series: raw and smoothed returned; smoothed is EMA of valid tail', () => {
+    const closes = [100, 101, 100, 101, 100, 101, 100, 101, 100, 101, 102, 103, 104, 105];
+    const { raw, smoothed } = computeER(closes, 10, 3);
+    expect(raw.length).toBe(closes.length);
+    expect(smoothed.length).toBe(closes.length);
+    for (let i = 0; i < 10; i++) {
+      expect(raw[i]).toBeNaN();
+      expect(smoothed[i]).toBeNaN();
+    }
+    // First valid smoothed equals first valid raw
+    expect(smoothed[10]).toBeCloseTo(raw[10], 10);
+  });
+
+  it('computeERAtIndex matches series raw values', () => {
+    const closes = Array.from({ length: 30 }, (_, i) => 100 + Math.sin(i * 0.4) * 3);
+    const series = computeER(closes, 10);
+    for (let i = 10; i < closes.length; i++) {
+      const point = computeERAtIndex(closes, i, 10);
+      expect(point.value).toBeCloseTo(series.raw[i], 10);
+    }
+  });
+});
+
+// ──── Anchored VWAP ────
+
+describe('Anchored VWAP (fixed anchor)', () => {
+  function c(h: number, l: number, cl: number, v: number): OHLC {
+    return { timestamp: 0, open: cl, high: h, low: l, close: cl, volume: v };
+  }
+
+  it('NaN before the anchor; first value at anchor equals typical price', () => {
+    const candles = [
+      c(10, 8, 9, 100),
+      c(11, 9, 10, 100),
+      c(12, 10, 11, 100),
+    ];
+    const { values } = computeAVWAP(candles, 1);
+    expect(values[0]).toBeNaN();
+    // At anchor, AVWAP = typical = (11+9+10)/3 = 10
+    expect(values[1]).toBeCloseTo(10, 10);
+  });
+
+  it('equal volumes: AVWAP equals mean of typical prices from anchor forward', () => {
+    const candles = [
+      c(10, 8, 9, 100),
+      c(11, 9, 10, 100),  // typical = 10
+      c(13, 11, 12, 100), // typical = 12
+      c(16, 14, 15, 100), // typical = 15
+    ];
+    const { values } = computeAVWAP(candles, 1);
+    expect(values[1]).toBeCloseTo(10, 10);
+    expect(values[2]).toBeCloseTo(11, 10);       // (10+12)/2
+    expect(values[3]).toBeCloseTo(12.333333, 4); // (10+12+15)/3
+  });
+
+  it('volume-weighted: heavier volume pulls AVWAP toward that candle', () => {
+    const candles = [
+      c(10, 10, 10, 100), // typical 10, vol 100
+      c(20, 20, 20, 900), // typical 20, vol 900
+    ];
+    const { values } = computeAVWAP(candles, 0);
+    // AVWAP = (10*100 + 20*900) / 1000 = 19
+    expect(values[1]).toBeCloseTo(19, 10);
+  });
+
+  it('computeAVWAPAtIndex matches series', () => {
+    const candles = Array.from({ length: 10 }, (_, i) =>
+      c(100 + i + 2, 100 + i - 2, 100 + i, 50 + i * 10)
+    );
+    const series = computeAVWAP(candles, 3);
+    for (let i = 3; i < 10; i++) {
+      const point = computeAVWAPAtIndex(candles, 3, i);
+      expect(point.value).toBeCloseTo(series.values[i], 10);
+    }
+  });
+
+  it('returns NaN for out-of-range anchor or index before anchor', () => {
+    const candles = [c(10, 8, 9, 100), c(11, 9, 10, 100)];
+    expect(computeAVWAPAtIndex(candles, 5, 1).value).toBeNaN();
+    expect(computeAVWAPAtIndex(candles, 1, 0).value).toBeNaN();
+  });
+});
+
+// ──── ConditionEvaluator stateful operators (Phase 2) ────
+
+describe('ConditionEvaluator — stateful operators', () => {
+  function mk(close: number, i: number): OHLC {
+    return { timestamp: 1000000 + i * 300000, open: close, high: close + 1, low: close - 1, close, volume: 100 };
+  }
+
+  it('DECLINING_N fires only after n consecutive strictly-decreasing RSI values', () => {
+    // Build prices that produce rising-then-declining RSI
+    const rising = Array.from({ length: 20 }, (_, i) => 100 + i * 2);     // RSI climbs to ~100
+    const falling = Array.from({ length: 10 }, (_, i) => 138 - i * 1.5);  // RSI declines
+    const allCloses = [...rising, ...falling];
+    const candles = allCloses.map((c, i) => mk(c, i));
+
+    const conditions: IndicatorCondition[] = [{
+      indicator: 'RSI',
+      params: { length: 14 },
+      condition: 'DECLINING_N',
+      signalValue: 3,
+      timeframe: '5m',
+    }];
+
+    const evaluator = new ConditionEvaluator(conditions);
+    const aggregated = new Map<string, OHLC[]>();
+
+    let firstFireIdx = -1;
+    for (let i = 0; i < candles.length; i++) {
+      const result = evaluator.evaluate(candles, i, aggregated);
+      if (result.allConditionsMet) { firstFireIdx = i; break; }
+    }
+    // Must fire only after 3 consecutive declines, so strictly after the first falling candle
+    expect(firstFireIdx).toBeGreaterThan(rising.length);
+  });
+
+  it('DECLINING_N does NOT fire on monotonically rising values', () => {
+    const rising = Array.from({ length: 30 }, (_, i) => 100 + i * 2);
+    const candles = rising.map((c, i) => mk(c, i));
+
+    const conditions: IndicatorCondition[] = [{
+      indicator: 'RSI',
+      params: { length: 14 },
+      condition: 'DECLINING_N',
+      signalValue: 3,
+      timeframe: '5m',
+    }];
+
+    const evaluator = new ConditionEvaluator(conditions);
+    const aggregated = new Map<string, OHLC[]>();
+
+    let anyFire = false;
+    for (let i = 0; i < candles.length; i++) {
+      const r = evaluator.evaluate(candles, i, aggregated);
+      if (r.allConditionsMet) { anyFire = true; break; }
+    }
+    expect(anyFire).toBe(false);
+  });
+
+  it('RATIO_BELOW fires when current value drops below a fraction of recent peak', () => {
+    // ATR history rises then collapses; ratio of current / max-prior history < 0.5 should fire
+    // Build candles: high volatility segment, then quiet segment
+    const candles: OHLC[] = [];
+    // 20 wide-range candles (TR ≈ 10)
+    for (let i = 0; i < 20; i++) candles.push({ timestamp: i, open: 100, high: 105, low: 95, close: 100, volume: 100 });
+    // 20 quiet candles (TR ≈ 1)
+    for (let i = 20; i < 40; i++) candles.push({ timestamp: i, open: 100, high: 100.5, low: 99.5, close: 100, volume: 100 });
+
+    const conditions: IndicatorCondition[] = [{
+      indicator: 'ATR',
+      params: { period: 14 },
+      condition: 'RATIO_BELOW',
+      signalValue: 0.5,
+      timeframe: '5m',
+    }];
+
+    const evaluator = new ConditionEvaluator(conditions);
+    const aggregated = new Map<string, OHLC[]>();
+
+    let fired = false;
+    for (let i = 0; i < candles.length; i++) {
+      const r = evaluator.evaluate(candles, i, aggregated);
+      if (r.allConditionsMet) { fired = true; break; }
+    }
+    expect(fired).toBe(true);
+  });
+
+  it('TOUCHED_AND_REJECTED requires both touch (above signal) and rejection (below signal)', () => {
+    // Sequence: values below, then cross above (arm), then drop back below (fire)
+    const prices = [
+      ...Array.from({ length: 20 }, () => 100),       // flat: RSI ≈ neutral, below 70
+      ...Array.from({ length: 10 }, (_, i) => 100 + i * 3), // rally: RSI climbs above 70 → touched
+      ...Array.from({ length: 10 }, (_, i) => 130 - i * 2), // drop: RSI falls below 70 → rejected
+    ];
+    const candles = prices.map((c, i) => mk(c, i));
+
+    const conditions: IndicatorCondition[] = [{
+      indicator: 'RSI',
+      params: { length: 14 },
+      condition: 'TOUCHED_AND_REJECTED',
+      signalValue: 70,
+      timeframe: '5m',
+    }];
+
+    const evaluator = new ConditionEvaluator(conditions);
+    const aggregated = new Map<string, OHLC[]>();
+
+    let fired = false;
+    let firedIdx = -1;
+    for (let i = 0; i < candles.length; i++) {
+      const r = evaluator.evaluate(candles, i, aggregated);
+      if (r.allConditionsMet) { fired = true; firedIdx = i; break; }
+    }
+    expect(fired).toBe(true);
+    // Must fire during the drop phase (after index 30), not during the rally
+    expect(firedIdx).toBeGreaterThan(30);
+  });
+
+  it('TOUCHED_AND_REJECTED does NOT fire without prior touch', () => {
+    // Values always below signal — never touched, so rejection has no meaning
+    const prices = Array.from({ length: 30 }, (_, i) => 100 + Math.sin(i * 0.3));
+    const candles = prices.map((c, i) => mk(c, i));
+
+    const conditions: IndicatorCondition[] = [{
+      indicator: 'RSI',
+      params: { length: 14 },
+      condition: 'TOUCHED_AND_REJECTED',
+      signalValue: 90,
+      timeframe: '5m',
+    }];
+
+    const evaluator = new ConditionEvaluator(conditions);
+    const aggregated = new Map<string, OHLC[]>();
+
+    let fired = false;
+    for (let i = 0; i < candles.length; i++) {
+      const r = evaluator.evaluate(candles, i, aggregated);
+      if (r.allConditionsMet) { fired = true; break; }
+    }
+    expect(fired).toBe(false);
+  });
+
+  it('ring buffer caps history at CONDITION_HISTORY_LIMIT (20)', () => {
+    // Feed 50 candles; verify internal history does not exceed 20.
+    const prices = Array.from({ length: 50 }, (_, i) => 100 + Math.sin(i * 0.2));
+    const candles = prices.map((c, i) => mk(c, i));
+
+    const conditions: IndicatorCondition[] = [{
+      indicator: 'RSI',
+      params: { length: 14 },
+      condition: 'LESS_THAN',
+      signalValue: 100,
+      timeframe: '5m',
+    }];
+
+    const evaluator = new ConditionEvaluator(conditions);
+    const aggregated = new Map<string, OHLC[]>();
+    for (let i = 0; i < candles.length; i++) evaluator.evaluate(candles, i, aggregated);
+
+    // Access internal state via type cast for the test (only way to verify the ring buffer)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internal = (evaluator as any).state as Map<string, { history: number[] }>;
+    for (const st of internal.values()) {
+      expect(st.history.length).toBeLessThanOrEqual(20);
+    }
   });
 });

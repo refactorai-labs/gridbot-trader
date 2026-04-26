@@ -17,7 +17,7 @@ export async function GET(
 
     const simulation = await prisma.simulation.findUnique({
       where: { id: params.id },
-      include: { gridConfigs: true },
+      include: { gridConfigs: true, avwapAnchor: true },
     });
 
     if (!simulation) {
@@ -31,14 +31,17 @@ export async function GET(
       }, { status: 400 });
     }
 
-    // Load 5m candles and aggregate to sim timeframe (matches engine behavior)
+    // Load 5m candles and aggregate to sim timeframe (matches engine behavior).
+    // Combo simulations persist fillCandleIdx + AdaptiveEvent.candleIdx in 5m-index space
+    // (supervisor loop runs over candles5m), so replay MUST return 5m candles for combo
+    // regardless of the configured grid timeframe — otherwise indexes point past the array.
     const pairConfig = SUPPORTED_PAIRS.find(p => p.poolAddress === simulation.poolAddress);
     const binanceSymbol = pairConfig?.binanceSymbol || simulation.pair;
     const candles5m = await getCachedCandles(
       binanceSymbol, '5m',
       simulation.startTime, simulation.endTime
     );
-    const simTimeframeMins = getTimeframeMinutes(simulation.timeframe);
+    const simTimeframeMins = simulation.comboBotEnabled ? 5 : getTimeframeMinutes(simulation.timeframe);
     const candles = simTimeframeMins === 5 ? candles5m : aggregate5mTo(candles5m, simTimeframeMins);
 
     // Compute range — default to all candles when no params given
@@ -86,11 +89,13 @@ export async function GET(
       orderBy: { candleIdx: 'asc' },
     });
 
-    // Generate grid levels for display
+    // Generate grid levels for display.
+    // Combo bot uses ATR-based dynamic grids (not the saved GridConfiguration bounds),
+    // so return empty arrays — fills are the primary visual in combo mode.
     const longConfig = simulation.gridConfigs.find(c => c.side === 'long');
     const shortConfig = simulation.gridConfigs.find(c => c.side === 'short');
 
-    const longLevels = longConfig
+    const longLevels = !simulation.comboBotEnabled && longConfig
       ? generateGridLevels(
           longConfig.lowerBound, longConfig.upperBound,
           longConfig.gridLevels, 'long',
@@ -98,7 +103,7 @@ export async function GET(
         )
       : [];
 
-    const shortLevels = shortConfig
+    const shortLevels = !simulation.comboBotEnabled && shortConfig
       ? generateGridLevels(
           shortConfig.lowerBound, shortConfig.upperBound,
           shortConfig.gridLevels, 'short',
@@ -148,6 +153,12 @@ export async function GET(
       longLevels,
       shortLevels,
       totalCandles: candles.length,
+      avwapAnchor: simulation.avwapAnchor ? {
+        candleIdx: simulation.avwapAnchor.anchorCandleIdx,
+        timestamp: Math.floor(simulation.avwapAnchor.anchorTimestamp.getTime() / 1000),
+        typicalPrice: simulation.avwapAnchor.anchorTypicalPrice,
+        volume: simulation.avwapAnchor.anchorVolume,
+      } : null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

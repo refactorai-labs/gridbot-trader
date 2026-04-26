@@ -12,9 +12,13 @@ import CombinedPnL from '@/components/simulation/CombinedPnL';
 import AdaptiveStatus from '@/components/simulation/AdaptiveStatus';
 import TradeLog from '@/components/results/TradeLog';
 import PerformanceSummary from '@/components/results/PerformanceSummary';
+import ComboPane from '@/components/combo/ComboPane';
+import { SessionView, AdaptiveEventView } from '@/components/combo/types';
+import { deriveBotPhaseView, derivePnLView, coerceComboMode } from '@/components/combo/derive';
+import { DEFAULT_COMBO_CONFIG } from '@/components/config/ComboBotConfig';
 import {
   SimulationConfig, ReplayData, SimulationSummary, PlaybackSpeed, SnapshotData,
-  DCABreakoutConfig, DCATradeRecord, Direction,
+  DCABreakoutConfig, DCATradeRecord, Direction, ComboBotConfig,
 } from '@/lib/types';
 import { DCATradeSnapshot } from '@/lib/strategies/dcaTypes';
 import { SUPPORTED_PAIRS } from '@/lib/constants';
@@ -64,6 +68,17 @@ export default function SimulatorPage() {
   // DCA config
   const [dcaLongConfig, setDcaLongConfig] = useState<DCABreakoutConfig>(getDefaultDCAConfig('LONG'));
   const [dcaShortConfig, setDcaShortConfig] = useState<DCABreakoutConfig>(getDefaultDCAConfig('SHORT'));
+
+  // Combo Bot (v3.1) config
+  const [comboConfig, setComboConfig] = useState<ComboBotConfig>(DEFAULT_COMBO_CONFIG);
+
+  // When Combo Bot is enabled, Grid Long/Short must be off (different engine, would be misleading)
+  useEffect(() => {
+    if (comboConfig.enabled) {
+      setGridLongEnabled(false);
+      setGridShortEnabled(false);
+    }
+  }, [comboConfig.enabled]);
 
   // Grid simulation state
   const [simulationId, setSimulationId] = useState<string | null>(null);
@@ -131,7 +146,15 @@ export default function SimulatorPage() {
           totalCandles: sim.totalCandles,
           winCount: sim.winCount,
           lossCount: sim.lossCount,
+          comboBotEnabled: sim.comboBotEnabled,
+          comboMode: sim.comboMode,
         });
+
+        // Sync grid toggles to match loaded simulation type
+        if (sim.comboBotEnabled) {
+          setGridLongEnabled(false);
+          setGridShortEnabled(false);
+        }
 
         const replayRes = await fetch(`/api/simulations/${savedId}/replay`);
         if (replayRes.ok) {
@@ -250,8 +273,9 @@ export default function SimulatorPage() {
     const selectedPair = SUPPORTED_PAIRS[selectedPairIdx];
 
     try {
-      // ── Grid simulation (if enabled) ──
-      if (gridLongEnabled || gridShortEnabled) {
+      // ── Grid / Combo simulation (if enabled) ──
+      // Combo is an opt-in supervisor wrapping grids; the sim path is the same.
+      if (gridLongEnabled || gridShortEnabled || config.combo?.enabled) {
         const candleRes = await fetch('/api/candles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -338,6 +362,8 @@ export default function SimulatorPage() {
               totalCandles: sim.totalCandles,
               winCount: sim.winCount,
               lossCount: sim.lossCount,
+              comboBotEnabled: sim.comboBotEnabled,
+              comboMode: sim.comboMode,
             });
 
             const replayRes = await fetch(`/api/simulations/${id}/replay`);
@@ -558,6 +584,8 @@ export default function SimulatorPage() {
             dcaShortConfig={dcaShortConfig}
             onDcaLongConfigChange={setDcaLongConfig}
             onDcaShortConfigChange={setDcaShortConfig}
+            comboConfig={comboConfig}
+            onComboConfigChange={setComboConfig}
           />
         </aside>
 
@@ -580,8 +608,53 @@ export default function SimulatorPage() {
                 onToggleFitAll={() => setFitAllCharts(f => !f)}
               />
 
-              {/* Grid Bot Row */}
-              {replayData && (gridLongEnabled || gridShortEnabled) && (
+              {/* Combo Bot Supervisor Pane */}
+              {replayData && simulation?.comboBotEnabled && (
+                <ComboPane
+                  session={{
+                    pair: simulation.pair,
+                    timeframe: simulation.timeframe,
+                    startTime: new Date(simulation.startTime),
+                    endTime: new Date(simulation.endTime),
+                    totalCandles: simulation.totalCandles ?? replayData.candles.length,
+                    currentCandleIdx: currentIdx,
+                    leverage: comboConfig.leverage,
+                    allocationLong: comboConfig.allocationLong,
+                    mode: coerceComboMode(simulation.comboMode),
+                    playbackSpeed: speed,
+                  }}
+                  candles={replayData.candles}
+                  longLevels={replayData.longLevels}
+                  shortLevels={replayData.shortLevels}
+                  filledLongIndices={longFilledLevels}
+                  filledShortIndices={shortFilledLevels}
+                  longFills={longFills}
+                  shortFills={shortFills}
+                  longBot={deriveBotPhaseView(
+                    'long',
+                    replayData.adaptiveEvents as AdaptiveEventView[],
+                    currentIdx,
+                    comboConfig.longSide?.retryCap ?? 2,
+                  )}
+                  shortBot={deriveBotPhaseView(
+                    'short',
+                    replayData.adaptiveEvents as AdaptiveEventView[],
+                    currentIdx,
+                    comboConfig.shortSide?.retryCap ?? 2,
+                  )}
+                  pnl={derivePnLView(
+                    currentSnapshot,
+                    simulation,
+                    initialCapital,
+                    comboConfig.leverage,
+                  )}
+                  events={replayData.adaptiveEvents as AdaptiveEventView[]}
+                  avwapAnchor={replayData.avwapAnchor}
+                />
+              )}
+
+              {/* Grid Bot Row (only when combo is NOT active) */}
+              {replayData && !simulation?.comboBotEnabled && (gridLongEnabled || gridShortEnabled) && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 px-1">
                     <span className="text-xs font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>

@@ -31,6 +31,13 @@ model Simulation {
   emaPeriod       Int     @default(50)
   volumeMultiplier Float  @default(1.5)
 
+  // Combo Bot (Dual Trailing v3.1) — opt-in supervisor wrapper
+  comboBotEnabled     Boolean @default(false)
+  comboMode           String? // "dual" | "long" | "short"
+  comboLeverage       Float?  @default(5.0)
+  comboAllocationLong Float?  @default(0.6) // fraction 0.5..0.75, only used in "dual" mode
+  comboAvwapEnabled   Boolean @default(true) // feature flag for AVWAP reopen condition (ablation)
+
   // Aggregate results (computed after simulation)
   totalPnl       Float?
   totalPnlPct    Float?
@@ -51,6 +58,8 @@ model Simulation {
   gridOrders     GridOrder[]
   adaptiveEvents AdaptiveEvent[]
   pnlSnapshots   PnlSnapshot[]
+  comboConfigs   ComboBotConfiguration[]
+  avwapAnchor    AVWAPAnchor?
 
   @@index([status])
   @@index([pair])
@@ -164,6 +173,17 @@ model PnlSnapshot {
   @@index([simulationId, candleIdx])
 }
 
+// Binance perpetual funding rate cache (8h intervals)
+model BinanceFundingRate {
+  id          Int    @id @default(autoincrement())
+  symbol      String // e.g. "ETHUSDT"
+  fundingTime BigInt // unix ms
+  fundingRate Float  // signed — positive: longs pay shorts; negative: shorts pay longs
+
+  @@unique([symbol, fundingTime])
+  @@index([symbol, fundingTime])
+}
+
 // Binance OHLCV candle data cache
 model BinanceCandle {
   id       Int    @id @default(autoincrement())
@@ -199,6 +219,53 @@ model DCATradeLog {
   durationMinutes Int
 
   @@index([simulationId])
+}
+
+// Combo Bot per-side configuration (long/short under the supervisor)
+model ComboBotConfiguration {
+  id String @id @default(cuid())
+
+  simulationId String
+  simulation   Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  side String // "long" or "short"
+
+  // Pyramid / averaging depth — 5 for long, 2 for short per spec §1
+  averagingDepth Int @default(5)
+
+  // Stop-loss: combined base% + ATR×k, clamped to [floor, cap]
+  slBasePercent   Float @default(0.015) // 1.5%
+  slAtrMultiplier Float @default(1.5)
+  slFloor         Float @default(0.010) // 1.0% minimum SL
+  slCap           Float @default(0.040) // 4.0% maximum SL
+
+  // Reopen tier sizing fractions (of baseline) — 25/50/100 per spec §6
+  tier1Size Float @default(0.25)
+  tier2Size Float @default(0.50)
+  tier3Size Float @default(1.00)
+
+  // Cooldown & retry controls
+  cooldownCandles     Int @default(12)   // one hour on 5m
+  retryCap            Int @default(2)    // hibernate when retryCount >= retryCap (spec §1)
+  hibernationCandles  Int @default(288)  // 24h on 5m — exit only when ER<0.3 sustained
+
+  @@unique([simulationId, side])
+  @@index([simulationId])
+}
+
+// Persisted Anchored VWAP anchor — spec §10.4 requires deterministic recomputation
+model AVWAPAnchor {
+  id String @id @default(cuid())
+
+  simulationId String @unique
+  simulation   Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  anchorCandleIdx     Int
+  anchorTimestamp     DateTime
+  anchorTypicalPrice  Float
+  anchorVolume        Float
+
+  createdAt DateTime @default(now())
 }
 
 // Saved configuration presets

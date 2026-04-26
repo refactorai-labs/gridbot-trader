@@ -59,11 +59,19 @@ export interface MACDSeries {
 
 // ──── Condition Evaluation ────
 
+export const CONDITION_HISTORY_LIMIT = 20;
+
 export interface ConditionState {
   indicator: IndicatorType;
   timeframe: string;
   previousValue: number | null;
   currentValue: number | null;
+  // Ring buffer of recent values on this indicator+timeframe, most recent last.
+  // Capped at CONDITION_HISTORY_LIMIT; older values dropped from the front.
+  history: number[];
+  // Durable boolean flags set by stateful operators (e.g. TOUCHED_AND_REJECTED).
+  // Cleared explicitly by operators or by state-machine phase transitions.
+  flags: Map<string, boolean>;
 }
 
 export interface EvaluationResult {

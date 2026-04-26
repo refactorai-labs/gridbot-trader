@@ -20,7 +20,7 @@ export async function getCachedCandles(
       interval,
       openTime: {
         gte: startMs,
-        lte: endMs,
+        lt: endMs,
       },
     },
     orderBy: { openTime: 'asc' },

@@ -133,14 +133,24 @@ describe('Grid P&L: Long vs Short', () => {
     console.log(`Short: realized=${shortResult.realizedPnl.toFixed(2)}, fills=${shortResult.fillCount}, roundTrips=${shortResult.roundTrips}`);
     console.log(`PnL ratio: ${(longResult.realizedPnl / shortResult.realizedPnl).toFixed(2)}x`);
     console.log(`Level ratio: ${(longInitial / shortInitial).toFixed(2)}x`);
+
+    // Both sides should be active (fills happened) and profitable in an oscillating market.
+    expect(longResult.fillCount).toBeGreaterThan(0);
+    expect(shortResult.fillCount).toBeGreaterThan(0);
+    expect(longResult.realizedPnl).toBeGreaterThan(0);
+    expect(shortResult.realizedPnl).toBeGreaterThan(0);
+    // Asymmetry is in initial active level count, not necessarily final P&L
+    // (over many oscillations the grid equalises). Assert structural asymmetry.
+    expect(longInitial).not.toBe(shortInitial);
   });
 
   it('should trace a simple short round-trip correctly', () => {
-    // Price starts at 3000, goes up to 3100, comes back to 3000
+    // Price starts at 3000, goes up to 3100, comes back to 3000.
+    // Short grid sells above 3000 (candle 2 triggers), buys back below 3000 (candle 3 triggers).
     const candles: OHLC[] = [
       { timestamp: 1700000000, open: 3000, high: 3010, low: 2990, close: 3000, volume: 100 },
       { timestamp: 1700000300, open: 3000, high: 3100, low: 3000, close: 3100, volume: 100 },
-      { timestamp: 1700000600, open: 3100, high: 3100, low: 2990, close: 3000, volume: 100 },
+      { timestamp: 1700000600, open: 3100, high: 3100, low: 2960, close: 3000, volume: 100 },
     ];
 
     const result = runGridSim(candles, 'short', 2900, 3200, 5, 100, 0.001, 5000);
@@ -153,6 +163,10 @@ describe('Grid P&L: Long vs Short', () => {
     for (const f of result.allFills) {
       console.log(`  ${f.type} @ ${f.fillPrice} (level ${f.levelIndex}, side=${f.side}, pnl=${f.pnl?.toFixed(4)})`);
     }
+
+    // Sold high on the way up, bought back on the way down — at least one complete round trip.
+    expect(result.roundTrips).toBeGreaterThanOrEqual(1);
+    expect(result.realizedPnl).toBeGreaterThan(0);
   });
 
   it('should initialize orders on ALL levels for LONG (full grid coverage)', () => {

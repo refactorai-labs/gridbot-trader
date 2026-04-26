@@ -10,6 +10,7 @@ import { getCachedCandles, getTimeframeMinutes } from '../data/candleCache';
 import { aggregate5mTo } from '../data/aggregator';
 import { SUPPORTED_PAIRS } from '../constants';
 import { findLevels } from '../analysis/technical';
+import { runComboSimulationFromDb } from '../combo/supervisorRunner';
 
 function getBinanceSymbol(poolAddress: string, pair: string): string {
   const config = SUPPORTED_PAIRS.find(p => p.poolAddress === poolAddress);
@@ -27,6 +28,12 @@ export async function runSimulation(simulationId: string): Promise<void> {
   });
 
   if (!sim) throw new Error(`Simulation ${simulationId} not found`);
+
+  // Branch: combo supervisor wraps grids when enabled (spec §1, plan Phase 3c).
+  if (sim.comboBotEnabled) {
+    await runComboSimulationFromDb(simulationId);
+    return;
+  }
 
   const longConfig = sim.gridConfigs.find(c => c.side === 'long');
   const shortConfig = sim.gridConfigs.find(c => c.side === 'short');

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { SimulationConfig, DCASimulationConfig } from '@/lib/types';
+import { SimulationConfig, DCASimulationConfig, ComboBotConfig } from '@/lib/types';
 import { runSimulation } from '@/lib/simulation/engine';
 import { runDCASimulation } from '@/lib/simulation/dcaEngine';
 import { getOrFetchCandles } from '@/lib/data/candleCache';
@@ -23,6 +23,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    const combo = config.combo;
+
     // Create simulation record
     const simulation = await prisma.simulation.create({
       data: {
@@ -37,6 +39,11 @@ export async function POST(request: NextRequest) {
         adaptiveEnabled: config.adaptiveEnabled ?? true,
         emaPeriod: config.emaPeriod ?? 50,
         volumeMultiplier: config.volumeMultiplier ?? 1.5,
+        comboBotEnabled: combo?.enabled ?? false,
+        comboMode: combo?.enabled ? combo.mode : null,
+        comboLeverage: combo?.leverage ?? 5,
+        comboAllocationLong: combo?.allocationLong ?? 0.6,
+        comboAvwapEnabled: combo?.avwapEnabled ?? true,
         gridConfigs: {
           create: [
             {
@@ -65,6 +72,14 @@ export async function POST(request: NextRequest) {
             },
           ],
         },
+        ...(combo?.enabled ? {
+          comboConfigs: {
+            create: [
+              combo.longSide ? { side: 'long', ...combo.longSide } : null,
+              combo.shortSide ? { side: 'short', ...combo.shortSide } : null,
+            ].filter(Boolean) as Array<NonNullable<ComboBotConfig['longSide']> & { side: string }>,
+          },
+        } : {}),
       },
     });
 

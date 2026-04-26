@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 :root {
   --foreground-rgb: 255, 255, 255;
@@ -433,4 +433,80 @@ input[type="checkbox"] {
 }
 .accordion-dot {
   @apply w-1.5 h-1.5 rounded-full flex-shrink-0;
+}
+
+/* ==========================================================
+   Combo Bot (Dual Trailing v3.1) — Supervisor view tokens
+   "Trading desk telemetry" aesthetic — see design/combo-pane-prototype.html
+   ========================================================== */
+:root {
+  --supervisor:           #22d3ee;
+  --supervisor-dim:       rgba(34, 211, 238, 0.18);
+  --supervisor-faint:     rgba(34, 211, 238, 0.06);
+
+  --phase-idle:           #8a94a6;
+  --phase-breakout:       #f59e0b;
+  --phase-running:        var(--grid-long);
+  --phase-cooldown:       #64748b;
+  --phase-reopening:      #d946ef;
+  --phase-hibernating:    #4a5563;
+
+  --hairline:             rgba(255, 255, 255, 0.08);
+  --hairline-strong:      rgba(255, 255, 255, 0.14);
+  --meter-empty:          rgba(255, 255, 255, 0.055);
+  --meter-tick:           rgba(255, 255, 255, 0.18);
+  --readout-bg:           rgba(8, 10, 16, 0.72);
+
+  --f-display:            'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --f-data:               'JetBrains Mono', ui-monospace, monospace;
+  --f-body-tight:         'Inter Tight', 'Inter', system-ui, sans-serif;
+}
+
+[data-theme="light"] {
+  --supervisor:           #0891b2;
+  --supervisor-dim:       rgba(8, 145, 178, 0.15);
+  --supervisor-faint:     rgba(8, 145, 178, 0.05);
+
+  --phase-idle:           #64748b;
+  --phase-breakout:       #b45309;
+  --phase-cooldown:       #475569;
+  --phase-reopening:      #a21caf;
+  --phase-hibernating:    #52525b;
+
+  --hairline:             rgba(15, 23, 42, 0.12);
+  --hairline-strong:      rgba(15, 23, 42, 0.22);
+  --meter-empty:          rgba(15, 23, 42, 0.06);
+  --meter-tick:           rgba(15, 23, 42, 0.22);
+  --readout-bg:           rgba(255, 255, 255, 0.85);
+}
+
+/* Shared combo primitives */
+.combo-section-label {
+  font-family: var(--f-display);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--text-muted);
+}
+.combo-coord {
+  font-family: var(--f-display);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+}
+.combo-coord .k { color: var(--text-muted); }
+.combo-coord .eq { color: var(--hairline-strong); padding: 0 4px; }
+.combo-coord .v { color: var(--text-primary); font-weight: 600; }
+
+/* Hairline dashed divider */
+.combo-hairline-dashed {
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--hairline) 0 2px, transparent 2px 4px);
+  background-repeat: repeat-x;
+  background-size: auto 1px;
 }

@@ -4,15 +4,21 @@ import { useState } from 'react';
 import { Settings, Play, Loader2, ChevronDown, ChevronUp, ChevronRight, Download, Database } from 'lucide-react';
 import GridSideConfig from './GridSideConfig';
 import { ConditionEditor } from '@/components/simulation/DCAConfig';
-import { SimulationConfig, GridSideConfig as GridSideConfigType, DCABreakoutConfig, Direction } from '@/lib/types';
+import ComboBotConfigEditor, { DEFAULT_COMBO_CONFIG } from './ComboBotConfig';
+import { SimulationConfig, GridSideConfig as GridSideConfigType, DCABreakoutConfig, Direction, ComboBotConfig } from '@/lib/types';
 import { SUPPORTED_PAIRS, DEFAULT_GRID_CONFIG, DEFAULT_SIMULATION, TIMEFRAMES } from '@/lib/constants';
 
 // ── Reusable sub-components ──────────────────────────────────
 
-function ToggleSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function ToggleSwitch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <label className="toggle-switch" onClick={(e) => e.stopPropagation()}>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label
+      className="toggle-switch"
+      onClick={(e) => e.stopPropagation()}
+      style={disabled ? { opacity: 0.35, pointerEvents: 'none' } : undefined}
+      title={disabled ? 'Managed by Combo Bot' : undefined}
+    >
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} disabled={disabled} />
       <div className="toggle-track" />
       <div className="toggle-knob" />
     </label>
@@ -26,6 +32,7 @@ function AccordionSection({
   color,
   toggle,
   onToggle,
+  toggleDisabled,
 }: {
   title: string;
   children: React.ReactNode;
@@ -33,6 +40,7 @@ function AccordionSection({
   color?: string;
   toggle?: boolean;
   onToggle?: (v: boolean) => void;
+  toggleDisabled?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const hasToggle = toggle !== undefined;
@@ -47,7 +55,7 @@ function AccordionSection({
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         {color && <div className="accordion-dot" style={{ background: color }} />}
         <span className="text-xs font-mono font-semibold uppercase tracking-wider flex-1 text-left">{title}</span>
-        {hasToggle && <ToggleSwitch checked={toggle!} onChange={onToggle!} />}
+        {hasToggle && <ToggleSwitch checked={toggle!} onChange={onToggle!} disabled={toggleDisabled} />}
       </button>
       {open && <div className="accordion-body">{children}</div>}
     </div>
@@ -351,6 +359,9 @@ interface ConfigPanelProps {
   dcaShortConfig: DCABreakoutConfig;
   onDcaLongConfigChange: (c: DCABreakoutConfig) => void;
   onDcaShortConfigChange: (c: DCABreakoutConfig) => void;
+  // Combo Bot config
+  comboConfig: ComboBotConfig;
+  onComboConfigChange: (c: ComboBotConfig) => void;
 }
 
 export default function ConfigPanel({
@@ -361,6 +372,7 @@ export default function ConfigPanel({
   gridLongEnabled, gridShortEnabled, dcaLongEnabled, dcaShortEnabled,
   onGridLongToggle, onGridShortToggle, onDcaLongToggle, onDcaShortToggle,
   dcaLongConfig, dcaShortConfig, onDcaLongConfigChange, onDcaShortConfigChange,
+  comboConfig, onComboConfigChange,
 }: ConfigPanelProps) {
   const [selectedPairIdx, setSelectedPairIdx] = useState(0);
   const [timeframe, setTimeframe] = useState('1h');
@@ -391,6 +403,17 @@ export default function ConfigPanel({
       return;
     }
 
+    // When combo is enabled, it owns capital. Distribute it into the grid configs so
+    // both paths (grid and combo) see the same totalCapital. Keeps the DB schema stable.
+    let effectiveLongConfig = longConfig;
+    let effectiveShortConfig = shortConfig;
+    if (comboConfig.enabled) {
+      const total = comboConfig.totalCapital;
+      const longFrac = comboConfig.mode === 'long' ? 1 : comboConfig.mode === 'short' ? 0 : comboConfig.allocationLong;
+      effectiveLongConfig = { ...longConfig, totalCapital: total * longFrac };
+      effectiveShortConfig = { ...shortConfig, totalCapital: total * (1 - longFrac) };
+    }
+
     const config: SimulationConfig = {
       name: simName || `${selectedPair.label} ${timeframe} Simulation`,
       pair: selectedPair.pair,
@@ -399,12 +422,13 @@ export default function ConfigPanel({
       timeframe,
       startTime: new Date(startDate).toISOString(),
       endTime: new Date(endDate).toISOString(),
-      longConfig,
-      shortConfig,
+      longConfig: effectiveLongConfig,
+      shortConfig: effectiveShortConfig,
       adaptiveEnabled,
       emaPeriod,
       volumeMultiplier,
       feeRate: feeRate / 100,
+      combo: comboConfig.enabled ? comboConfig : undefined,
     };
 
     onRunSimulation(config);
@@ -490,6 +514,7 @@ export default function ConfigPanel({
         color="var(--grid-long)"
         toggle={gridLongEnabled}
         onToggle={onGridLongToggle}
+        toggleDisabled={comboConfig.enabled}
       >
         <GridSideConfig side="long" config={longConfig} onChange={setLongConfig} />
       </AccordionSection>
@@ -501,6 +526,7 @@ export default function ConfigPanel({
         color="var(--grid-short)"
         toggle={gridShortEnabled}
         onToggle={onGridShortToggle}
+        toggleDisabled={comboConfig.enabled}
       >
         <GridSideConfig side="short" config={shortConfig} onChange={setShortConfig} />
       </AccordionSection>
@@ -525,6 +551,17 @@ export default function ConfigPanel({
         onToggle={onDcaShortToggle}
       >
         <DCAConfigInline config={dcaShortConfig} onChange={onDcaShortConfigChange} direction="SHORT" />
+      </AccordionSection>
+
+      {/* ── Combo Bot (Dual Trailing v3.1) ── */}
+      <AccordionSection
+        title="Combo Bot · v3.1"
+        defaultOpen={comboConfig.enabled}
+        color="var(--supervisor, #22d3ee)"
+        toggle={comboConfig.enabled}
+        onToggle={(v) => onComboConfigChange({ ...comboConfig, enabled: v })}
+      >
+        <ComboBotConfigEditor config={comboConfig} onChange={onComboConfigChange} />
       </AccordionSection>
 
       {/* ── Adaptive Layer ── */}

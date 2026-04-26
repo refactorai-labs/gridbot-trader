@@ -1,0 +1,1902 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Combo Bot · Supervisor View</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Inherited from app globals.css */
+    --grid-long:  #10b981;
+    --grid-long-bg: rgba(16,185,129,0.08);
+    --grid-long-border: rgba(16,185,129,0.25);
+    --grid-short: #ef4444;
+    --grid-short-bg: rgba(239,68,68,0.08);
+    --grid-short-border: rgba(239,68,68,0.25);
+    --grid-fill:  #facc15;
+    --adaptive-accent: #2563eb;
+    --card-bg:    rgba(16, 20, 32, 0.88);
+    --card-border: rgba(255, 255, 255, 0.07);
+    --text-primary: rgba(255,255,255,0.94);
+    --text-secondary: rgba(255,255,255,0.68);
+    --text-muted: rgba(255,255,255,0.42);
+    --hover-bg: rgba(255,255,255,0.04);
+    --input-bg: rgba(255,255,255,0.035);
+    --input-border: rgba(255,255,255,0.09);
+
+    /* -------- New combo-surface tokens -------- */
+    --supervisor:           #22d3ee;          /* electric cyan — combo accent */
+    --supervisor-dim:       rgba(34,211,238,0.18);
+    --supervisor-faint:     rgba(34,211,238,0.06);
+
+    /* Phase palette (glass-cockpit calibration) */
+    --phase-idle:           #8a94a6;
+    --phase-breakout:       #f59e0b;          /* amber */
+    --phase-running:        var(--grid-long);
+    --phase-cooldown:       #64748b;
+    --phase-reopening:      #d946ef;          /* magenta-violet */
+    --phase-hibernating:    #4a5563;
+
+    /* Hairline grid */
+    --hairline:             rgba(255,255,255,0.08);
+    --hairline-strong:      rgba(255,255,255,0.14);
+    --hairline-dashed:      repeating-linear-gradient(to right, var(--hairline) 0 2px, transparent 2px 4px);
+
+    /* Chart-pane specific */
+    --chart-bg:             #07090f;
+    --readout-bg:           rgba(8, 10, 16, 0.72);
+
+    /* Segment/meter rails */
+    --meter-empty:          rgba(255,255,255,0.055);
+    --meter-tick:           rgba(255,255,255,0.18);
+
+    /* Typography */
+    --f-display:  'IBM Plex Mono', 'JetBrains Mono', monospace;
+    --f-data:     'JetBrains Mono', ui-monospace, monospace;
+    --f-body:     'Inter Tight', 'Inter', system-ui, sans-serif;
+
+    color-scheme: dark;
+  }
+
+  [data-theme="light"] {
+    --card-bg:    #ffffff;
+    --card-border: rgba(15, 23, 42, 0.10);
+    --text-primary: rgba(15, 23, 42, 0.92);
+    --text-secondary: rgba(15, 23, 42, 0.65);
+    --text-muted: rgba(15, 23, 42, 0.42);
+    --hover-bg: rgba(15, 23, 42, 0.035);
+    --input-bg: rgba(15, 23, 42, 0.025);
+    --input-border: rgba(15, 23, 42, 0.1);
+    --grid-long: #047857;
+    --grid-long-bg: rgba(4, 120, 87, 0.07);
+    --grid-long-border: rgba(4, 120, 87, 0.22);
+    --grid-short: #b91c1c;
+    --grid-short-bg: rgba(185, 28, 28, 0.07);
+    --grid-short-border: rgba(185, 28, 28, 0.22);
+    --grid-fill: #a16207;
+    --adaptive-accent: #1d4ed8;
+    --hairline: rgba(15,23,42,0.12);
+    --hairline-strong: rgba(15,23,42,0.22);
+    --hairline-dashed: repeating-linear-gradient(to right, var(--hairline) 0 2px, transparent 2px 4px);
+    --supervisor:      #0891b2;
+    --supervisor-dim:  rgba(8,145,178,0.15);
+    --supervisor-faint: rgba(8,145,178,0.05);
+    --phase-idle:      #64748b;
+    --phase-breakout:  #b45309;
+    --phase-cooldown:  #475569;
+    --phase-reopening: #a21caf;
+    --phase-hibernating: #52525b;
+    --chart-bg: #fbfaf7;
+    --readout-bg: rgba(255, 255, 255, 0.85);
+    --meter-empty:  rgba(15, 23, 42, 0.06);
+    --meter-tick:   rgba(15, 23, 42, 0.22);
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--f-body);
+    background: #0a0c14;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv11", "cv02";
+    letter-spacing: -0.003em;
+  }
+  [data-theme="light"] body { background: #f3f1ed; }
+
+  /* Top-of-page theme/session control (only for the prototype) */
+  .proto-toolbar {
+    position: fixed; top: 14px; right: 14px; z-index: 30;
+    display: flex; gap: 4px; align-items: center;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    padding: 4px;
+    border-radius: 3px;
+    font-family: var(--f-display);
+    font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .proto-toolbar button {
+    background: transparent; border: 0; padding: 5px 10px;
+    cursor: pointer; color: var(--text-secondary);
+    font: inherit; border-radius: 2px;
+  }
+  .proto-toolbar button.active {
+    background: var(--supervisor-dim);
+    color: var(--supervisor);
+  }
+
+  /* ======================================================
+     OUTER FRAME
+  ====================================================== */
+  .app-frame {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    min-height: 100vh;
+  }
+  .left-stub {
+    border-right: 1px solid var(--hairline);
+    padding: 20px 18px;
+    background: linear-gradient(180deg,
+      rgba(255,255,255,0.01) 0%,
+      transparent 70%);
+  }
+  [data-theme="light"] .left-stub {
+    background: linear-gradient(180deg, rgba(15,23,42,0.02) 0%, transparent 70%);
+  }
+  .left-stub h3 {
+    font-family: var(--f-display);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--text-muted);
+    margin: 0 0 10px;
+    font-weight: 500;
+  }
+  .left-stub p {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .left-stub .stub-placeholder {
+    padding: 14px;
+    border: 1px dashed var(--hairline-strong);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-family: var(--f-display);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .combo-pane {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ======================================================
+     SCHEMATIC HELPERS
+  ====================================================== */
+  .hairline-h { height: 1px; background: var(--hairline); }
+  .hairline-dashed-h {
+    height: 1px;
+    background-image: var(--hairline-dashed);
+    background-repeat: repeat-x;
+    background-size: auto 1px;
+  }
+  .section-label {
+    font-family: var(--f-display);
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--text-muted);
+  }
+  .mono-readout {
+    font-family: var(--f-data);
+    font-variant-numeric: tabular-nums;
+  }
+  .metric-value {
+    font-family: var(--f-data);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    line-height: 1;
+  }
+
+  /* Inline coordinate label: "L.PHZ = RUN" styling */
+  .coord {
+    font-family: var(--f-display);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .coord-key { color: var(--text-muted); }
+  .coord-eq  { color: var(--hairline-strong); padding: 0 4px; }
+  .coord-val { color: var(--text-primary); font-weight: 600; }
+
+  /* ======================================================
+     1. STATUS STRIP
+  ====================================================== */
+  .status-strip {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: stretch;
+    gap: 0;
+    border-bottom: 1px solid var(--hairline);
+    background:
+      linear-gradient(to bottom, rgba(34,211,238,0.03), transparent 60%),
+      var(--card-bg);
+  }
+  .strip-brand {
+    padding: 12px 18px;
+    border-right: 1px solid var(--hairline);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .brand-mark {
+    width: 22px; height: 22px; display: grid; place-items: center;
+    color: var(--supervisor);
+    border: 1px solid var(--supervisor-dim);
+    border-radius: 2px;
+    background:
+      radial-gradient(circle at 30% 30%, var(--supervisor-faint) 0%, transparent 60%),
+      transparent;
+  }
+  .brand-text {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+  .brand-text em {
+    font-style: normal;
+    color: var(--supervisor);
+    font-weight: 500;
+  }
+  .mode-pill {
+    margin-left: 12px;
+    padding: 3px 8px 2px;
+    font-family: var(--f-display);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--supervisor);
+    background: var(--supervisor-faint);
+    border: 1px solid var(--supervisor-dim);
+    border-radius: 2px;
+  }
+
+  .strip-session {
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    flex-wrap: wrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .strip-session::-webkit-scrollbar { display: none; }
+  .session-item {
+    display: flex; align-items: baseline; gap: 8px;
+    min-width: 0;
+  }
+  .session-item .v {
+    font-family: var(--f-data);
+    font-size: 12.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+  }
+
+  .strip-controls {
+    border-left: 1px solid var(--hairline);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .pill-run {
+    padding: 6px 12px;
+    border-radius: 2px;
+    font-family: var(--f-display);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--supervisor);
+    border: 1px solid var(--supervisor);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.14s ease;
+  }
+  .pill-run:hover {
+    background: var(--supervisor-dim);
+  }
+
+  /* ======================================================
+     2. CHART ZONE
+  ====================================================== */
+  .chart-zone {
+    display: grid;
+    grid-template-columns: 1fr 312px;
+    min-height: 540px;
+  }
+  .chart-main {
+    position: relative;
+    background: var(--chart-bg);
+    display: flex; flex-direction: column;
+  }
+  .chart-meta {
+    display: flex;
+    gap: 14px;
+    padding: 10px 18px 8px;
+    border-bottom: 1px solid var(--hairline);
+    align-items: center;
+  }
+  .chart-meta .price {
+    font-family: var(--f-data);
+    font-size: 18px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+  }
+  .chart-meta .delta {
+    font-family: var(--f-data);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 6px 1px;
+    border-radius: 2px;
+  }
+  .chart-meta .delta.up {
+    color: var(--grid-long);
+    background: var(--grid-long-bg);
+  }
+  .chart-meta .delta.down {
+    color: var(--grid-short);
+    background: var(--grid-short-bg);
+  }
+  .chart-meta .bid-ask {
+    font-family: var(--f-data);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+  }
+  .chart-meta .bid-ask span { color: var(--text-secondary); }
+  .chart-meta .exchange {
+    margin-left: auto;
+    font-family: var(--f-display);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* Chart placeholder — visualizes the slot where lightweight-charts mounts */
+  .chart-slot {
+    position: relative;
+    flex: 1;
+    background:
+      linear-gradient(to bottom, rgba(34,211,238,0.015), transparent 30%),
+      radial-gradient(ellipse at center, rgba(16,185,129,0.015) 0%, transparent 60%);
+    min-height: 440px;
+    overflow: hidden;
+  }
+  /* Blueprint grid backdrop */
+  .chart-slot::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(to right, var(--hairline) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--hairline) 1px, transparent 1px);
+    background-size: 80px 60px;
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  .chart-stub-label {
+    position: absolute; inset: auto 0 0 0;
+    text-align: center;
+    font-family: var(--f-display);
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 6px;
+  }
+
+  /* Mock candlesticks as inline SVG so prototype is visually complete */
+  .candles {
+    position: absolute;
+    inset: 14px 0 30px 0;
+    width: 100%;
+    height: calc(100% - 44px);
+  }
+  .avwap-line, .sl-line-long, .sl-line-short {
+    fill: none;
+    stroke-width: 1.25;
+  }
+  .avwap-line { stroke: var(--grid-fill); stroke-dasharray: 4 2; }
+  .sl-line-long  { stroke: var(--grid-long); stroke-dasharray: 2 3; opacity: 0.7; }
+  .sl-line-short { stroke: var(--grid-short); stroke-dasharray: 2 3; opacity: 0.7; }
+  .phase-marker-line { stroke: var(--phase-reopening); stroke-width: 1; opacity: 0.6; }
+  .cooldown-shade { fill: rgba(100, 116, 139, 0.12); }
+  .hibernation-shade {
+    fill: rgba(74, 85, 99, 0.18);
+  }
+  .hibernation-shade-pattern {
+    fill: url(#scanlines);
+  }
+  .sl-marker, .tier-marker, .phase-marker {
+    stroke-width: 1;
+  }
+  .sl-marker {
+    stroke: var(--grid-short);
+    fill: rgba(239,68,68,0.25);
+  }
+  .tier-marker-1 { stroke: var(--phase-breakout); fill: rgba(245,158,11,0.25); }
+  .tier-marker-2 { stroke: var(--phase-reopening); fill: rgba(217,70,239,0.25); }
+  .tier-marker-3 { stroke: var(--supervisor); fill: rgba(34,211,238,0.25); }
+
+  /* Floating price readout (glass LCD-style) */
+  .price-readout {
+    position: absolute; right: 14px; top: 14px;
+    padding: 7px 10px;
+    background: var(--readout-bg);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 2px;
+    font-family: var(--f-data);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .price-readout strong { color: var(--text-primary); font-weight: 500; }
+
+  /* ======================================================
+     3. OVERLAY PANEL — in right rail
+  ====================================================== */
+  .right-rail {
+    border-left: 1px solid var(--hairline);
+    display: flex;
+    flex-direction: column;
+    background: var(--card-bg);
+    min-width: 0;
+  }
+  .rail-section {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .rail-section:last-child { border-bottom: 0; }
+  .rail-section header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .rail-section header .section-label { margin: 0; }
+  .rail-section header .count {
+    font-family: var(--f-data);
+    font-size: 10px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .overlay-group {
+    margin-bottom: 14px;
+  }
+  .overlay-group:last-child { margin-bottom: 0; }
+  .overlay-group-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: var(--f-display);
+    font-size: 9.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .overlay-group-title .all-toggle {
+    text-decoration: underline;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 9px;
+  }
+
+  .overlay-row {
+    display: grid;
+    grid-template-columns: 14px 14px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 5px 6px;
+    border-radius: 2px;
+    cursor: pointer;
+    margin-left: -6px;
+    font-family: var(--f-display);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    transition: background 0.12s ease, color 0.12s ease;
+    position: relative;
+  }
+  .overlay-row:hover {
+    background: var(--hover-bg);
+    color: var(--text-primary);
+  }
+  .overlay-row[data-on="true"] {
+    color: var(--text-primary);
+  }
+  .overlay-row[data-on="true"]::before {
+    content: '';
+    position: absolute;
+    left: -6px; top: 50%;
+    width: 3px; height: 14px;
+    margin-top: -7px;
+    background: var(--accent, var(--supervisor));
+    border-radius: 0;
+  }
+
+  /* Hand-drawn checkbox — custom, not OS default */
+  .ck {
+    width: 14px; height: 14px;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    position: relative;
+    transition: all 0.14s ease;
+    flex-shrink: 0;
+    border-radius: 0;
+  }
+  .overlay-row[data-on="true"] .ck {
+    background: var(--accent, var(--supervisor));
+    border-color: var(--accent, var(--supervisor));
+  }
+  .overlay-row[data-on="true"] .ck::after {
+    content: '';
+    position: absolute;
+    left: 4px; top: 1px;
+    width: 4px; height: 8px;
+    border-right: 1.5px solid #0a0c14;
+    border-bottom: 1.5px solid #0a0c14;
+    transform: rotate(42deg);
+  }
+  .swatch {
+    width: 14px; height: 2px;
+    background: var(--accent, var(--text-muted));
+    align-self: center;
+  }
+  .overlay-row.style-dashed .swatch {
+    background: repeating-linear-gradient(to right,
+      var(--accent, var(--text-muted)) 0 3px,
+      transparent 3px 6px);
+  }
+  .overlay-row.style-glow .swatch {
+    background: var(--accent, var(--text-muted));
+    box-shadow: 0 0 4px 1px var(--accent, var(--text-muted));
+  }
+  .overlay-row .hint {
+    font-family: var(--f-body);
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 0;
+    text-transform: none;
+    font-weight: 400;
+  }
+
+  /* ======================================================
+     4. BOT PHASE PANELS
+  ====================================================== */
+  .deck {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    border-top: 1px solid var(--hairline);
+    background: var(--card-bg);
+  }
+  .deck > * { border-right: 1px solid var(--hairline); }
+  .deck > *:last-child { border-right: 0; }
+
+  .bot-card {
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    position: relative;
+  }
+  .bot-card.long::before,
+  .bot-card.short::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 2px;
+  }
+  .bot-card.long::before  { background: var(--grid-long); }
+  .bot-card.short::before { background: var(--grid-short); }
+
+  .bot-head {
+    display: flex; align-items: center; gap: 10px;
+    justify-content: space-between;
+  }
+  .side-tag {
+    font-family: var(--f-display);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+  .side-tag.long  { color: var(--grid-long); }
+  .side-tag.short { color: var(--grid-short); }
+
+  .phase-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 4px 10px 3px 8px;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    background: transparent;
+    font-family: var(--f-display);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .phase-lamp {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 6px currentColor;
+  }
+  .phase-badge[data-pulse="true"] .phase-lamp {
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 3px currentColor; opacity: 0.6; }
+    50%      { box-shadow: 0 0 12px currentColor, 0 0 2px currentColor; opacity: 1; }
+  }
+
+  .phase-idle        { color: var(--phase-idle); }
+  .phase-breakout    { color: var(--phase-breakout); }
+  .phase-running     { color: var(--phase-running); }
+  .phase-cooldown    { color: var(--phase-cooldown); }
+  .phase-reopening   { color: var(--phase-reopening); }
+  .phase-hibernating { color: var(--phase-hibernating); }
+
+  /* Tier meter — measurement ticks, not a plain bar */
+  .tier-meter {
+    display: grid;
+    grid-template-columns: 42px 1fr 26px;
+    align-items: center;
+    gap: 10px;
+  }
+  .tier-meter .label { color: var(--text-muted); font-size: 9.5px; }
+  .tier-rail {
+    height: 10px;
+    position: relative;
+    background:
+      linear-gradient(to right,
+        var(--meter-empty) 0 25%,
+        var(--hairline) 25% 25.3%,
+        var(--meter-empty) 25.3% 50%,
+        var(--hairline) 50% 50.3%,
+        var(--meter-empty) 50.3% 75%,
+        var(--hairline) 75% 75.3%,
+        var(--meter-empty) 75.3% 100%);
+    border-left: 1px solid var(--hairline-strong);
+    border-right: 1px solid var(--hairline-strong);
+    overflow: hidden;
+  }
+  .tier-fill {
+    height: 100%;
+    background: linear-gradient(to right,
+      var(--phase-breakout) 0%,
+      var(--phase-breakout) 25%,
+      var(--phase-reopening) 25%,
+      var(--phase-reopening) 50%,
+      var(--supervisor) 50%,
+      var(--supervisor) 100%);
+    transition: width 0.4s cubic-bezier(.2,.8,.4,1);
+  }
+  .tier-stamp {
+    font-family: var(--f-data);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    text-align: right;
+  }
+
+  /* Reopen 4-light stack */
+  .reopen-stack {
+    display: grid;
+    grid-template-columns: 42px repeat(4, 1fr);
+    gap: 6px;
+    align-items: center;
+  }
+  .reopen-stack > .label { color: var(--text-muted); font-size: 9.5px; font-family: var(--f-display); text-transform: uppercase; letter-spacing: 0.14em; }
+  .reopen-light {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .reopen-light .bulb {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 40%, rgba(255,255,255,0.04) 0%, transparent 60%),
+      var(--input-bg);
+    border: 1px solid var(--input-border);
+    box-shadow:
+      inset 0 1px 2px rgba(0,0,0,0.5),
+      inset 0 -1px 0 rgba(255,255,255,0.04);
+    transition: all 0.2s ease;
+  }
+  .reopen-light.on .bulb {
+    background:
+      radial-gradient(circle at 50% 35%, rgba(255,255,255,0.45) 0%, var(--color) 60%, var(--color) 100%);
+    border-color: var(--color);
+    box-shadow:
+      inset 0 1px 2px rgba(0,0,0,0.3),
+      0 0 8px var(--color),
+      0 0 14px color-mix(in srgb, var(--color) 40%, transparent);
+  }
+  .reopen-light .tag {
+    font-family: var(--f-display);
+    font-size: 8.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .reopen-light.on .tag { color: var(--color); font-weight: 600; }
+  .reopen-light.ava .bulb { --color: var(--grid-fill); }
+  .reopen-light.ava.on .bulb { --color: var(--grid-fill); }
+  .reopen-light .bulb { --color: var(--grid-long); }
+
+  /* Retry dots + countdown row */
+  .state-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding-top: 10px;
+    border-top: 1px dashed var(--hairline);
+  }
+  .retry-group {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .retry-dots {
+    display: inline-flex; gap: 3px;
+  }
+  .retry-dot {
+    width: 8px; height: 8px;
+    border: 1px solid var(--hairline-strong);
+    border-radius: 0;
+    background: transparent;
+  }
+  .retry-dot.filled {
+    background: var(--grid-short);
+    border-color: var(--grid-short);
+    box-shadow: 0 0 4px var(--grid-short);
+  }
+  .count-ticker {
+    font-family: var(--f-data);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+  }
+  .last-event {
+    font-family: var(--f-display);
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    text-align: right;
+  }
+  .last-event .ev-type {
+    color: var(--phase-reopening);
+  }
+
+  /* ======================================================
+     5. P&L CARD
+  ====================================================== */
+  .pnl-card {
+    padding: 16px 20px;
+    display: flex; flex-direction: column; gap: 16px;
+    position: relative;
+    background:
+      linear-gradient(to bottom, rgba(16,185,129,0.02), transparent 60%);
+  }
+  .pnl-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .pnl-equity {
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .equity-value {
+    font-family: var(--f-data);
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    color: var(--grid-long);
+    line-height: 1;
+  }
+  .equity-delta {
+    font-family: var(--f-data);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--grid-long);
+  }
+  .equity-delta.neg { color: var(--grid-short); }
+
+  .pnl-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--hairline);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .pnl-split > div {
+    padding: 10px 12px;
+  }
+  .pnl-split > div + div {
+    border-left: 1px solid var(--hairline);
+  }
+  .pnl-split .lbl {
+    font-family: var(--f-display);
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .pnl-split .val {
+    font-family: var(--f-data);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    line-height: 1;
+  }
+  .pnl-split .sub {
+    font-family: var(--f-data);
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .pnl-split .long .val { color: var(--grid-long); }
+  .pnl-split .short .val { color: var(--grid-short); }
+
+  .pnl-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border-top: 1px dashed var(--hairline);
+    padding-top: 14px;
+  }
+  .pnl-stats .stat {
+    display: flex; flex-direction: column; gap: 4px;
+    padding-right: 12px;
+  }
+  .pnl-stats .stat + .stat { border-left: 1px solid var(--hairline); padding-left: 12px; }
+  .pnl-stats .key {
+    font-family: var(--f-display);
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .pnl-stats .num {
+    font-family: var(--f-data);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+    line-height: 1;
+  }
+  .pnl-stats .num.warn { color: var(--phase-breakout); }
+  .pnl-stats .num.neg  { color: var(--grid-short); }
+
+  /* ======================================================
+     6. EVENT TIMELINE (horizontal, below chart)
+  ====================================================== */
+  .event-timeline {
+    border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--hairline);
+    padding: 0;
+    position: relative;
+    background:
+      linear-gradient(to bottom, rgba(0,0,0,0.15), transparent 80%);
+  }
+  .timeline-ruler {
+    position: relative;
+    height: 58px;
+    padding: 0 14px;
+  }
+  .timeline-axis {
+    position: absolute;
+    left: 14px; right: 14px;
+    top: 38px;
+    height: 1px;
+    background: var(--hairline-strong);
+  }
+  .timeline-ticks {
+    position: absolute;
+    left: 14px; right: 14px;
+    top: 34px;
+    height: 9px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .timeline-ticks span {
+    width: 1px; height: 5px;
+    background: var(--hairline);
+    font-family: var(--f-data);
+    font-size: 8.5px;
+    color: var(--text-muted);
+    position: relative;
+  }
+  .timeline-ticks span::after {
+    content: attr(data-label);
+    position: absolute;
+    top: 12px; left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    color: var(--text-muted);
+  }
+  .timeline-event {
+    position: absolute;
+    width: 1px;
+    top: 8px;
+    height: 30px;
+    background: currentColor;
+  }
+  .timeline-event::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    width: 10px; height: 10px;
+    background: currentColor;
+    border-radius: 50%;
+    border: 2px solid var(--chart-bg);
+    box-shadow: 0 0 6px currentColor;
+  }
+  .timeline-event .tag {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 14px;
+    font-family: var(--f-display);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .timeline-event.ev-breakout { color: var(--phase-breakout); }
+  .timeline-event.ev-sl       { color: var(--grid-short); }
+  .timeline-event.ev-cooldown { color: var(--phase-cooldown); }
+  .timeline-event.ev-tier1    { color: var(--phase-breakout); }
+  .timeline-event.ev-tier2    { color: var(--phase-reopening); }
+  .timeline-event.ev-tier3    { color: var(--supervisor); }
+  .timeline-event.ev-cycle    { color: var(--grid-long); }
+  .timeline-event.ev-hib      { color: var(--phase-hibernating); }
+  .timeline-head {
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px dashed var(--hairline);
+  }
+
+  /* ======================================================
+     7. EVENT FEED (right rail — compact list)
+  ====================================================== */
+  .feed-item {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--hairline);
+    font-family: var(--f-display);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+  }
+  .feed-item:last-child { border-bottom: 0; }
+  .feed-idx {
+    font-family: var(--f-data);
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    color: var(--text-muted);
+    min-width: 36px;
+  }
+  .feed-marker {
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .feed-marker .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 4px currentColor;
+  }
+  .feed-time {
+    font-family: var(--f-data);
+    font-size: 9.5px;
+    color: var(--text-muted);
+    letter-spacing: 0;
+  }
+
+  /* ======================================================
+     8. WALK-FORWARD PANEL
+  ====================================================== */
+  .wf-panel {
+    border-top: 1px solid var(--hairline);
+    padding: 18px 22px;
+    background:
+      linear-gradient(to bottom, var(--supervisor-faint), transparent 30%),
+      var(--card-bg);
+  }
+  .wf-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .wf-title {
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .wf-title h4 {
+    font-family: var(--f-display);
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .wf-title .sub {
+    font-family: var(--f-body);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .wf-metrics {
+    display: flex;
+    gap: 24px;
+  }
+  .wf-metric {
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .wf-metric .k {
+    font-family: var(--f-display);
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .wf-metric .v {
+    font-family: var(--f-data);
+    font-variant-numeric: tabular-nums;
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 1;
+  }
+  .wf-metric .v.accent { color: var(--supervisor); }
+  .wf-metric .v.warn   { color: var(--phase-breakout); }
+
+  .wf-body {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: 20px;
+  }
+
+  .wf-curve {
+    position: relative;
+    height: 180px;
+    background:
+      linear-gradient(to bottom, rgba(34,211,238,0.02), transparent 70%);
+    border: 1px solid var(--hairline);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .wf-curve::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(to right, var(--hairline) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--hairline) 1px, transparent 1px);
+    background-size: 40px 30px;
+    opacity: 0.45;
+  }
+  .wf-curve svg { display: block; width: 100%; height: 100%; }
+  .wf-curve-label {
+    position: absolute; left: 10px; top: 8px;
+    font-family: var(--f-display);
+    font-size: 9.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .wf-folds {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .wf-fold {
+    display: grid;
+    grid-template-columns: 36px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 2px;
+    font-family: var(--f-display);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    background: rgba(255,255,255,0.01);
+  }
+  .wf-fold .fold-tag {
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .wf-fold .fold-bar {
+    height: 6px;
+    background: var(--meter-empty);
+    position: relative;
+    border-radius: 0;
+  }
+  .wf-fold .fold-bar::after {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: var(--pct, 50%);
+    background: var(--phase-running);
+  }
+  .wf-fold.neg .fold-bar::after {
+    background: var(--grid-short);
+  }
+  .wf-fold .fold-val {
+    font-family: var(--f-data);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    letter-spacing: 0;
+  }
+  .wf-fold.neg .fold-val { color: var(--grid-short); }
+
+  /* ======================================================
+     RESPONSIVE
+  ====================================================== */
+  @media (max-width: 1280px) {
+    .app-frame { grid-template-columns: 280px 1fr; }
+    .chart-zone { grid-template-columns: 1fr 280px; }
+    .deck { grid-template-columns: 1fr 1fr; }
+    .deck .pnl-card { grid-column: 1 / 3; border-top: 1px solid var(--hairline); }
+    .wf-body { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 900px) {
+    .app-frame { grid-template-columns: 1fr; }
+    .left-stub { display: none; }
+    .chart-zone { grid-template-columns: 1fr; }
+    .right-rail { border-left: 0; border-top: 1px solid var(--hairline); }
+    .deck { grid-template-columns: 1fr; }
+    .deck .pnl-card { grid-column: 1 / 2; }
+  }
+</style>
+</head>
+<body>
+
+<div class="proto-toolbar" role="group" aria-label="Prototype theme toggle">
+  <button type="button" class="active" data-theme-btn="dark">Dark</button>
+  <button type="button" data-theme-btn="light">Light</button>
+</div>
+
+<div class="app-frame">
+
+  <!-- ============================================================
+       LEFT STUB — existing config panel is out of scope; placeholder only
+       ============================================================ -->
+  <aside class="left-stub">
+    <h3>Configuration</h3>
+    <div class="stub-placeholder">
+      (existing ConfigPanel.tsx<br/>— not redesigned —)
+    </div>
+    <p style="margin-top:14px;">Grid Long · Grid Short · DCA · Combo supervisor toggles, pair picker, windowing, Bayesian optimizer controls.</p>
+  </aside>
+
+  <!-- ============================================================
+       MAIN COMBO PANE
+       ============================================================ -->
+  <main class="combo-pane">
+
+    <!-- 1 ─────────────── STATUS STRIP ─────────────── -->
+    <header class="status-strip">
+      <div class="strip-brand">
+        <div class="brand-mark">
+          <!-- custom glyph -->
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="8" cy="8" r="6.5"/>
+            <path d="M2 8 L14 8 M8 2 L8 14" stroke-dasharray="1.5 1.2"/>
+          </svg>
+        </div>
+        <span class="brand-text">COMBO <em>∙ SUPER∙</em> V3.1</span>
+        <span class="mode-pill">DUAL</span>
+      </div>
+
+      <div class="strip-session">
+        <div class="session-item">
+          <span class="coord"><span class="coord-key">PAIR</span><span class="coord-eq">=</span><span class="coord-val">ETHUSDT</span></span>
+        </div>
+        <div class="session-item">
+          <span class="coord"><span class="coord-key">TF</span><span class="coord-eq">=</span><span class="coord-val">5M</span></span>
+        </div>
+        <div class="session-item">
+          <span class="coord"><span class="coord-key">WND</span><span class="coord-eq">=</span><span class="coord-val">26-01-01→26-04-24</span></span>
+        </div>
+        <div class="session-item">
+          <span class="coord"><span class="coord-key">CDL</span><span class="coord-eq">=</span></span>
+          <span class="v">16&thinsp;128 / 33&thinsp;856</span>
+        </div>
+        <div class="session-item">
+          <span class="coord"><span class="coord-key">LEV</span><span class="coord-eq">=</span></span>
+          <span class="v" style="color:var(--supervisor);">5.0×</span>
+        </div>
+        <div class="session-item">
+          <span class="coord"><span class="coord-key">ALLOC</span><span class="coord-eq">=</span></span>
+          <span class="v"><span style="color:var(--grid-long)">60%</span> / <span style="color:var(--grid-short)">40%</span></span>
+        </div>
+      </div>
+
+      <div class="strip-controls">
+        <span class="coord"><span class="coord-key">PLAY</span><span class="coord-eq">=</span><span class="coord-val">×4</span></span>
+        <button class="pill-run" type="button">▶ Run</button>
+      </div>
+    </header>
+
+    <!-- 2 + 3 ─────── CHART + RIGHT RAIL ─────── -->
+    <section class="chart-zone">
+
+      <div class="chart-main">
+        <div class="chart-meta">
+          <div class="price">$2&thinsp;138.40</div>
+          <div class="delta up">+0.82%</div>
+          <div class="bid-ask"><span>bid</span> 2138.38 · <span>ask</span> 2138.42 · <span>Δ</span> 0.0019%</div>
+          <div class="exchange">BINANCE · PERP</div>
+        </div>
+
+        <!-- Chart slot (lightweight-charts mounts here in React app) -->
+        <div class="chart-slot">
+          <div class="price-readout">
+            <div>AVWAP&nbsp;<strong>2094.85</strong></div>
+            <div>ATR(14)·4H&nbsp;<strong>38.12</strong></div>
+            <div>ER·SMTH&nbsp;<strong>0.71</strong></div>
+          </div>
+
+          <!-- Mock chart contents for visual review -->
+          <svg class="candles" viewBox="0 0 1000 360" preserveAspectRatio="none">
+            <defs>
+              <pattern id="scanlines" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="4" stroke="rgba(74,85,99,0.5)" stroke-width="1"/>
+              </pattern>
+              <linearGradient id="equityFade" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.12"/>
+                <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+
+            <!-- Cooldown shading region -->
+            <rect class="cooldown-shade" x="540" y="0" width="80" height="360"/>
+            <!-- Hibernation shading region -->
+            <rect class="hibernation-shade" x="820" y="0" width="70" height="360"/>
+            <rect class="hibernation-shade-pattern" x="820" y="0" width="70" height="360"/>
+
+            <!-- Phase transition vertical lines -->
+            <line class="phase-marker-line" x1="180" y1="0" x2="180" y2="360"/>
+            <line class="phase-marker-line" x1="430" y1="0" x2="430" y2="360"/>
+            <line class="phase-marker-line" x1="540" y1="0" x2="540" y2="360" style="stroke:var(--grid-short);"/>
+            <line class="phase-marker-line" x1="620" y1="0" x2="620" y2="360" style="stroke:var(--phase-breakout);"/>
+            <line class="phase-marker-line" x1="680" y1="0" x2="680" y2="360"/>
+            <line class="phase-marker-line" x1="740" y1="0" x2="740" y2="360" style="stroke:var(--supervisor);"/>
+            <line class="phase-marker-line" x1="820" y1="0" x2="820" y2="360" style="stroke:var(--phase-hibernating);"/>
+
+            <!-- Candles (visually representative) -->
+            <g opacity="0.92">
+              <!-- up candles (emerald) -->
+              <g fill="#10b981" stroke="#10b981">
+                <rect x="16" y="240" width="4" height="22"/><line x1="18" y1="232" x2="18" y2="266"/>
+                <rect x="32" y="232" width="4" height="16"/><line x1="34" y1="224" x2="34" y2="254"/>
+                <rect x="48" y="228" width="4" height="18"/><line x1="50" y1="220" x2="50" y2="252"/>
+                <rect x="80" y="224" width="4" height="12"/><line x1="82" y1="218" x2="82" y2="240"/>
+                <rect x="112" y="208" width="4" height="20"/><line x1="114" y1="202" x2="114" y2="232"/>
+                <rect x="128" y="200" width="4" height="16"/><line x1="130" y1="194" x2="130" y2="220"/>
+                <rect x="160" y="192" width="4" height="14"/><line x1="162" y1="186" x2="162" y2="210"/>
+                <rect x="176" y="184" width="4" height="10"/><line x1="178" y1="180" x2="178" y2="198"/>
+                <rect x="208" y="168" width="4" height="18"/><line x1="210" y1="162" x2="210" y2="190"/>
+                <rect x="224" y="160" width="4" height="12"/><line x1="226" y1="154" x2="226" y2="174"/>
+                <rect x="256" y="148" width="4" height="16"/><line x1="258" y1="142" x2="258" y2="168"/>
+                <rect x="272" y="138" width="4" height="12"/><line x1="274" y1="134" x2="274" y2="152"/>
+                <rect x="304" y="126" width="4" height="20"/><line x1="306" y1="120" x2="306" y2="150"/>
+                <rect x="336" y="114" width="4" height="16"/><line x1="338" y1="108" x2="338" y2="134"/>
+                <rect x="368" y="98" width="4" height="22"/><line x1="370" y1="92" x2="370" y2="124"/>
+                <rect x="384" y="86" width="4" height="14"/><line x1="386" y1="80" x2="386" y2="104"/>
+                <rect x="400" y="74" width="4" height="18"/><line x1="402" y1="68" x2="402" y2="94"/>
+                <rect x="416" y="62" width="4" height="16"/><line x1="418" y1="58" x2="418" y2="80"/>
+                <rect x="432" y="52" width="4" height="10"/><line x1="434" y1="48" x2="434" y2="64"/>
+                <rect x="456" y="44" width="4" height="12"/><line x1="458" y1="40" x2="458" y2="58"/>
+                <rect x="472" y="38" width="4" height="10"/><line x1="474" y1="34" x2="474" y2="50"/>
+                <rect x="504" y="46" width="4" height="10"/><line x1="506" y1="40" x2="506" y2="58"/>
+                <rect x="636" y="180" width="4" height="14"/><line x1="638" y1="174" x2="638" y2="196"/>
+                <rect x="652" y="168" width="4" height="16"/><line x1="654" y1="160" x2="654" y2="188"/>
+                <rect x="700" y="150" width="4" height="18"/><line x1="702" y1="142" x2="702" y2="172"/>
+                <rect x="716" y="134" width="4" height="14"/><line x1="718" y1="128" x2="718" y2="150"/>
+                <rect x="748" y="108" width="4" height="16"/><line x1="750" y1="100" x2="750" y2="126"/>
+                <rect x="764" y="96" width="4" height="10"/><line x1="766" y1="92" x2="766" y2="108"/>
+                <rect x="780" y="84" width="4" height="8"/><line x1="782" y1="78" x2="782" y2="94"/>
+                <rect x="796" y="76" width="4" height="14"/><line x1="798" y1="70" x2="798" y2="92"/>
+                <rect x="916" y="160" width="4" height="12"/><line x1="918" y1="154" x2="918" y2="174"/>
+                <rect x="948" y="146" width="4" height="16"/><line x1="950" y1="140" x2="950" y2="166"/>
+                <rect x="980" y="120" width="4" height="14"/><line x1="982" y1="114" x2="982" y2="136"/>
+              </g>
+              <!-- down candles (red) -->
+              <g fill="#ef4444" stroke="#ef4444">
+                <rect x="64" y="238" width="4" height="18"/><line x1="66" y1="228" x2="66" y2="262"/>
+                <rect x="96" y="220" width="4" height="18"/><line x1="98" y1="212" x2="98" y2="244"/>
+                <rect x="144" y="198" width="4" height="14"/><line x1="146" y1="192" x2="146" y2="216"/>
+                <rect x="192" y="176" width="4" height="18"/><line x1="194" y1="170" x2="194" y2="198"/>
+                <rect x="240" y="156" width="4" height="14"/><line x1="242" y1="150" x2="242" y2="174"/>
+                <rect x="288" y="134" width="4" height="12"/><line x1="290" y1="128" x2="290" y2="150"/>
+                <rect x="320" y="120" width="4" height="14"/><line x1="322" y1="114" x2="322" y2="140"/>
+                <rect x="352" y="108" width="4" height="12"/><line x1="354" y1="102" x2="354" y2="124"/>
+                <rect x="488" y="40" width="4" height="14"/><line x1="490" y1="34" x2="490" y2="58"/>
+                <rect x="520" y="50" width="4" height="18"/><line x1="522" y1="44" x2="522" y2="74"/>
+                <rect x="540" y="68" width="4" height="30"/><line x1="542" y1="60" x2="542" y2="104"/>
+                <rect x="560" y="102" width="4" height="40"/><line x1="562" y1="96" x2="562" y2="148"/>
+                <rect x="580" y="144" width="4" height="44"/><line x1="582" y1="138" x2="582" y2="194"/>
+                <rect x="600" y="188" width="4" height="30"/><line x1="602" y1="182" x2="602" y2="224"/>
+                <rect x="620" y="214" width="4" height="18"/><line x1="622" y1="208" x2="622" y2="238"/>
+                <rect x="668" y="156" width="4" height="12"/><line x1="670" y1="150" x2="670" y2="172"/>
+                <rect x="684" y="144" width="4" height="8"/><line x1="686" y1="138" x2="686" y2="156"/>
+                <rect x="732" y="118" width="4" height="18"/><line x1="734" y1="110" x2="734" y2="140"/>
+                <rect x="812" y="92" width="4" height="16"/><line x1="814" y1="84" x2="814" y2="114"/>
+                <rect x="828" y="108" width="4" height="20"/><line x1="830" y1="100" x2="830" y2="132"/>
+                <rect x="844" y="128" width="4" height="26"/><line x1="846" y1="120" x2="846" y2="158"/>
+                <rect x="860" y="154" width="4" height="24"/><line x1="862" y1="144" x2="862" y2="184"/>
+                <rect x="876" y="178" width="4" height="18"/><line x1="878" y1="170" x2="878" y2="200"/>
+                <rect x="892" y="196" width="4" height="12"/><line x1="894" y1="188" x2="894" y2="212"/>
+                <rect x="932" y="170" width="4" height="14"/><line x1="934" y1="164" x2="934" y2="188"/>
+                <rect x="964" y="156" width="4" height="12"/><line x1="966" y1="150" x2="966" y2="170"/>
+              </g>
+            </g>
+
+            <!-- AVWAP line -->
+            <polyline class="avwap-line" points="0,300 60,280 150,250 220,230 320,210 430,180 500,140 570,160 650,190 720,170 820,140 900,160 1000,180"/>
+
+            <!-- SL long line (dashed emerald) -->
+            <polyline class="sl-line-long" points="180,280 430,100 540,100 620,260 680,260 740,110 820,110"/>
+
+            <!-- SL short line (dashed red) -->
+            <polyline class="sl-line-short" points="820,30 1000,30" />
+
+            <!-- Tier / SL event markers -->
+            <circle class="sl-marker" cx="540" cy="240" r="6"/>
+            <circle class="tier-marker-1" cx="620" cy="220" r="6"/>
+            <circle class="tier-marker-2" cx="680" cy="160" r="6"/>
+            <circle class="tier-marker-3" cx="740" cy="110" r="6"/>
+
+            <!-- Equity overlay (subtle cyan line with fill) -->
+            <path d="M0,320 L60,310 L160,298 L260,270 L360,260 L460,230 L540,250 L620,260 L720,230 L820,210 L900,220 L1000,190 L1000,360 L0,360 Z" fill="url(#equityFade)"/>
+            <polyline points="0,320 60,310 160,298 260,270 360,260 460,230 540,250 620,260 720,230 820,210 900,220 1000,190" fill="none" stroke="#22d3ee" stroke-width="1.2" opacity="0.85"/>
+          </svg>
+
+          <div class="chart-stub-label">CHART · LIGHTWEIGHT-CHARTS MOUNTS HERE (TradingChart.tsx)</div>
+        </div>
+      </div>
+
+      <!-- Right rail: overlays + event feed -->
+      <aside class="right-rail">
+        <section class="rail-section">
+          <header>
+            <span class="section-label">Chart overlays</span>
+            <span class="count">7 / 11</span>
+          </header>
+
+          <div class="overlay-group">
+            <div class="overlay-group-title">
+              <span>Indicators</span>
+              <span class="all-toggle">none</span>
+            </div>
+            <div class="overlay-row style-dashed" data-on="true" style="--accent: var(--grid-fill)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>
+                Anchored VWAP
+                <span class="hint">from ER&gt;threshold anchor</span>
+              </span>
+              <span></span>
+            </div>
+            <div class="overlay-row" data-on="false" style="--accent: var(--adaptive-accent)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>Session VWAP</span>
+              <span></span>
+            </div>
+            <div class="overlay-row" data-on="false" style="--accent: var(--text-secondary)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>
+                ATR bands
+                <span class="hint">blended 4H/1H envelope</span>
+              </span>
+              <span></span>
+            </div>
+            <div class="overlay-row" data-on="false" style="--accent: var(--text-secondary)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>Bollinger bands</span>
+              <span></span>
+            </div>
+            <div class="overlay-row" data-on="false" style="--accent: var(--adaptive-accent)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>RSI sub-pane</span>
+              <span></span>
+            </div>
+          </div>
+
+          <div class="overlay-group">
+            <div class="overlay-group-title">
+              <span>Combo state</span>
+              <span class="all-toggle">all</span>
+            </div>
+            <div class="overlay-row style-dashed" data-on="true" style="--accent: var(--grid-short)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>Stop-loss lines</span>
+              <span></span>
+            </div>
+            <div class="overlay-row" data-on="true" style="--accent: var(--phase-reopening)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>Phase transitions</span>
+              <span></span>
+            </div>
+            <div class="overlay-row style-glow" data-on="true" style="--accent: var(--grid-fill)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>
+                Reopen tier markers
+                <span class="hint">T1 · T2 · T3</span>
+              </span>
+              <span></span>
+            </div>
+            <div class="overlay-row" data-on="true" style="--accent: var(--grid-short)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>SL-hit events</span>
+              <span></span>
+            </div>
+            <div class="overlay-row" data-on="true" style="--accent: var(--phase-cooldown)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>Cooldown / hibernation shading</span>
+              <span></span>
+            </div>
+          </div>
+
+          <div class="overlay-group">
+            <div class="overlay-group-title">
+              <span>Performance</span>
+              <span class="all-toggle">all</span>
+            </div>
+            <div class="overlay-row" data-on="true" style="--accent: var(--supervisor)">
+              <span class="ck"></span>
+              <span class="swatch"></span>
+              <span>Equity overlay</span>
+              <span></span>
+            </div>
+          </div>
+        </section>
+
+        <section class="rail-section">
+          <header>
+            <span class="section-label">Adaptive events</span>
+            <span class="count">9 · idx 16128</span>
+          </header>
+
+          <div class="feed-item">
+            <span class="feed-idx">16080</span>
+            <span class="feed-marker" style="color: var(--grid-long);">
+              <span class="dot"></span>
+              CYCLE · COMPLETE
+            </span>
+            <span class="feed-time">14:42:05</span>
+          </div>
+          <div class="feed-item">
+            <span class="feed-idx">15945</span>
+            <span class="feed-marker" style="color: var(--supervisor);">
+              <span class="dot"></span>
+              TIER&nbsp;3 · SCALE
+            </span>
+            <span class="feed-time">12:47:20</span>
+          </div>
+          <div class="feed-item">
+            <span class="feed-idx">15840</span>
+            <span class="feed-marker" style="color: var(--phase-reopening);">
+              <span class="dot"></span>
+              TIER&nbsp;2 · SCALE
+            </span>
+            <span class="feed-time">11:15:50</span>
+          </div>
+          <div class="feed-item">
+            <span class="feed-idx">15768</span>
+            <span class="feed-marker" style="color: var(--phase-breakout);">
+              <span class="dot"></span>
+              TIER&nbsp;1 · REOPEN
+            </span>
+            <span class="feed-time">10:10:10</span>
+          </div>
+          <div class="feed-item">
+            <span class="feed-idx">15720</span>
+            <span class="feed-marker" style="color: var(--phase-cooldown);">
+              <span class="dot"></span>
+              COOLDOWN · ENTER
+            </span>
+            <span class="feed-time">09:25:00</span>
+          </div>
+          <div class="feed-item">
+            <span class="feed-idx">15720</span>
+            <span class="feed-marker" style="color: var(--grid-short);">
+              <span class="dot"></span>
+              SL · TRIG <span style="color:var(--text-muted);">@2111.4</span>
+            </span>
+            <span class="feed-time">09:25:00</span>
+          </div>
+          <div class="feed-item">
+            <span class="feed-idx">15280</span>
+            <span class="feed-marker" style="color: var(--phase-breakout);">
+              <span class="dot"></span>
+              BREAKOUT · ENTER
+            </span>
+            <span class="feed-time">02:55:00</span>
+          </div>
+        </section>
+      </aside>
+    </section>
+
+    <!-- ─────────── HORIZONTAL EVENT TIMELINE ─────────── -->
+    <section class="event-timeline">
+      <div class="timeline-head">
+        <span class="section-label">Event timeline</span>
+        <span class="coord"><span class="coord-key">RANGE</span><span class="coord-eq">=</span><span class="coord-val">idx 15000 – 16128</span></span>
+      </div>
+
+      <div class="timeline-ruler">
+        <div class="timeline-axis"></div>
+        <div class="timeline-ticks">
+          <span data-label="15000"></span>
+          <span data-label="15200"></span>
+          <span data-label="15400"></span>
+          <span data-label="15600"></span>
+          <span data-label="15800"></span>
+          <span data-label="16000"></span>
+          <span data-label="16128"></span>
+        </div>
+
+        <!-- Events positioned along the strip -->
+        <div class="timeline-event ev-breakout" style="left: 4%; top: 8px;">
+          <span class="tag">BRK</span>
+        </div>
+        <div class="timeline-event ev-sl"       style="left: 60%; top: 8px;">
+          <span class="tag">SL</span>
+        </div>
+        <div class="timeline-event ev-cooldown" style="left: 62%; top: 8px;">
+          <span class="tag">CD</span>
+        </div>
+        <div class="timeline-event ev-tier1"    style="left: 72%; top: 8px;">
+          <span class="tag">T1</span>
+        </div>
+        <div class="timeline-event ev-tier2"    style="left: 78%; top: 8px;">
+          <span class="tag">T2</span>
+        </div>
+        <div class="timeline-event ev-tier3"    style="left: 83%; top: 8px;">
+          <span class="tag">T3</span>
+        </div>
+        <div class="timeline-event ev-cycle"    style="left: 92%; top: 8px;">
+          <span class="tag">OK</span>
+        </div>
+        <div class="timeline-event ev-hib"      style="left: 95.5%; top: 8px;">
+          <span class="tag">HB</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 + 5 ────────── BOT DECK ────────── -->
+    <section class="deck">
+
+      <!-- LONG BOT -->
+      <div class="bot-card long">
+        <div class="bot-head">
+          <span class="side-tag long">LONG · BOT</span>
+          <span class="phase-badge phase-running" data-pulse="true">
+            <span class="phase-lamp"></span>
+            RUNNING
+          </span>
+        </div>
+
+        <div class="tier-meter">
+          <span class="label section-label">TIER</span>
+          <div class="tier-rail">
+            <div class="tier-fill" style="width: 100%"></div>
+          </div>
+          <span class="tier-stamp">T3 / 100%</span>
+        </div>
+
+        <div class="reopen-stack">
+          <span class="label">REOPEN</span>
+          <div class="reopen-light on"><span class="bulb" style="--color: var(--grid-long)"></span><span class="tag">CD</span></div>
+          <div class="reopen-light on"><span class="bulb" style="--color: var(--grid-long)"></span><span class="tag">REG</span></div>
+          <div class="reopen-light on"><span class="bulb" style="--color: var(--grid-long)"></span><span class="tag">ATR</span></div>
+          <div class="reopen-light on ava"><span class="bulb" style="--color: var(--grid-fill)"></span><span class="tag">AVWAP</span></div>
+        </div>
+
+        <div class="state-row">
+          <div class="retry-group">
+            <span class="section-label" style="font-size:9px;">Retry</span>
+            <span class="retry-dots">
+              <span class="retry-dot filled"></span>
+              <span class="retry-dot"></span>
+            </span>
+            <span class="count-ticker">1 / 2</span>
+          </div>
+          <div></div>
+          <div class="last-event">
+            <span class="ev-type" style="color: var(--grid-long);">CYCLE·COMPLETE</span>
+            · idx 16080
+          </div>
+        </div>
+      </div>
+
+      <!-- SHORT BOT -->
+      <div class="bot-card short">
+        <div class="bot-head">
+          <span class="side-tag short">SHORT · BOT</span>
+          <span class="phase-badge phase-cooldown">
+            <span class="phase-lamp"></span>
+            COOLDOWN
+          </span>
+        </div>
+
+        <div class="tier-meter">
+          <span class="label section-label">TIER</span>
+          <div class="tier-rail">
+            <div class="tier-fill" style="width: 0%"></div>
+          </div>
+          <span class="tier-stamp">— / 0%</span>
+        </div>
+
+        <div class="reopen-stack">
+          <span class="label">REOPEN</span>
+          <div class="reopen-light on"><span class="bulb" style="--color: var(--grid-long)"></span><span class="tag">CD</span></div>
+          <div class="reopen-light on"><span class="bulb" style="--color: var(--grid-long)"></span><span class="tag">REG</span></div>
+          <div class="reopen-light"><span class="bulb"></span><span class="tag">ATR</span></div>
+          <div class="reopen-light ava"><span class="bulb"></span><span class="tag">AVWAP</span></div>
+        </div>
+
+        <div class="state-row">
+          <div class="retry-group">
+            <span class="section-label" style="font-size:9px;">Retry</span>
+            <span class="retry-dots">
+              <span class="retry-dot filled"></span>
+              <span class="retry-dot"></span>
+            </span>
+            <span class="count-ticker">1 / 2</span>
+          </div>
+          <div class="count-ticker">CD · 4m 15s</div>
+          <div class="last-event">
+            <span class="ev-type" style="color: var(--grid-short);">SL·TRIG</span>
+            · idx 15720
+          </div>
+        </div>
+      </div>
+
+      <!-- P&L CARD -->
+      <div class="pnl-card">
+        <div class="pnl-head">
+          <span class="section-label">Profit &amp; loss</span>
+          <span class="coord"><span class="coord-key">EQ</span><span class="coord-eq">=</span><span class="coord-val">$12,487.21</span></span>
+        </div>
+
+        <div class="pnl-equity">
+          <span class="equity-value">+$2,487.21</span>
+          <span class="equity-delta">+24.87%</span>
+          <span class="last-event" style="color: var(--text-muted); margin-left: auto;">vs $10,000.00 base</span>
+        </div>
+
+        <div class="pnl-split">
+          <div class="long">
+            <div class="lbl">Long realized</div>
+            <div class="val">+$1,842.60</div>
+            <div class="sub">unreal. <span style="color:var(--text-secondary);">+$128.92</span></div>
+          </div>
+          <div class="short">
+            <div class="lbl">Short realized</div>
+            <div class="val">+$644.61</div>
+            <div class="sub">unreal. <span style="color:var(--text-secondary);">−$32.40</span></div>
+          </div>
+        </div>
+
+        <div class="pnl-stats">
+          <div class="stat">
+            <span class="key">Funding</span>
+            <span class="num neg">−$68.12</span>
+          </div>
+          <div class="stat">
+            <span class="key">Notional</span>
+            <span class="num">$30.4k</span>
+          </div>
+          <div class="stat">
+            <span class="key">Max DD</span>
+            <span class="num warn">12.4%</span>
+          </div>
+          <div class="stat">
+            <span class="key">W / L</span>
+            <span class="num">142 / 37</span>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ─────── 6. STITCHED WALK-FORWARD PANEL ─────── -->
+    <section class="wf-panel">
+      <div class="wf-header">
+        <div class="wf-title">
+          <h4>Walk-forward · stitched OOS</h4>
+          <span class="sub">8 folds · 12-month train / 3-month OOS / step 3m</span>
+        </div>
+        <div class="wf-metrics">
+          <div class="wf-metric">
+            <span class="k">PSR</span>
+            <span class="v accent">0.84</span>
+          </div>
+          <div class="wf-metric">
+            <span class="k">Stability</span>
+            <span class="v">0.71</span>
+          </div>
+          <div class="wf-metric">
+            <span class="k">Max DD</span>
+            <span class="v warn">14.2%</span>
+          </div>
+          <div class="wf-metric">
+            <span class="k">Trades</span>
+            <span class="v">342</span>
+          </div>
+          <div class="wf-metric">
+            <span class="k">Fitness</span>
+            <span class="v accent">0.542</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="wf-body">
+        <div class="wf-curve">
+          <span class="wf-curve-label">Stitched OOS equity · 2022-01 → 2026-04</span>
+          <svg viewBox="0 0 800 180" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="wfFade" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%"  stop-color="#22d3ee" stop-opacity="0.35"/>
+                <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <!-- fold vertical dividers -->
+            <g stroke="rgba(255,255,255,0.08)" stroke-dasharray="2 3">
+              <line x1="100" y1="0" x2="100" y2="180"/>
+              <line x1="200" y1="0" x2="200" y2="180"/>
+              <line x1="300" y1="0" x2="300" y2="180"/>
+              <line x1="400" y1="0" x2="400" y2="180"/>
+              <line x1="500" y1="0" x2="500" y2="180"/>
+              <line x1="600" y1="0" x2="600" y2="180"/>
+              <line x1="700" y1="0" x2="700" y2="180"/>
+            </g>
+            <!-- baseline -->
+            <line x1="0" y1="150" x2="800" y2="150" stroke="rgba(255,255,255,0.2)" stroke-dasharray="3 4"/>
+            <!-- equity curve -->
+            <path d="M0,150 L30,140 L80,135 L130,120 L180,128 L230,110 L280,98 L330,106 L380,90 L430,88 L480,72 L530,84 L580,68 L630,58 L680,40 L730,52 L780,38 L780,180 L0,180 Z" fill="url(#wfFade)"/>
+            <polyline
+              points="0,150 30,140 80,135 130,120 180,128 230,110 280,98 330,106 380,90 430,88 480,72 530,84 580,68 630,58 680,40 730,52 780,38"
+              fill="none" stroke="#22d3ee" stroke-width="1.6"/>
+            <!-- fold markers -->
+            <g fill="#22d3ee" stroke="#0a0c14" stroke-width="1.5">
+              <circle cx="0" cy="150" r="3"/>
+              <circle cx="100" cy="132" r="3"/>
+              <circle cx="200" cy="124" r="3"/>
+              <circle cx="300" cy="104" r="3"/>
+              <circle cx="400" cy="92" r="3"/>
+              <circle cx="500" cy="78" r="3"/>
+              <circle cx="600" cy="62" r="3"/>
+              <circle cx="700" cy="48" r="3"/>
+              <circle cx="780" cy="38" r="3"/>
+            </g>
+          </svg>
+        </div>
+
+        <div class="wf-folds">
+          <div class="wf-fold">
+            <span class="fold-tag">F01</span>
+            <div class="fold-bar" style="--pct: 62%;"></div>
+            <span class="fold-val">+0.62</span>
+          </div>
+          <div class="wf-fold">
+            <span class="fold-tag">F02</span>
+            <div class="fold-bar" style="--pct: 74%;"></div>
+            <span class="fold-val">+0.74</span>
+          </div>
+          <div class="wf-fold neg">
+            <span class="fold-tag">F03</span>
+            <div class="fold-bar" style="--pct: 18%;"></div>
+            <span class="fold-val">−0.18</span>
+          </div>
+          <div class="wf-fold">
+            <span class="fold-tag">F04</span>
+            <div class="fold-bar" style="--pct: 58%;"></div>
+            <span class="fold-val">+0.58</span>
+          </div>
+          <div class="wf-fold">
+            <span class="fold-tag">F05</span>
+            <div class="fold-bar" style="--pct: 82%;"></div>
+            <span class="fold-val">+0.82</span>
+          </div>
+          <div class="wf-fold">
+            <span class="fold-tag">F06</span>
+            <div class="fold-bar" style="--pct: 70%;"></div>
+            <span class="fold-val">+0.70</span>
+          </div>
+          <div class="wf-fold">
+            <span class="fold-tag">F07</span>
+            <div class="fold-bar" style="--pct: 91%;"></div>
+            <span class="fold-val">+0.91</span>
+          </div>
+          <div class="wf-fold">
+            <span class="fold-tag">F08</span>
+            <div class="fold-bar" style="--pct: 88%;"></div>
+            <span class="fold-val">+0.88</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // Prototype-only: theme toggle
+  document.querySelectorAll('[data-theme-btn]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.getAttribute('data-theme-btn');
+      document.documentElement.setAttribute('data-theme', mode);
+      document.querySelectorAll('[data-theme-btn]').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+
+  // Prototype-only: overlay-row toggle interactivity
+  document.querySelectorAll('.overlay-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const on = row.getAttribute('data-on') === 'true';
+      row.setAttribute('data-on', String(!on));
+    });
+  });
+</script>
+
+</body>
+</html>
