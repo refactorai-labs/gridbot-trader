@@ -1,7 +1,23 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Grid3X3, Loader2, AlertCircle } from 'lucide-react';
+import {
+  Activity,
+  AlertCircle,
+  BarChart3,
+  Bot,
+  ChevronRight,
+  Database,
+  Grid3X3,
+  LineChart,
+  Loader2,
+  Play,
+  Settings,
+  Shield,
+  SlidersHorizontal,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react';
 import ThemeToggle from '@/components/ThemeToggle';
 import ConfigPanel from '@/components/config/ConfigPanel';
 import TradingChart, { GridFill } from '@/components/charts/TradingChart';
@@ -502,30 +518,83 @@ export default function SimulatorPage() {
 
   // Has any data to show?
   const hasData = replayData || dcaLongSnapshots.length > 0 || dcaShortSnapshots.length > 0;
+  const chartGridClass = gridLongEnabled && gridShortEnabled ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1';
+  const dcaGridClass = dcaLongEnabled && dcaShortEnabled ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1';
+  const topPairLabel = simulation?.pair ?? SUPPORTED_PAIRS[selectedPairIdx]?.pair ?? 'WETH/USDC';
+  const topTimeframe = simulation?.timeframe ?? '1h';
+  const topCandleCount = simulation?.totalCandles ?? totalCandles;
+  const gridPnl = (currentSnapshot?.realizedPnl ?? 0) + (currentSnapshot?.unrealizedPnl ?? 0);
+  // Per-direction realized P&L is summed from the trade arrays (already split by direction
+  // in handleRunSimulation). Snapshots cannot be used because the engine returns one merged
+  // snapshot stream when both sides run, which would double-count.
+  const currentCandleTs = currentCandles[currentIdx]?.timestamp ?? 0;
+  const dcaLongPnlValue = dcaLongEnabled
+    ? dcaLongTrades.reduce((sum, t) => sum + (t.closeTime <= currentCandleTs ? t.pnl : 0), 0)
+    : 0;
+  const dcaShortPnlValue = dcaShortEnabled
+    ? dcaShortTrades.reduce((sum, t) => sum + (t.closeTime <= currentCandleTs ? t.pnl : 0), 0)
+    : 0;
+  const dcaPnl = dcaLongPnlValue + dcaShortPnlValue;
+  const pnlTotal = gridPnl + dcaPnl;
+  const pnlPct = initialCapital > 0 ? (pnlTotal / initialCapital) * 100 : 0;
+  const hasPnlSource = !!currentSnapshot || dcaLongCurrentSnapshot != null || dcaShortCurrentSnapshot != null;
+  const startLabel = simulation ? new Date(simulation.startTime).toLocaleDateString() : 'Not run';
+  const endLabel = simulation ? new Date(simulation.endTime).toLocaleDateString() : 'Not run';
+
+  const openConfigDrawer = (targetId?: string) => {
+    setConfigCollapsed(false);
+    if (!targetId) return;
+    // Two rAFs: one for state flush, one for layout — guarantees the drawer
+    // is mounted before we try to scroll into it.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  };
 
   return (
-    <div className="min-h-screen p-4">
-      {/* Header */}
-      <header className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg" style={{ background: 'rgba(var(--grid-neutral-rgb), 0.1)', border: '1px solid rgba(var(--grid-neutral-rgb), 0.2)' }}>
-            <Grid3X3 size={20} style={{ color: 'var(--grid-neutral)' }} />
+    <div className="app-shell min-h-screen">
+      <header className="topbar">
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="brand-mark">
+            <Grid3X3 size={20} />
           </div>
-          <div>
-            <h1 className="text-lg font-bold" style={{ color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
+          <div className="hidden sm:block min-w-0">
+            <div className="font-mono text-sm font-bold tracking-[0.08em]" style={{ color: 'var(--text-primary)' }}>
               GRID BOT SIMULATOR
-            </h1>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            </div>
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
               Multi-strategy backtesting platform
-            </p>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-3">
+          <div className="topbar-divider" />
+          <div className="topbar-pill topbar-pair">{topPairLabel}</div>
+          <div className="topbar-pill">{topTimeframe}</div>
+          <div className="hidden md:flex topbar-metric">
+            <BarChart3 size={14} />
+            <span>Candles</span>
+            <strong>{topCandleCount ? topCandleCount.toLocaleString() : '0'}</strong>
+          </div>
           {simulation && (
-            <div className="flex items-center gap-2">
-              <span className="badge badge-neutral">{simulation.pair}</span>
-              <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-                {simulation.timeframe} · {simulation.totalCandles} candles
+            <div className="hidden lg:flex topbar-metric">
+              <span>Simulation</span>
+              <strong className="text-profit">{simulation.status}</strong>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="hidden xl:flex topbar-date-row">
+            <strong>{startLabel}</strong>
+            <span className="topbar-date-arrow">→</span>
+            <strong>{endLabel}</strong>
+          </div>
+          {hasData && hasPnlSource && (
+            <div className={`topbar-pnl ${pnlTotal >= 0 ? 'text-profit' : 'text-loss'}`}>
+              {pnlTotal >= 0 ? '+' : '-'}${Math.abs(pnlTotal).toFixed(2)}
+              <span className={`topbar-pnl-chip ${pnlTotal >= 0 ? '' : 'loss'}`}>
+                {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
               </span>
             </div>
           )}
@@ -535,7 +604,7 @@ export default function SimulatorPage() {
 
       {/* Error display */}
       {error && (
-        <div className="mb-4 p-3 rounded-lg flex items-center gap-2" style={{
+        <div className="mx-3 mt-3 p-3 rounded-lg flex items-center gap-2" style={{
           background: 'rgba(239, 68, 68, 0.1)',
           border: '1px solid rgba(239, 68, 68, 0.2)',
         }}>
@@ -552,7 +621,7 @@ export default function SimulatorPage() {
 
       {/* Status message */}
       {statusMessage && (
-        <div className="mb-4 p-3 rounded-lg flex items-center gap-2" style={{
+        <div className="mx-3 mt-3 p-3 rounded-lg flex items-center gap-2" style={{
           background: 'rgba(var(--grid-neutral-rgb), 0.08)',
           border: '1px solid rgba(var(--grid-neutral-rgb), 0.15)',
         }}>
@@ -563,34 +632,68 @@ export default function SimulatorPage() {
         </div>
       )}
 
-      {/* Main layout */}
-      <div className="flex gap-4">
-        {/* Config sidebar */}
-        <aside className={`flex-shrink-0 transition-all duration-300 ${configCollapsed ? 'w-[200px]' : 'w-[340px]'} sticky top-4 self-start max-h-[calc(100vh-40px)] overflow-y-auto`}>
-          <ConfigPanel
-            onRunSimulation={handleRunSimulation}
-            isRunning={isRunning}
-            isCollapsed={configCollapsed}
-            onToggleCollapse={() => setConfigCollapsed(!configCollapsed)}
-            gridLongEnabled={gridLongEnabled}
-            gridShortEnabled={gridShortEnabled}
-            dcaLongEnabled={dcaLongEnabled}
-            dcaShortEnabled={dcaShortEnabled}
-            onGridLongToggle={setGridLongEnabled}
-            onGridShortToggle={setGridShortEnabled}
-            onDcaLongToggle={setDcaLongEnabled}
-            onDcaShortToggle={setDcaShortEnabled}
-            dcaLongConfig={dcaLongConfig}
-            dcaShortConfig={dcaShortConfig}
-            onDcaLongConfigChange={setDcaLongConfig}
-            onDcaShortConfigChange={setDcaShortConfig}
-            comboConfig={comboConfig}
-            onComboConfigChange={setComboConfig}
-          />
+      <div className="workbench">
+        <aside className="app-rail" aria-label="Simulator sections">
+          <button className={`rail-btn ${configCollapsed ? '' : 'active'}`} onClick={() => openConfigDrawer('cfg-general')} title="General">
+            <SlidersHorizontal size={20} />
+            <span>General</span>
+          </button>
+          <button className={`rail-btn ${gridLongEnabled ? 'enabled' : ''}`} onClick={() => openConfigDrawer('cfg-grid-long')} title="Grid Long">
+            <TrendingUp size={20} />
+            <span>Grid Long</span>
+          </button>
+          <button className={`rail-btn ${gridShortEnabled ? 'enabled danger' : ''}`} onClick={() => openConfigDrawer('cfg-grid-short')} title="Grid Short">
+            <TrendingDown size={20} />
+            <span>Grid Short</span>
+          </button>
+          <button className={`rail-btn ${(dcaLongEnabled || dcaShortEnabled) ? 'enabled' : ''}`} onClick={() => openConfigDrawer('cfg-dca-long')} title="DCA">
+            <LineChart size={20} />
+            <span>DCA</span>
+          </button>
+          <button className={`rail-btn ${comboConfig.enabled ? 'enabled' : ''}`} onClick={() => openConfigDrawer('cfg-combo')} title="Combo">
+            <Bot size={20} />
+            <span>Combo</span>
+          </button>
+          <button className="rail-btn" onClick={() => openConfigDrawer('cfg-adaptive')} title="Adaptive">
+            <Activity size={20} />
+            <span>Adaptive</span>
+          </button>
+          <button className="rail-btn" onClick={() => openConfigDrawer('cfg-data')} title="Data">
+            <Database size={20} />
+            <span>Data</span>
+          </button>
+          <button className="rail-run" onClick={() => openConfigDrawer()} title="Open run configuration">
+            <Play size={19} />
+            <span>Run</span>
+          </button>
         </aside>
 
-        {/* Main content */}
-        <main className="flex-1 flex flex-col gap-4 min-w-0">
+        {!configCollapsed && (
+          <aside className="config-drawer">
+            <ConfigPanel
+              onRunSimulation={handleRunSimulation}
+              isRunning={isRunning}
+              isCollapsed={false}
+              onToggleCollapse={() => setConfigCollapsed(true)}
+              gridLongEnabled={gridLongEnabled}
+              gridShortEnabled={gridShortEnabled}
+              dcaLongEnabled={dcaLongEnabled}
+              dcaShortEnabled={dcaShortEnabled}
+              onGridLongToggle={setGridLongEnabled}
+              onGridShortToggle={setGridShortEnabled}
+              onDcaLongToggle={setDcaLongEnabled}
+              onDcaShortToggle={setDcaShortEnabled}
+              dcaLongConfig={dcaLongConfig}
+              dcaShortConfig={dcaShortConfig}
+              onDcaLongConfigChange={setDcaLongConfig}
+              onDcaShortConfigChange={setDcaShortConfig}
+              comboConfig={comboConfig}
+              onComboConfigChange={setComboConfig}
+            />
+          </aside>
+        )}
+
+        <main className="workspace-main">
           {hasData ? (
             <>
               {/* Playback controls */}
@@ -655,15 +758,17 @@ export default function SimulatorPage() {
 
               {/* Grid Bot Row (only when combo is NOT active) */}
               {replayData && !simulation?.comboBotEnabled && (gridLongEnabled || gridShortEnabled) && (
-                <div>
-                  <div className="flex items-center gap-2 mb-2 px-1">
-                    <span className="text-xs font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                <section className="workspace-section">
+                  <div className="section-kicker">
+                    <span>
                       Grid Bot
                     </span>
+                    <span className="section-kicker-line" />
+                    <span>{currentIdx + 1}/{totalCandles || 0}</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className={`grid ${chartGridClass} gap-3`}>
                     {gridLongEnabled && (
-                      <div className="card overflow-hidden">
+                      <div className="chart-card chart-card-long">
                         <TradingChart
                           candles={replayData.candles}
                           gridLevels={replayData.longLevels}
@@ -673,12 +778,12 @@ export default function SimulatorPage() {
                           currentCandleIdx={currentIdx}
                           visibleCandleCount={50}
                           fitAll={fitAllCharts}
-                          height={380}
+                          height={420}
                         />
                       </div>
                     )}
                     {gridShortEnabled && (
-                      <div className="card overflow-hidden">
+                      <div className="chart-card chart-card-short">
                         <TradingChart
                           candles={replayData.candles}
                           gridLevels={replayData.shortLevels}
@@ -688,25 +793,27 @@ export default function SimulatorPage() {
                           currentCandleIdx={currentIdx}
                           visibleCandleCount={50}
                           fitAll={fitAllCharts}
-                          height={380}
+                          height={420}
                         />
                       </div>
                     )}
                   </div>
-                </div>
+                </section>
               )}
 
               {/* DCA Breakout Row */}
               {(dcaLongEnabled || dcaShortEnabled) && dcaChartCandles.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-2 px-1">
-                    <span className="text-xs font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                <section className="workspace-section">
+                  <div className="section-kicker">
+                    <span>
                       DCA Breakout
                     </span>
+                    <span className="section-kicker-line" />
+                    <span>{dcaChartCandles.length.toLocaleString()} candles</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className={`grid ${dcaGridClass} gap-3`}>
                     {dcaLongEnabled && (
-                      <div className="card overflow-hidden">
+                      <div className="chart-card chart-card-long">
                         <DCAChart
                           candles={dcaChartCandles}
                           side="LONG"
@@ -720,7 +827,7 @@ export default function SimulatorPage() {
                       </div>
                     )}
                     {dcaShortEnabled && (
-                      <div className="card overflow-hidden">
+                      <div className="chart-card chart-card-short">
                         <DCAChart
                           candles={dcaChartCandles}
                           side="SHORT"
@@ -736,7 +843,7 @@ export default function SimulatorPage() {
                   </div>
 
                   {/* DCA P&L panels */}
-                  <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div className={`grid ${dcaGridClass} gap-3 mt-3`}>
                     {dcaLongEnabled && dcaLongSnapshots.length > 0 && (
                       <DCAPnL
                         snapshots={dcaLongSnapshots}
@@ -754,14 +861,54 @@ export default function SimulatorPage() {
                       />
                     )}
                   </div>
-                </div>
+                </section>
               )}
 
-              {/* Combined P&L */}
-              <div className="flex gap-4">
-                <div className="w-[240px] flex-shrink-0 flex flex-col gap-3">
+              {/* Results tabs */}
+              <section className="analytics-grid">
+                <div className="analytics-panel">
+                  <div className="modern-tabs">
+                    <button
+                      className={`tab-btn ${activeTab === 'performance' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('performance')}
+                    >
+                      Performance
+                    </button>
+                    <button
+                      className={`tab-btn ${activeTab === 'trades' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('trades')}
+                    >
+                      Trade Log
+                    </button>
+                    <button
+                      className={`tab-btn ${activeTab === 'optimizer' ? 'active' : ''}`}
+                      onClick={() => setActiveTab('optimizer')}
+                    >
+                      Optimizer
+                    </button>
+                  </div>
+
+                  <div className="p-3">
+                    {activeTab === 'performance' && simulation && (
+                      <PerformanceSummary simulation={simulation} />
+                    )}
+                    {activeTab === 'trades' && replayData && (
+                      <TradeLog trades={replayData.gridOrders} />
+                    )}
+                    {activeTab === 'optimizer' && (
+                      <OptimizerTab
+                        pair={SUPPORTED_PAIRS[selectedPairIdx]?.pair ?? 'WETH/USDC'}
+                        binanceSymbol={SUPPORTED_PAIRS[selectedPairIdx]?.binanceSymbol ?? 'ETHUSDT'}
+                        startTime={simulation?.startTime ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}
+                        endTime={simulation?.endTime ?? new Date().toISOString()}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <aside className="analytics-side">
                   <CombinedPnL
-                    totalEquity={currentSnapshot?.equity ?? initialCapital}
+                    totalEquity={initialCapital + pnlTotal}
                     realizedPnl={currentSnapshot?.realizedPnl ?? 0}
                     unrealizedPnl={currentSnapshot?.unrealizedPnl ?? 0}
                     longRealizedPnl={currentSnapshot?.longRealizedPnl ?? 0}
@@ -773,10 +920,13 @@ export default function SimulatorPage() {
                     trend={lastAdaptiveEvent ? 'neutral' : 'neutral'}
                     deRiskPhase="none"
                     initialCapital={initialCapital}
-                    dcaLongPnl={dcaLongEnabled && dcaLongCurrentSnapshot ? dcaLongCurrentSnapshot.realizedPnlCumulative : undefined}
-                    dcaShortPnl={dcaShortEnabled && dcaShortCurrentSnapshot ? dcaShortCurrentSnapshot.realizedPnlCumulative : undefined}
+                    dcaLongPnl={dcaLongEnabled ? dcaLongPnlValue : undefined}
+                    dcaShortPnl={dcaShortEnabled ? dcaShortPnlValue : undefined}
                     dcaLongTrades={dcaLongEnabled ? dcaLongTrades.length : undefined}
                     dcaShortTrades={dcaShortEnabled ? dcaShortTrades.length : undefined}
+                    equityHistory={replayData?.pnlSnapshots
+                      .filter(s => s.candleIdx <= currentIdx)
+                      .map(s => s.equity)}
                   />
                   {replayData && (
                     <AdaptiveStatus
@@ -784,63 +934,26 @@ export default function SimulatorPage() {
                       currentCandleIdx={currentIdx}
                     />
                   )}
-                </div>
-                <div className="flex-1" />
-              </div>
-
-              {/* Results tabs */}
-              <div>
-                <div className="flex gap-0 border-b" style={{ borderColor: 'var(--card-border)' }}>
-                  <button
-                    className={`tab-btn ${activeTab === 'performance' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('performance')}
-                  >
-                    Performance
-                  </button>
-                  <button
-                    className={`tab-btn ${activeTab === 'trades' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('trades')}
-                  >
-                    Trade Log
-                  </button>
-                  <button
-                    className={`tab-btn ${activeTab === 'optimizer' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('optimizer')}
-                  >
-                    Optimizer
-                  </button>
-                </div>
-
-                <div className="mt-4">
-                  {activeTab === 'performance' && simulation && (
-                    <PerformanceSummary simulation={simulation} />
-                  )}
-                  {activeTab === 'trades' && replayData && (
-                    <TradeLog trades={replayData.gridOrders} />
-                  )}
-                  {activeTab === 'optimizer' && (
-                    <OptimizerTab
-                      pair={SUPPORTED_PAIRS[selectedPairIdx]?.pair ?? 'WETH/USDC'}
-                      binanceSymbol={SUPPORTED_PAIRS[selectedPairIdx]?.binanceSymbol ?? 'ETHUSDT'}
-                      startTime={simulation?.startTime ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}
-                      endTime={simulation?.endTime ?? new Date().toISOString()}
-                    />
-                  )}
-                </div>
-              </div>
+                </aside>
+              </section>
             </>
           ) : (
             // Empty state
-            <div className="flex-1 flex items-center justify-center card" style={{ minHeight: '500px' }}>
+            <div className="empty-workspace">
               <div className="text-center">
-                <Grid3X3 size={48} style={{ color: 'var(--text-muted)', margin: '0 auto 16px' }} />
-                <h2 className="text-lg font-mono font-bold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <Shield size={48} style={{ color: 'var(--grid-neutral)', margin: '0 auto 16px' }} />
+                <h2 className="text-lg font-mono font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
                   Configure & Run
                 </h2>
                 <p className="text-sm max-w-md" style={{ color: 'var(--text-muted)' }}>
                   Set your grid parameters, select a trading pair and date range,
                   then hit Run Simulation to see the strategies in action.
                 </p>
+                <button className="btn btn-primary mt-5 inline-flex items-center gap-2" onClick={() => openConfigDrawer('cfg-general')}>
+                  <Settings size={16} />
+                  Open Configuration
+                  <ChevronRight size={14} />
+                </button>
               </div>
             </div>
           )}

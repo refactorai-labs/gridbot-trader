@@ -1,6 +1,7 @@
 'use client';
 
 import { Play, Pause, SkipBack, SkipForward, Maximize2, MonitorDot } from 'lucide-react';
+import { CSSProperties } from 'react';
 import { PlaybackSpeed } from '@/lib/types';
 
 interface PlaybackControlsProps {
@@ -32,10 +33,14 @@ export default function PlaybackControls({
   onSpeedChange,
   onToggleFitAll,
 }: PlaybackControlsProps) {
+  const maxIdx = Math.max(0, totalCandles - 1);
+  const progressPct = maxIdx > 0 ? (currentIdx / maxIdx) * 100 : 0;
+  const scrubberStyle = { '--scrubber-progress': `${progressPct}%` } as CSSProperties;
+
   return (
-    <div className="card px-4 py-2 flex items-center gap-4 sticky top-0 z-10" style={{ backdropFilter: 'blur(12px)' }}>
+    <div className="transport-bar">
       {/* Transport controls */}
-      <div className="flex items-center gap-1">
+      <div className="transport-group">
         <button
           className="playback-btn"
           onClick={() => onSeek(0)}
@@ -44,15 +49,15 @@ export default function PlaybackControls({
           <SkipBack size={14} />
         </button>
         <button
-          className={`playback-btn ${isPlaying ? 'active' : ''}`}
+          className={`playback-btn transport-play ${isPlaying ? 'active' : ''}`}
           onClick={isPlaying ? onPause : onPlay}
           title={isPlaying ? 'Pause' : 'Play'}
         >
-          {isPlaying ? <Pause size={14} /> : <Play size={14} />}
+          {isPlaying ? <Pause size={16} /> : <Play size={16} fill="currentColor" />}
         </button>
         <button
           className="playback-btn"
-          onClick={() => onSeek(totalCandles - 1)}
+          onClick={() => onSeek(maxIdx)}
           title="Go to end"
         >
           <SkipForward size={14} />
@@ -60,24 +65,41 @@ export default function PlaybackControls({
       </div>
 
       {/* Timeline scrubber */}
-      <div className="flex-1 flex items-center gap-3">
+      <div className="transport-scrubber">
         <input
           type="range"
-          className="timeline-scrubber flex-1"
+          className="timeline-scrubber"
           min={0}
-          max={Math.max(0, totalCandles - 1)}
+          max={maxIdx}
           value={currentIdx}
           onChange={(e) => onSeek(parseInt(e.target.value))}
+          style={scrubberStyle}
         />
       </div>
 
       {/* Candle counter */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-          {currentIdx + 1}/{totalCandles}
+      <div className="transport-readout">
+        <span
+          className="font-mono tabular-nums"
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: '0.04em',
+            color: 'var(--text-primary)',
+          }}
+        >
+          {String(currentIdx + 1).padStart(4, '0')} / {totalCandles}
         </span>
         {currentTime && (
-          <span className="text-xs font-mono" style={{ color: 'var(--text-secondary)' }}>
+          <span
+            style={{
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 9.5,
+              fontWeight: 500,
+              letterSpacing: '0.06em',
+              color: 'var(--text-muted)',
+            }}
+          >
             {currentTime}
           </span>
         )}
@@ -85,7 +107,7 @@ export default function PlaybackControls({
 
       {/* Fit all / Follow toggle */}
       <button
-        className={`speed-btn flex items-center gap-1.5 ${isFitAll ? 'active' : ''}`}
+        className={`transport-toggle-btn ${isFitAll ? 'active' : ''}`}
         onClick={onToggleFitAll}
         title={isFitAll ? 'Switch to follow mode' : 'Fit all candles on screen'}
       >
@@ -94,14 +116,14 @@ export default function PlaybackControls({
       </button>
 
       {/* Speed selector */}
-      <div className="flex items-center gap-0.5 rounded-md p-0.5" style={{ background: 'var(--btn-secondary-bg)' }}>
+      <div className="speed-selector">
         {SPEEDS.map(s => (
           <button
             key={s}
             className={`speed-btn ${speed === s ? 'active' : ''}`}
             onClick={() => onSpeedChange(s)}
           >
-            {s}x
+            {s}×
           </button>
         ))}
       </div>

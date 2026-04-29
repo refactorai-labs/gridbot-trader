@@ -311,23 +311,22 @@ export default function DCAChart({
 
   return (
     <div className="relative">
+      {/* Side accent ribbon */}
+      <div className={`side-ribbon ${isLong ? 'side-ribbon-long' : 'side-ribbon-short'}`} />
+
       {/* Chart header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--card-border)' }}>
-        <div className="flex items-center gap-2">
+      <div className="chart-panel-header">
+        <div className="chart-header-group">
           <span className={`badge ${badgeClass}`}>{side}</span>
-          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-            DCA Breakout
-          </span>
+          <span className="chip-meta">DCA Breakout</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="chart-header-group">
           {currentSnapshot && (
             <span className={`badge ${currentSnapshot.state === 'OPEN' ? 'badge-long' : 'badge-neutral'}`}>
               {currentSnapshot.state}
             </span>
           )}
-          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-            {completedTradeCount} trades
-          </span>
+          <span className="chip-meta">{completedTradeCount} Trades</span>
         </div>
       </div>
       {/* Chart container */}

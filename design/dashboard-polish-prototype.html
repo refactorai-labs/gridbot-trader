@@ -1,0 +1,1885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Grid Bot Simulator — Visual Polish Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg-start: #05080e;
+  --bg-end: #090d16;
+  --surface: rgba(15, 21, 32, 0.88);
+  --surface-strong: rgba(15, 23, 36, 0.94);
+  --rail-bg: rgba(8, 13, 22, 0.92);
+  --topbar-bg: rgba(7, 11, 18, 0.84);
+  --hairline: rgba(148, 163, 184, 0.10);
+  --hairline-strong: rgba(255, 255, 255, 0.10);
+  --panel-border: rgba(148, 163, 184, 0.16);
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(255, 255, 255, 0.40);
+  --grid-long: #10b981;
+  --grid-long-bg: rgba(16, 185, 129, 0.08);
+  --grid-long-border: rgba(16, 185, 129, 0.20);
+  --grid-short: #ef4444;
+  --grid-short-bg: rgba(239, 68, 68, 0.08);
+  --grid-short-border: rgba(239, 68, 68, 0.20);
+  --grid-neutral: #14b8a6;
+  --grid-neutral-rgb: 20, 184, 166;
+  --supervisor: #22d3ee;
+  --adaptive: #38bdf8;
+  --grid-fill: #facc15;
+  --shadow-card: inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 1px rgba(148,163,184,0.10), 0 18px 55px rgba(0,0,0,0.18);
+  --shadow-hover: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(148,163,184,0.18), 0 22px 70px rgba(0,0,0,0.24);
+  --font-body: 'Inter Tight', system-ui, sans-serif;
+  --font-label: 'IBM Plex Mono', monospace;
+  --font-data: 'JetBrains Mono', monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: linear-gradient(180deg, var(--bg-start), var(--bg-end));
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Subtle grid noise texture */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(148,163,184,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148,163,184,0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app-shell { position: relative; z-index: 1; }
+
+button { background: none; border: none; color: inherit; cursor: pointer; font: inherit; }
+input, select { background: none; border: none; color: inherit; font: inherit; outline: none; }
+
+/* ============ TOPBAR ============ */
+.topbar {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; min-height: 58px; padding: 10px 18px;
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--panel-border);
+  backdrop-filter: blur(18px);
+}
+.topbar-left, .topbar-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand-mark {
+  width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: 8px;
+  color: var(--grid-neutral);
+  background: rgba(var(--grid-neutral-rgb), 0.12);
+  border: 1px solid rgba(var(--grid-neutral-rgb), 0.32);
+  box-shadow: inset 0 0 18px rgba(var(--grid-neutral-rgb), 0.10), inset 0 0 0 1px rgba(255,255,255,0.04);
+  font-family: var(--font-data);
+  font-size: 18px; font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.brand-text { display: flex; flex-direction: column; gap: 1px; }
+.brand-name {
+  font-family: var(--font-data);
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 0.10em;
+  color: var(--text-primary);
+}
+.brand-subline {
+  font-family: var(--font-label);
+  font-size: 10px; color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+.topbar-divider { width: 1px; height: 28px; background: var(--panel-border); }
+.topbar-pill {
+  font-family: var(--font-data);
+  font-size: 12px; font-weight: 500;
+  padding: 5px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: rgba(255,255,255,0.025);
+  font-variant-numeric: tabular-nums;
+}
+.topbar-pair { color: var(--text-primary); font-weight: 700; letter-spacing: 0.04em; }
+.topbar-metric, .topbar-status, .topbar-date-row {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-label); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.topbar-metric strong, .topbar-date-row strong { color: var(--text-primary); font-weight: 600; }
+.topbar-metric strong, .topbar-date-row span:not(.date-arrow), .topbar-date-row strong {
+  font-family: var(--font-data); font-variant-numeric: tabular-nums;
+  text-transform: none; letter-spacing: 0;
+  color: var(--text-primary); font-weight: 500;
+}
+.topbar-metric span:first-of-type { color: var(--text-muted); font-family: var(--font-label); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 400; }
+.topbar-status {
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: rgba(16,185,129,0.08);
+  border: 1px solid rgba(16,185,129,0.22);
+  color: var(--grid-long);
+  font-weight: 600;
+}
+.status-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--grid-long);
+  box-shadow: 0 0 0 3px rgba(16,185,129,0.18);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.date-arrow { color: var(--text-muted); padding: 0 2px; font-family: var(--font-body); }
+.topbar-pnl-block {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 4px 10px;
+  border-left: 1px solid var(--panel-border);
+}
+.pnl-hero {
+  font-family: var(--font-data);
+  font-size: 16px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--grid-long);
+}
+.pnl-delta {
+  font-family: var(--font-data);
+  font-size: 10px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(16,185,129,0.12);
+  color: var(--grid-long);
+  border: 1px solid rgba(16,185,129,0.25);
+}
+.theme-toggle {
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: 7px;
+  border: 1px solid var(--panel-border);
+  color: var(--text-secondary);
+  background: rgba(255,255,255,0.025);
+  transition: all 0.15s;
+}
+.theme-toggle:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
+
+/* ============ WORKBENCH GRID ============ */
+.workbench {
+  display: grid;
+  grid-template-columns: 72px 320px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+}
+
+/* ============ ICON RAIL ============ */
+.app-rail {
+  position: sticky; top: 70px;
+  align-self: start;
+  display: flex; flex-direction: column; gap: 6px;
+  min-height: calc(100vh - 94px);
+  padding: 10px 8px;
+  background: var(--rail-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow-card);
+}
+.rail-btn, .rail-run {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px;
+  min-height: 56px;
+  border-radius: 8px;
+  font-family: var(--font-label);
+  font-size: 9.5px; font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+.rail-btn svg { color: inherit; opacity: 0.9; }
+.rail-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.04);
+  border-color: var(--hairline);
+}
+.rail-btn.enabled {
+  color: var(--grid-long);
+  background: var(--grid-long-bg);
+  border-color: var(--grid-long-border);
+  box-shadow: inset 0 0 0 1px rgba(16,185,129,0.06);
+}
+.rail-btn.enabled.danger {
+  color: var(--grid-short);
+  background: var(--grid-short-bg);
+  border-color: var(--grid-short-border);
+  box-shadow: inset 0 0 0 1px rgba(239,68,68,0.06);
+}
+.rail-btn.enabled.supervisor {
+  color: var(--supervisor);
+  background: rgba(34,211,238,0.08);
+  border-color: rgba(34,211,238,0.22);
+  box-shadow: inset 0 0 0 1px rgba(34,211,238,0.06);
+}
+.rail-run {
+  margin-top: auto;
+  color: var(--grid-neutral);
+  background: rgba(var(--grid-neutral-rgb), 0.12);
+  border-color: rgba(var(--grid-neutral-rgb), 0.32);
+  box-shadow: inset 0 0 12px rgba(var(--grid-neutral-rgb), 0.08);
+}
+.rail-run:hover {
+  background: rgba(var(--grid-neutral-rgb), 0.20);
+  color: var(--text-primary);
+}
+
+/* ============ CONFIG DRAWER ============ */
+.config-drawer {
+  position: sticky; top: 70px;
+  align-self: start;
+  max-height: calc(100vh - 94px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+}
+.drawer-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline-strong);
+  font-family: var(--font-label);
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.drawer-collapse-icon {
+  display: grid; place-items: center;
+  width: 22px; height: 22px;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.04);
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+.accordion { padding: 4px 6px; display: flex; flex-direction: column; gap: 2px; }
+.accordion-section {
+  border-radius: 6px;
+  overflow: hidden;
+}
+.accordion-section.open {
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--hairline);
+}
+.accordion-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px;
+  cursor: pointer;
+  font-family: var(--font-label);
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+  text-transform: uppercase;
+}
+.accordion-header:hover { background: rgba(255,255,255,0.025); }
+.accordion-section.open .accordion-header { border-bottom: 1px solid var(--hairline); }
+.accordion-header .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-muted);
+}
+.accordion-header .dot-long { background: var(--grid-long); box-shadow: 0 0 0 3px rgba(16,185,129,0.14); }
+.accordion-header .dot-short { background: var(--grid-short); box-shadow: 0 0 0 3px rgba(239,68,68,0.14); }
+.accordion-header .dot-supervisor { background: var(--supervisor); box-shadow: 0 0 0 3px rgba(34,211,238,0.14); }
+.accordion-header .label { flex: 1; }
+.toggle-pill {
+  font-family: var(--font-data);
+  font-size: 9px; font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 8px;
+  letter-spacing: 0.05em;
+}
+.toggle-pill.on { background: rgba(16,185,129,0.14); color: var(--grid-long); border: 1px solid rgba(16,185,129,0.24); }
+.toggle-pill.on.dot-short { background: rgba(239,68,68,0.14); color: var(--grid-short); border-color: rgba(239,68,68,0.24); }
+.toggle-pill.on.dot-supervisor { background: rgba(34,211,238,0.14); color: var(--supervisor); border-color: rgba(34,211,238,0.24); }
+.toggle-pill.off { background: rgba(255,255,255,0.04); color: var(--text-muted); border: 1px solid var(--hairline); }
+.chevron { color: var(--text-muted); font-size: 12px; line-height: 1; width: 12px; text-align: center; }
+
+.accordion-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.field label {
+  font-family: var(--font-label);
+  font-size: 9.5px; font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.field input, .field select {
+  width: 100%;
+  padding: 7px 9px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  font-family: var(--font-data);
+  font-size: 12px; font-weight: 500;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  transition: all 0.12s;
+}
+.field input:focus, .field select:focus {
+  border-color: rgba(var(--grid-neutral-rgb), 0.45);
+  background: rgba(var(--grid-neutral-rgb), 0.04);
+}
+
+.run-button {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: calc(100% - 12px);
+  margin: 8px 6px 12px;
+  padding: 11px 14px;
+  border-radius: 7px;
+  background: linear-gradient(180deg, rgba(var(--grid-neutral-rgb), 0.20), rgba(var(--grid-neutral-rgb), 0.10));
+  border: 1px solid rgba(var(--grid-neutral-rgb), 0.40);
+  color: var(--text-primary);
+  font-family: var(--font-label);
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 18px rgba(var(--grid-neutral-rgb), 0.10);
+  transition: all 0.15s;
+}
+.run-button:hover {
+  background: linear-gradient(180deg, rgba(var(--grid-neutral-rgb), 0.28), rgba(var(--grid-neutral-rgb), 0.14));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 24px rgba(var(--grid-neutral-rgb), 0.20);
+}
+.run-button svg { color: var(--grid-neutral); }
+
+/* ============ WORKSPACE MAIN ============ */
+.workspace-main { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+
+/* ============ TRANSPORT BAR ============ */
+.transport-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+}
+.transport-group { display: flex; align-items: center; gap: 4px; }
+.transport-btn {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  transition: all 0.12s;
+}
+.transport-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); border-color: var(--hairline); }
+.transport-play {
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--grid-long-bg);
+  border: 1px solid var(--grid-long-border);
+  color: var(--grid-long);
+  box-shadow: 0 0 0 3px rgba(16,185,129,0.06), inset 0 0 12px rgba(16,185,129,0.10);
+  transition: all 0.15s;
+}
+.transport-play:hover { box-shadow: 0 0 0 4px rgba(16,185,129,0.12), inset 0 0 14px rgba(16,185,129,0.16); }
+
+.scrubber-wrap { flex: 1; display: flex; align-items: center; min-width: 200px; padding: 0 6px; }
+.scrubber {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg,
+    var(--grid-long) 0%,
+    var(--grid-long) 35%,
+    rgba(255,255,255,0.08) 35%,
+    rgba(255,255,255,0.08) 100%);
+  outline: none;
+}
+.scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  border: 2px solid var(--grid-long);
+  box-shadow: 0 0 0 4px rgba(16,185,129,0.18), 0 2px 8px rgba(0,0,0,0.3);
+  cursor: pointer;
+}
+.scrubber::-moz-range-thumb {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  border: 2px solid var(--grid-long);
+  box-shadow: 0 0 0 4px rgba(16,185,129,0.18);
+  cursor: pointer;
+}
+
+.transport-readout {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 0 6px;
+  border-left: 1px solid var(--hairline-strong);
+  border-right: 1px solid var(--hairline-strong);
+  padding-left: 14px; padding-right: 14px;
+}
+.readout-counter {
+  font-family: var(--font-data);
+  font-size: 12px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  letter-spacing: 0.04em;
+}
+.readout-time {
+  font-family: var(--font-label);
+  font-size: 9.5px; font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+}
+
+.transport-toggle-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.035);
+  border: 1px solid var(--hairline);
+  color: var(--text-secondary);
+  font-family: var(--font-label);
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.transport-toggle-btn:hover { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+
+.speed-segmented {
+  display: flex; gap: 0;
+  background: rgba(255,255,255,0.035);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 2px;
+}
+.speed-segmented button {
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-family: var(--font-data);
+  font-size: 11px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  transition: all 0.12s;
+}
+.speed-segmented button:hover { color: var(--text-secondary); }
+.speed-segmented button.active {
+  background: rgba(var(--grid-neutral-rgb), 0.18);
+  color: var(--grid-neutral);
+  box-shadow: inset 0 0 0 1px rgba(var(--grid-neutral-rgb), 0.30);
+}
+
+/* ============ SECTION KICKER ============ */
+.section-kicker {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 4px;
+  font-family: var(--font-label);
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.section-kicker strong { color: var(--text-secondary); font-weight: 600; }
+.kicker-line { flex: 1; height: 1px; background: linear-gradient(90deg, var(--hairline-strong), transparent); }
+.kicker-counter {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+}
+
+/* ============ CHARTS ROW ============ */
+.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.chart-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+}
+.chart-card-long { box-shadow: inset 0 0 0 1px rgba(16,185,129,0.04), var(--shadow-card); }
+.chart-card-short { box-shadow: inset 0 0 0 1px rgba(239,68,68,0.04), var(--shadow-card); }
+.side-ribbon {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 2px;
+}
+.side-ribbon-long { background: linear-gradient(90deg, transparent, var(--grid-long), transparent); }
+.side-ribbon-short { background: linear-gradient(90deg, transparent, var(--grid-short), transparent); }
+
+.chart-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--hairline-strong);
+}
+.chart-header-left, .chart-header-right { display: flex; align-items: center; gap: 8px; }
+
+.badge {
+  font-family: var(--font-data);
+  font-size: 10px; font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.10em;
+}
+.badge-long {
+  color: var(--grid-long);
+  background: var(--grid-long-bg);
+  border: 1px solid var(--grid-long-border);
+  box-shadow: inset 0 0 0 1px rgba(16,185,129,0.04);
+}
+.badge-short {
+  color: var(--grid-short);
+  background: var(--grid-short-bg);
+  border: 1px solid var(--grid-short-border);
+}
+
+.chip {
+  font-family: var(--font-label);
+  font-size: 10px; font-weight: 500;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--hairline);
+  color: var(--text-secondary);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.chip-leverage {
+  color: var(--grid-fill);
+  background: rgba(250,204,21,0.08);
+  border-color: rgba(250,204,21,0.22);
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  font-weight: 600;
+}
+
+.filled-meter {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 4px;
+}
+.filled-meter-bar {
+  width: 64px; height: 5px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+}
+.filled-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--grid-long), rgba(16,185,129,0.6));
+  box-shadow: 0 0 6px rgba(16,185,129,0.4);
+}
+.filled-meter-fill-short {
+  background: linear-gradient(90deg, var(--grid-short), rgba(239,68,68,0.6));
+  box-shadow: 0 0 6px rgba(239,68,68,0.4);
+}
+.filled-meter-label {
+  font-family: var(--font-data);
+  font-size: 10px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.indicator-chip {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--hairline);
+}
+.indicator-chip span {
+  font-family: var(--font-label);
+  font-size: 9px; font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.indicator-chip strong {
+  font-family: var(--font-data);
+  font-size: 11px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.indicator-chip strong.up { color: var(--grid-long); font-size: 9px; }
+.indicator-chip strong.down { color: var(--grid-short); font-size: 9px; }
+
+.chart-body {
+  position: relative;
+  padding: 0;
+  background:
+    radial-gradient(ellipse at top right, rgba(16,185,129,0.025), transparent 60%),
+    #060a11;
+}
+.chart-body-short {
+  background:
+    radial-gradient(ellipse at top right, rgba(239,68,68,0.025), transparent 60%),
+    #060a11;
+}
+
+/* Candle styling */
+.candle.up line { stroke: var(--grid-long); stroke-width: 1; }
+.candle.up rect { fill: var(--grid-long); }
+.candle.down line { stroke: var(--grid-short); stroke-width: 1; }
+.candle.down rect { fill: var(--grid-short); }
+
+/* Grid level lines */
+.grid-level { stroke: var(--grid-long); stroke-width: 0.5; opacity: 0.18; stroke-dasharray: 2 3; }
+.grid-level.filled { opacity: 0.55; stroke-dasharray: none; stroke-width: 0.75; }
+.grid-level-short { stroke: var(--grid-short); stroke-width: 0.5; opacity: 0.18; stroke-dasharray: 2 3; }
+.grid-level-short.filled { opacity: 0.55; stroke-dasharray: none; stroke-width: 0.75; }
+
+/* Fill markers */
+.fill-marker-buy circle.outer { fill: rgba(16,185,129,0.16); stroke: rgba(16,185,129,0.6); stroke-width: 0; }
+.fill-marker-buy circle.inner { fill: rgba(16,185,129,0.22); }
+.fill-marker-buy circle.ring { fill: none; stroke: var(--grid-long); stroke-width: 1.6; }
+.fill-marker-sell circle.outer { fill: rgba(239,68,68,0.16); }
+.fill-marker-sell circle.inner { fill: rgba(239,68,68,0.22); }
+.fill-marker-sell circle.ring { fill: none; stroke: var(--grid-short); stroke-width: 1.6; }
+
+/* Price axis labels */
+.price-label {
+  font-family: var(--font-data);
+  font-size: 10px; font-weight: 500;
+  fill: var(--text-muted);
+}
+.price-label.current { fill: var(--text-primary); font-weight: 700; }
+.current-price-line { stroke: var(--grid-fill); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.75; }
+.current-price-bg { fill: rgba(250,204,21,0.10); stroke: rgba(250,204,21,0.35); stroke-width: 1; }
+
+/* Time axis */
+.time-label { font-family: var(--font-label); font-size: 9px; fill: var(--text-muted); letter-spacing: 0.04em; }
+
+.rsi-pane {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 14px;
+  border-top: 1px solid var(--hairline-strong);
+  background: rgba(0,0,0,0.18);
+  height: 36px;
+}
+.rsi-pane-label {
+  font-family: var(--font-label);
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  width: 30px;
+}
+.rsi-pane-value {
+  font-family: var(--font-data);
+  font-size: 10.5px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  width: 32px;
+}
+.rsi-pane svg { flex: 1; height: 24px; }
+.rsi-line { stroke: var(--adaptive); stroke-width: 1.2; fill: none; }
+.rsi-band { stroke: var(--text-muted); stroke-width: 0.5; stroke-dasharray: 2 3; opacity: 0.4; }
+
+/* ============ ANALYTICS GRID ============ */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 12px;
+  align-items: start;
+}
+.analytics-panel {
+  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+}
+.analytics-side { display: flex; flex-direction: column; gap: 12px; }
+
+.modern-tabs {
+  display: flex; gap: 0;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--hairline-strong);
+  background: rgba(0,0,0,0.18);
+}
+.tab-btn {
+  position: relative;
+  padding: 11px 14px;
+  font-family: var(--font-label);
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  transition: color 0.12s;
+}
+.tab-btn:hover { color: var(--text-secondary); }
+.tab-btn.active { color: var(--text-primary); }
+.tab-btn.active::after {
+  content: '';
+  position: absolute; left: 14px; right: 14px; bottom: -1px;
+  height: 2px;
+  background: var(--grid-neutral);
+  border-radius: 2px 2px 0 0;
+  box-shadow: 0 0 8px rgba(var(--grid-neutral-rgb), 0.5);
+}
+
+.tab-content { padding: 16px; }
+
+/* PERFORMANCE HERO */
+.perf-hero {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  margin-bottom: 14px;
+}
+.perf-hero-card {
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.01));
+  border: 1px solid var(--hairline);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+.perf-hero-card.profit {
+  background: linear-gradient(180deg, rgba(16,185,129,0.06), rgba(16,185,129,0.02));
+  border-color: rgba(16,185,129,0.20);
+}
+.perf-hero-label {
+  font-family: var(--font-label);
+  font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.perf-hero-value {
+  font-family: var(--font-data);
+  font-size: 26px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1.05;
+}
+.perf-hero-value .suffix {
+  font-size: 16px; font-weight: 500; color: var(--text-secondary);
+  margin-left: 2px;
+}
+.perf-hero-sub {
+  font-family: var(--font-data);
+  font-size: 11px; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+.perf-hero-card.profit .perf-hero-value { color: var(--grid-long); }
+
+.perf-secondary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+.stat-card {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--hairline);
+}
+.stat-label {
+  font-family: var(--font-label);
+  font-size: 9px; font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 4px;
+}
+.stat-value {
+  font-family: var(--font-data);
+  font-size: 14px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+.text-profit { color: var(--grid-long); }
+.text-loss { color: var(--grid-short); }
+
+/* TRADE LOG */
+.trade-log-section {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+.trade-log-label {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.trade-log-label-title {
+  font-family: var(--font-label);
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.trade-log-label-count {
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.trade-table { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; }
+.trade-table-head, .trade-row {
+  display: grid;
+  grid-template-columns: 64px 60px 50px 1fr 80px 80px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 10px;
+}
+.trade-table-head {
+  position: sticky; top: 0; z-index: 1;
+  background: rgba(0,0,0,0.40);
+  border-bottom: 1px solid var(--hairline-strong);
+  font-family: var(--font-label);
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  backdrop-filter: blur(10px);
+}
+.trade-row {
+  position: relative;
+  border-bottom: 1px solid rgba(255,255,255,0.025);
+  font-family: var(--font-data);
+  font-size: 11px; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  transition: background 0.1s;
+}
+.trade-row:hover { background: rgba(255,255,255,0.025); }
+.trade-row::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px;
+}
+.trade-row.long::before { background: var(--grid-long); }
+.trade-row.short::before { background: var(--grid-short); }
+.trade-row:nth-child(odd) { background: rgba(255,255,255,0.012); }
+.trade-row:nth-child(odd):hover { background: rgba(255,255,255,0.035); }
+.trade-row .trade-type { color: var(--text-muted); font-family: var(--font-label); font-size: 10px; letter-spacing: 0.06em; }
+.trade-row .trade-price, .trade-row .trade-size { color: var(--text-primary); }
+.trade-row .trade-pnl { font-weight: 600; text-align: right; }
+
+/* COMBINED P&L CARD */
+.cpnl-card {
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+}
+.cpnl-label {
+  font-family: var(--font-label);
+  font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.cpnl-hero {
+  font-family: var(--font-data);
+  font-size: 30px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  line-height: 1;
+}
+.cpnl-delta-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; margin-bottom: 14px; }
+.cpnl-delta {
+  font-family: var(--font-data);
+  font-size: 12px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--grid-long);
+}
+.cpnl-delta-pct {
+  font-family: var(--font-data);
+  font-size: 10px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(16,185,129,0.14);
+  color: var(--grid-long);
+  border: 1px solid rgba(16,185,129,0.25);
+}
+.cpnl-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  margin-bottom: 14px;
+  padding: 10px;
+  background: rgba(0,0,0,0.20);
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+}
+.cpnl-stat .cpnl-stat-label {
+  font-family: var(--font-label);
+  font-size: 9px; font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 2px;
+}
+.cpnl-stat .cpnl-stat-value {
+  font-family: var(--font-data);
+  font-size: 12px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.cpnl-spark {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+.cpnl-spark-label {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.cpnl-spark-label-text {
+  font-family: var(--font-label);
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.cpnl-spark-label-range {
+  font-family: var(--font-data);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.spark-area { fill: url(#spark-gradient); opacity: 0.25; }
+.spark-line { fill: none; stroke: var(--grid-long); stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.spark-dot { fill: var(--grid-long); stroke: rgba(16,185,129,0.30); stroke-width: 4; }
+.spark-zero { stroke: var(--text-muted); stroke-width: 0.5; stroke-dasharray: 2 3; opacity: 0.4; }
+
+/* ADAPTIVE EVENTS CARD */
+.adaptive-card {
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+}
+.adaptive-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+.adaptive-header-title {
+  font-family: var(--font-label);
+  font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.adaptive-header-status {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-label);
+  font-size: 9px; font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--adaptive);
+}
+.adaptive-header-status .dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--adaptive);
+  box-shadow: 0 0 0 3px rgba(56,189,248,0.16);
+}
+.adaptive-feed { display: flex; flex-direction: column; gap: 4px; }
+.adaptive-event {
+  display: grid;
+  grid-template-columns: 40px 8px 1fr auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 5px;
+  transition: background 0.12s;
+}
+.adaptive-event:hover { background: rgba(255,255,255,0.025); }
+.event-time {
+  font-family: var(--font-data);
+  font-size: 10px; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.event-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+}
+.event-dot.dot-trend { background: var(--adaptive); box-shadow: 0 0 0 2px rgba(56,189,248,0.20); }
+.event-dot.dot-derisk { background: var(--grid-fill); box-shadow: 0 0 0 2px rgba(250,204,21,0.20); }
+.event-dot.dot-breakout { background: var(--supervisor); box-shadow: 0 0 0 2px rgba(34,211,238,0.20); }
+.event-dot.dot-reentry { background: var(--grid-long); box-shadow: 0 0 0 2px rgba(16,185,129,0.20); }
+.event-label {
+  font-family: var(--font-body);
+  font-size: 11.5px; font-weight: 500;
+  color: var(--text-primary);
+}
+.event-meta {
+  font-family: var(--font-data);
+  font-size: 10px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.04);
+  color: var(--text-secondary);
+  border: 1px solid var(--hairline);
+}
+
+/* ============ MISC HELPERS ============ */
+.mono-num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+
+<!-- ====================================================================
+     TOPBAR
+     ==================================================================== -->
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="brand-mark">G</div>
+    <div class="brand-text">
+      <div class="brand-name">GRID BOT SIMULATOR</div>
+      <div class="brand-subline">Multi-strategy backtesting platform</div>
+    </div>
+    <div class="topbar-divider"></div>
+    <span class="topbar-pill topbar-pair">BTC/USDT</span>
+    <span class="topbar-pill">5m</span>
+    <div class="topbar-metric">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16l4-4 4 4 6-6"/></svg>
+      <span>Candles</span>
+      <strong>1,200</strong>
+    </div>
+    <div class="topbar-status">
+      <span class="status-dot"></span>
+      <span>Running</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="topbar-date-row">
+      <strong>2024-08-09 14:42</strong>
+      <span class="date-arrow">→</span>
+      <strong>2024-08-09 14:50</strong>
+    </div>
+    <div class="topbar-pnl-block">
+      <span class="pnl-hero">+$1,247.30</span>
+      <span class="pnl-delta">+12.47%</span>
+    </div>
+    <button class="theme-toggle" title="Toggle theme">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ====================================================================
+     WORKBENCH
+     ==================================================================== -->
+<div class="workbench">
+
+  <!-- ICON RAIL -->
+  <aside class="app-rail">
+    <button class="rail-btn" title="General">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span>General</span>
+    </button>
+    <button class="rail-btn enabled" title="Grid Long">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+      <span>Grid Long</span>
+    </button>
+    <button class="rail-btn enabled danger" title="Grid Short">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>
+      <span>Grid Short</span>
+    </button>
+    <button class="rail-btn" title="DCA">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span>DCA</span>
+    </button>
+    <button class="rail-btn enabled supervisor" title="Combo">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+      <span>Combo</span>
+    </button>
+    <button class="rail-btn" title="Adaptive">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span>Adaptive</span>
+    </button>
+    <button class="rail-btn" title="Data">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      <span>Data</span>
+    </button>
+    <button class="rail-run" title="Run Simulation">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+      <span>Run</span>
+    </button>
+  </aside>
+
+  <!-- ==================================================================
+       CONFIG DRAWER
+       ================================================================== -->
+  <aside class="config-drawer">
+    <div class="drawer-header">
+      <span>Configuration</span>
+      <span class="drawer-collapse-icon">‹</span>
+    </div>
+    <div class="accordion">
+      <!-- General (open) -->
+      <div class="accordion-section open">
+        <div class="accordion-header">
+          <span class="dot"></span>
+          <span class="label">General</span>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="accordion-body">
+          <div class="field">
+            <label>Pair</label>
+            <select><option>BTC/USDT</option></select>
+          </div>
+          <div class="field">
+            <label>Timeframe</label>
+            <select><option>5m</option></select>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Start</label>
+              <input value="2024-08-01" />
+            </div>
+            <div class="field">
+              <label>End</label>
+              <input value="2024-08-10" />
+            </div>
+          </div>
+          <div class="field">
+            <label>Initial Capital</label>
+            <input value="10,000.00" />
+          </div>
+          <div class="field">
+            <label>Fee Rate</label>
+            <input value="0.10%" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Grid Long (open) -->
+      <div class="accordion-section open">
+        <div class="accordion-header">
+          <span class="dot dot-long"></span>
+          <span class="label">Grid Long</span>
+          <span class="toggle-pill on">ON</span>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="accordion-body">
+          <div class="field-row">
+            <div class="field">
+              <label>Lower</label>
+              <input value="63,500" />
+            </div>
+            <div class="field">
+              <label>Upper</label>
+              <input value="65,500" />
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Levels</label>
+              <input value="12" />
+            </div>
+            <div class="field">
+              <label>Allocation</label>
+              <input value="$5,000" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Grid Short (collapsed, on) -->
+      <div class="accordion-section">
+        <div class="accordion-header">
+          <span class="dot dot-short"></span>
+          <span class="label">Grid Short</span>
+          <span class="toggle-pill on dot-short">ON</span>
+          <span class="chevron">▸</span>
+        </div>
+      </div>
+
+      <!-- DCA Long (collapsed, off) -->
+      <div class="accordion-section">
+        <div class="accordion-header">
+          <span class="dot"></span>
+          <span class="label">DCA Long</span>
+          <span class="toggle-pill off">OFF</span>
+          <span class="chevron">▸</span>
+        </div>
+      </div>
+
+      <!-- DCA Short (collapsed, off) -->
+      <div class="accordion-section">
+        <div class="accordion-header">
+          <span class="dot"></span>
+          <span class="label">DCA Short</span>
+          <span class="toggle-pill off">OFF</span>
+          <span class="chevron">▸</span>
+        </div>
+      </div>
+
+      <!-- Combo Bot (collapsed, on) -->
+      <div class="accordion-section">
+        <div class="accordion-header">
+          <span class="dot dot-supervisor"></span>
+          <span class="label">Combo Bot v3.1</span>
+          <span class="toggle-pill on dot-supervisor">ON</span>
+          <span class="chevron">▸</span>
+        </div>
+      </div>
+
+      <!-- Adaptive Layer (collapsed) -->
+      <div class="accordion-section">
+        <div class="accordion-header">
+          <span class="dot"></span>
+          <span class="label">Adaptive Layer</span>
+          <span class="chevron">▸</span>
+        </div>
+      </div>
+
+      <!-- Data Manager (collapsed) -->
+      <div class="accordion-section">
+        <div class="accordion-header">
+          <span class="dot"></span>
+          <span class="label">Data Manager</span>
+          <span class="chevron">▸</span>
+        </div>
+      </div>
+    </div>
+    <button class="run-button">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+      <span>Run Simulation</span>
+    </button>
+  </aside>
+
+  <!-- ==================================================================
+       WORKSPACE MAIN
+       ================================================================== -->
+  <main class="workspace-main">
+
+    <!-- TRANSPORT BAR -->
+    <div class="transport-bar">
+      <div class="transport-group">
+        <button class="transport-btn" title="Skip back">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><rect x="5" y="4" width="2" height="16"/></svg>
+        </button>
+        <button class="transport-play" title="Pause">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+        </button>
+        <button class="transport-btn" title="Skip forward">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><rect x="17" y="4" width="2" height="16"/></svg>
+        </button>
+      </div>
+      <div class="scrubber-wrap">
+        <input type="range" class="scrubber" min="0" max="1200" value="420" />
+      </div>
+      <div class="transport-readout">
+        <span class="readout-counter">0420 / 1200</span>
+        <span class="readout-time">2024-08-09 14:42</span>
+      </div>
+      <button class="transport-toggle-btn" title="Switch to follow mode">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+        <span>Fit All</span>
+      </button>
+      <div class="speed-segmented">
+        <button>1×</button>
+        <button>2×</button>
+        <button class="active">5×</button>
+        <button>10×</button>
+      </div>
+    </div>
+
+    <!-- SECTION KICKER -->
+    <div class="section-kicker">
+      <strong>Grid Bot</strong>
+      <span class="kicker-line"></span>
+      <span class="kicker-counter">420 / 1,200</span>
+    </div>
+
+    <!-- ============================================================
+         CHARTS ROW
+         ============================================================ -->
+    <div class="charts-row">
+
+      <!-- ====== LONG CHART ====== -->
+      <div class="chart-card chart-card-long">
+        <div class="side-ribbon side-ribbon-long"></div>
+        <div class="chart-header">
+          <div class="chart-header-left">
+            <span class="badge badge-long">LONG</span>
+            <span class="chip chip-leverage">Lev 1.5×</span>
+            <span class="chip">12 Levels</span>
+            <div class="filled-meter">
+              <div class="filled-meter-bar"><div class="filled-meter-fill" style="width: 58%;"></div></div>
+              <span class="filled-meter-label">7/12</span>
+            </div>
+          </div>
+          <div class="chart-header-right">
+            <div class="indicator-chip"><span>BB%B</span><strong>0.55</strong></div>
+            <div class="indicator-chip"><span>RSI</span><strong>56.6</strong></div>
+            <div class="indicator-chip"><span>MACD</span><strong class="up">▲</strong></div>
+          </div>
+        </div>
+        <div class="chart-body">
+          <svg width="100%" viewBox="0 0 540 280" preserveAspectRatio="none" style="display:block;">
+            <!-- Grid level horizontal lines (12 levels, 7 filled) -->
+            <line class="grid-level filled" x1="0" y1="120" x2="500" y2="120"/>
+            <line class="grid-level" x1="0" y1="128" x2="500" y2="128"/>
+            <line class="grid-level filled" x1="0" y1="136" x2="500" y2="136"/>
+            <line class="grid-level filled" x1="0" y1="146" x2="500" y2="146"/>
+            <line class="grid-level" x1="0" y1="156" x2="500" y2="156"/>
+            <line class="grid-level filled" x1="0" y1="166" x2="500" y2="166"/>
+            <line class="grid-level filled" x1="0" y1="176" x2="500" y2="176"/>
+            <line class="grid-level" x1="0" y1="186" x2="500" y2="186"/>
+            <line class="grid-level filled" x1="0" y1="196" x2="500" y2="196"/>
+            <line class="grid-level filled" x1="0" y1="206" x2="500" y2="206"/>
+            <line class="grid-level" x1="0" y1="216" x2="500" y2="216"/>
+            <line class="grid-level" x1="0" y1="226" x2="500" y2="226"/>
+
+            <!-- Bot range subtle band -->
+            <rect x="0" y="120" width="500" height="106" fill="rgba(16,185,129,0.025)"/>
+
+            <!-- Candles: 50 candles, x = 12 + i*10, body width 7, wick at center+3 -->
+            <g class="candle up"><line x1="15" x2="15" y1="205" y2="215"/><rect x="12" y="207" width="7" height="3"/></g>
+            <g class="candle up"><line x1="25" x2="25" y1="203" y2="211"/><rect x="22" y="205" width="7" height="2"/></g>
+            <g class="candle up"><line x1="35" x2="35" y1="200" y2="209"/><rect x="32" y="202" width="7" height="3"/></g>
+            <g class="candle down"><line x1="45" x2="45" y1="198" y2="207"/><rect x="42" y="202" width="7" height="2"/></g>
+            <g class="candle down"><line x1="55" x2="55" y1="200" y2="210"/><rect x="52" y="204" width="7" height="3"/></g>
+            <g class="candle up"><line x1="65" x2="65" y1="202" y2="212"/><rect x="62" y="200" width="7" height="7"/></g>
+            <g class="candle up"><line x1="75" x2="75" y1="196" y2="204"/><rect x="72" y="196" width="7" height="4"/></g>
+            <g class="candle up"><line x1="85" x2="85" y1="192" y2="200"/><rect x="82" y="194" width="7" height="2"/></g>
+            <g class="candle up"><line x1="95" x2="95" y1="190" y2="198"/><rect x="92" y="191" width="7" height="3"/></g>
+            <g class="candle down"><line x1="105" x2="105" y1="187" y2="200"/><rect x="102" y="191" width="7" height="7"/></g>
+            <g class="candle up"><line x1="115" x2="115" y1="193" y2="202"/><rect x="112" y="192" width="7" height="6"/></g>
+            <g class="candle up"><line x1="125" x2="125" y1="188" y2="196"/><rect x="122" y="188" width="7" height="4"/></g>
+            <g class="candle down"><line x1="135" x2="135" y1="185" y2="196"/><rect x="132" y="189" width="7" height="4"/></g>
+            <g class="candle down"><line x1="145" x2="145" y1="188" y2="198"/><rect x="142" y="193" width="7" height="2"/></g>
+            <g class="candle up"><line x1="155" x2="155" y1="190" y2="200"/><rect x="152" y="191" width="7" height="4"/></g>
+            <g class="candle up"><line x1="165" x2="165" y1="186" y2="194"/><rect x="162" y="187" width="7" height="4"/></g>
+            <g class="candle up"><line x1="175" x2="175" y1="180" y2="190"/><rect x="172" y="181" width="7" height="6"/></g>
+            <g class="candle up"><line x1="185" x2="185" y1="175" y2="184"/><rect x="182" y="177" width="7" height="4"/></g>
+            <g class="candle down"><line x1="195" x2="195" y1="173" y2="185"/><rect x="192" y="177" width="7" height="6"/></g>
+            <g class="candle down"><line x1="205" x2="205" y1="178" y2="190"/><rect x="202" y="183" width="7" height="5"/></g>
+            <g class="candle up"><line x1="215" x2="215" y1="184" y2="194"/><rect x="212" y="186" width="7" height="2"/></g>
+            <g class="candle up"><line x1="225" x2="225" y1="181" y2="190"/><rect x="222" y="183" width="7" height="3"/></g>
+            <g class="candle up"><line x1="235" x2="235" y1="177" y2="186"/><rect x="232" y="178" width="7" height="5"/></g>
+            <g class="candle up"><line x1="245" x2="245" y1="172" y2="181"/><rect x="242" y="174" width="7" height="4"/></g>
+            <g class="candle down"><line x1="255" x2="255" y1="170" y2="180"/><rect x="252" y="174" width="7" height="4"/></g>
+            <g class="candle up"><line x1="265" x2="265" y1="170" y2="182"/><rect x="262" y="172" width="7" height="6"/></g>
+            <g class="candle up"><line x1="275" x2="275" y1="167" y2="174"/><rect x="272" y="169" width="7" height="3"/></g>
+            <g class="candle up"><line x1="285" x2="285" y1="164" y2="172"/><rect x="282" y="166" width="7" height="4"/></g>
+            <g class="candle down"><line x1="295" x2="295" y1="161" y2="172"/><rect x="292" y="166" width="7" height="4"/></g>
+            <g class="candle up"><line x1="305" x2="305" y1="162" y2="172"/><rect x="302" y="163" width="7" height="5"/></g>
+            <g class="candle up"><line x1="315" x2="315" y1="156" y2="166"/><rect x="312" y="158" width="7" height="6"/></g>
+            <g class="candle up"><line x1="325" x2="325" y1="152" y2="160"/><rect x="322" y="155" width="7" height="3"/></g>
+            <g class="candle up"><line x1="335" x2="335" y1="150" y2="158"/><rect x="332" y="152" width="7" height="3"/></g>
+            <g class="candle up"><line x1="345" x2="345" y1="148" y2="156"/><rect x="342" y="149" width="7" height="4"/></g>
+            <g class="candle down"><line x1="355" x2="355" y1="146" y2="156"/><rect x="352" y="149" width="7" height="6"/></g>
+            <g class="candle down"><line x1="365" x2="365" y1="150" y2="160"/><rect x="362" y="153" width="7" height="5"/></g>
+            <g class="candle up"><line x1="375" x2="375" y1="153" y2="162"/><rect x="372" y="155" width="7" height="3"/></g>
+            <g class="candle up"><line x1="385" x2="385" y1="151" y2="158"/><rect x="382" y="151" width="7" height="5"/></g>
+            <g class="candle up"><line x1="395" x2="395" y1="146" y2="154"/><rect x="392" y="146" width="7" height="6"/></g>
+            <g class="candle up"><line x1="405" x2="405" y1="142" y2="150"/><rect x="402" y="143" width="7" height="3"/></g>
+            <g class="candle up"><line x1="415" x2="415" y1="138" y2="146"/><rect x="412" y="139" width="7" height="4"/></g>
+            <g class="candle up"><line x1="425" x2="425" y1="135" y2="142"/><rect x="422" y="136" width="7" height="3"/></g>
+            <g class="candle down"><line x1="435" x2="435" y1="134" y2="142"/><rect x="432" y="137" width="7" height="3"/></g>
+            <g class="candle up"><line x1="445" x2="445" y1="135" y2="144"/><rect x="442" y="137" width="7" height="3"/></g>
+            <g class="candle up"><line x1="455" x2="455" y1="130" y2="139"/><rect x="452" y="131" width="7" height="6"/></g>
+            <g class="candle up"><line x1="465" x2="465" y1="126" y2="132"/><rect x="462" y="128" width="7" height="3"/></g>
+            <g class="candle up"><line x1="475" x2="475" y1="124" y2="130"/><rect x="472" y="125" width="7" height="3"/></g>
+            <g class="candle up"><line x1="485" x2="485" y1="122" y2="128"/><rect x="482" y="123" width="7" height="3"/></g>
+            <g class="candle up"><line x1="495" x2="495" y1="119" y2="126"/><rect x="492" y="121" width="7" height="3"/></g>
+            <g class="candle up"><line x1="505" x2="505" y1="116" y2="123"/><rect x="502" y="118" width="7" height="3"/></g>
+
+            <!-- Current price line -->
+            <line class="current-price-line" x1="0" y1="119" x2="500" y2="119"/>
+            <rect class="current-price-bg" x="500" y="111" width="40" height="16" rx="2"/>
+            <text class="price-label current" x="520" y="122" text-anchor="middle">65,184</text>
+
+            <!-- Price axis labels (right side) -->
+            <text class="price-label" x="520" y="140" text-anchor="middle">65,000</text>
+            <text class="price-label" x="520" y="170" text-anchor="middle">64,500</text>
+            <text class="price-label" x="520" y="200" text-anchor="middle">64,000</text>
+            <text class="price-label" x="520" y="230" text-anchor="middle">63,500</text>
+
+            <!-- Hollow circle fill markers — anchored at exact candle positions -->
+            <!-- Buys at low pullbacks -->
+            <g class="fill-marker-buy">
+              <circle class="outer" cx="55" cy="207" r="9"/>
+              <circle class="inner" cx="55" cy="207" r="6"/>
+              <circle class="ring" cx="55" cy="207" r="6"/>
+            </g>
+            <g class="fill-marker-buy">
+              <circle class="outer" cx="105" cy="195" r="9"/>
+              <circle class="inner" cx="105" cy="195" r="6"/>
+              <circle class="ring" cx="105" cy="195" r="6"/>
+            </g>
+            <g class="fill-marker-buy">
+              <circle class="outer" cx="195" cy="183" r="9"/>
+              <circle class="inner" cx="195" cy="183" r="6"/>
+              <circle class="ring" cx="195" cy="183" r="6"/>
+            </g>
+            <g class="fill-marker-buy">
+              <circle class="outer" cx="295" cy="170" r="9"/>
+              <circle class="inner" cx="295" cy="170" r="6"/>
+              <circle class="ring" cx="295" cy="170" r="6"/>
+            </g>
+            <g class="fill-marker-buy">
+              <circle class="outer" cx="365" cy="156" r="9"/>
+              <circle class="inner" cx="365" cy="156" r="6"/>
+              <circle class="ring" cx="365" cy="156" r="6"/>
+            </g>
+
+            <!-- Sells at peaks -->
+            <g class="fill-marker-sell">
+              <circle class="outer" cx="185" cy="177" r="9"/>
+              <circle class="inner" cx="185" cy="177" r="6"/>
+              <circle class="ring" cx="185" cy="177" r="6"/>
+            </g>
+            <g class="fill-marker-sell">
+              <circle class="outer" cx="245" cy="174" r="9"/>
+              <circle class="inner" cx="245" cy="174" r="6"/>
+              <circle class="ring" cx="245" cy="174" r="6"/>
+            </g>
+            <g class="fill-marker-sell">
+              <circle class="outer" cx="345" cy="149" r="9"/>
+              <circle class="inner" cx="345" cy="149" r="6"/>
+              <circle class="ring" cx="345" cy="149" r="6"/>
+            </g>
+            <g class="fill-marker-sell">
+              <circle class="outer" cx="455" cy="131" r="9"/>
+              <circle class="inner" cx="455" cy="131" r="6"/>
+              <circle class="ring" cx="455" cy="131" r="6"/>
+            </g>
+          </svg>
+        </div>
+        <div class="rsi-pane">
+          <span class="rsi-pane-label">RSI</span>
+          <span class="rsi-pane-value">56.6</span>
+          <svg viewBox="0 0 500 24" preserveAspectRatio="none">
+            <line class="rsi-band" x1="0" y1="6" x2="500" y2="6"/>
+            <line class="rsi-band" x1="0" y1="18" x2="500" y2="18"/>
+            <polyline class="rsi-line" points="0,14 25,15 50,12 75,10 100,13 125,16 150,11 175,8 200,12 225,15 250,9 275,7 300,11 325,14 350,8 375,5 400,9 425,12 450,7 475,5 500,8"/>
+          </svg>
+        </div>
+      </div>
+
+      <!-- ====== SHORT CHART ====== -->
+      <div class="chart-card chart-card-short">
+        <div class="side-ribbon side-ribbon-short"></div>
+        <div class="chart-header">
+          <div class="chart-header-left">
+            <span class="badge badge-short">SHORT</span>
+            <span class="chip chip-leverage">Lev 1.5×</span>
+            <span class="chip">12 Levels</span>
+            <div class="filled-meter">
+              <div class="filled-meter-bar"><div class="filled-meter-fill filled-meter-fill-short" style="width: 50%;"></div></div>
+              <span class="filled-meter-label">6/12</span>
+            </div>
+          </div>
+          <div class="chart-header-right">
+            <div class="indicator-chip"><span>BB%B</span><strong>0.41</strong></div>
+            <div class="indicator-chip"><span>RSI</span><strong>43.2</strong></div>
+            <div class="indicator-chip"><span>MACD</span><strong class="down">▼</strong></div>
+          </div>
+        </div>
+        <div class="chart-body chart-body-short">
+          <svg width="100%" viewBox="0 0 540 280" preserveAspectRatio="none" style="display:block;">
+            <!-- Grid level lines for SHORT (12 levels, 6 filled) -->
+            <line class="grid-level-short filled" x1="0" y1="125" x2="500" y2="125"/>
+            <line class="grid-level-short" x1="0" y1="135" x2="500" y2="135"/>
+            <line class="grid-level-short filled" x1="0" y1="145" x2="500" y2="145"/>
+            <line class="grid-level-short filled" x1="0" y1="155" x2="500" y2="155"/>
+            <line class="grid-level-short" x1="0" y1="165" x2="500" y2="165"/>
+            <line class="grid-level-short filled" x1="0" y1="175" x2="500" y2="175"/>
+            <line class="grid-level-short" x1="0" y1="185" x2="500" y2="185"/>
+            <line class="grid-level-short filled" x1="0" y1="195" x2="500" y2="195"/>
+            <line class="grid-level-short" x1="0" y1="205" x2="500" y2="205"/>
+            <line class="grid-level-short filled" x1="0" y1="215" x2="500" y2="215"/>
+            <line class="grid-level-short" x1="0" y1="225" x2="500" y2="225"/>
+            <line class="grid-level-short filled" x1="0" y1="235" x2="500" y2="235"/>
+
+            <rect x="0" y="125" width="500" height="116" fill="rgba(239,68,68,0.025)"/>
+
+            <!-- Candles: SHORT chart shows downtrend (price y increases over time) -->
+            <g class="candle up"><line x1="15" x2="15" y1="125" y2="138"/><rect x="12" y="130" width="7" height="3"/></g>
+            <g class="candle up"><line x1="25" x2="25" y1="128" y2="135"/><rect x="22" y="129" width="7" height="3"/></g>
+            <g class="candle down"><line x1="35" x2="35" y1="127" y2="140"/><rect x="32" y="130" width="7" height="6"/></g>
+            <g class="candle up"><line x1="45" x2="45" y1="129" y2="140"/><rect x="42" y="131" width="7" height="5"/></g>
+            <g class="candle down"><line x1="55" x2="55" y1="128" y2="142"/><rect x="52" y="132" width="7" height="6"/></g>
+            <g class="candle down"><line x1="65" x2="65" y1="134" y2="146"/><rect x="62" y="138" width="7" height="5"/></g>
+            <g class="candle down"><line x1="75" x2="75" y1="140" y2="150"/><rect x="72" y="143" width="7" height="3"/></g>
+            <g class="candle up"><line x1="85" x2="85" y1="142" y2="151"/><rect x="82" y="144" width="7" height="2"/></g>
+            <g class="candle down"><line x1="95" x2="95" y1="140" y2="152"/><rect x="92" y="144" width="7" height="4"/></g>
+            <g class="candle down"><line x1="105" x2="105" y1="144" y2="156"/><rect x="102" y="148" width="7" height="4"/></g>
+            <g class="candle up"><line x1="115" x2="115" y1="148" y2="158"/><rect x="112" y="150" width="7" height="2"/></g>
+            <g class="candle down"><line x1="125" x2="125" y1="145" y2="160"/><rect x="122" y="150" width="7" height="6"/></g>
+            <g class="candle down"><line x1="135" x2="135" y1="152" y2="164"/><rect x="132" y="156" width="7" height="4"/></g>
+            <g class="candle up"><line x1="145" x2="145" y1="156" y2="166"/><rect x="142" y="158" width="7" height="2"/></g>
+            <g class="candle down"><line x1="155" x2="155" y1="154" y2="167"/><rect x="152" y="158" width="7" height="4"/></g>
+            <g class="candle down"><line x1="165" x2="165" y1="158" y2="168"/><rect x="162" y="162" width="7" height="2"/></g>
+            <g class="candle up"><line x1="175" x2="175" y1="160" y2="170"/><rect x="172" y="162" width="7" height="2"/></g>
+            <g class="candle down"><line x1="185" x2="185" y1="158" y2="174"/><rect x="182" y="162" width="7" height="8"/></g>
+            <g class="candle up"><line x1="195" x2="195" y1="166" y2="174"/><rect x="192" y="168" width="7" height="2"/></g>
+            <g class="candle down"><line x1="205" x2="205" y1="164" y2="176"/><rect x="202" y="168" width="7" height="6"/></g>
+            <g class="candle up"><line x1="215" x2="215" y1="170" y2="178"/><rect x="212" y="172" width="7" height="2"/></g>
+            <g class="candle down"><line x1="225" x2="225" y1="168" y2="180"/><rect x="222" y="172" width="7" height="6"/></g>
+            <g class="candle up"><line x1="235" x2="235" y1="174" y2="182"/><rect x="232" y="176" width="7" height="2"/></g>
+            <g class="candle down"><line x1="245" x2="245" y1="172" y2="184"/><rect x="242" y="176" width="7" height="6"/></g>
+            <g class="candle up"><line x1="255" x2="255" y1="178" y2="186"/><rect x="252" y="180" width="7" height="2"/></g>
+            <g class="candle down"><line x1="265" x2="265" y1="176" y2="188"/><rect x="262" y="180" width="7" height="6"/></g>
+            <g class="candle up"><line x1="275" x2="275" y1="182" y2="190"/><rect x="272" y="184" width="7" height="2"/></g>
+            <g class="candle down"><line x1="285" x2="285" y1="180" y2="192"/><rect x="282" y="184" width="7" height="6"/></g>
+            <g class="candle up"><line x1="295" x2="295" y1="186" y2="194"/><rect x="292" y="188" width="7" height="2"/></g>
+            <g class="candle down"><line x1="305" x2="305" y1="184" y2="196"/><rect x="302" y="188" width="7" height="6"/></g>
+            <g class="candle up"><line x1="315" x2="315" y1="190" y2="198"/><rect x="312" y="192" width="7" height="2"/></g>
+            <g class="candle down"><line x1="325" x2="325" y1="188" y2="200"/><rect x="322" y="192" width="7" height="6"/></g>
+            <g class="candle up"><line x1="335" x2="335" y1="194" y2="202"/><rect x="332" y="196" width="7" height="2"/></g>
+            <g class="candle down"><line x1="345" x2="345" y1="192" y2="204"/><rect x="342" y="196" width="7" height="6"/></g>
+            <g class="candle up"><line x1="355" x2="355" y1="198" y2="206"/><rect x="352" y="200" width="7" height="2"/></g>
+            <g class="candle down"><line x1="365" x2="365" y1="196" y2="208"/><rect x="362" y="200" width="7" height="6"/></g>
+            <g class="candle up"><line x1="375" x2="375" y1="202" y2="210"/><rect x="372" y="204" width="7" height="2"/></g>
+            <g class="candle down"><line x1="385" x2="385" y1="200" y2="212"/><rect x="382" y="204" width="7" height="6"/></g>
+            <g class="candle up"><line x1="395" x2="395" y1="206" y2="213"/><rect x="392" y="208" width="7" height="2"/></g>
+            <g class="candle down"><line x1="405" x2="405" y1="204" y2="215"/><rect x="402" y="208" width="7" height="5"/></g>
+            <g class="candle up"><line x1="415" x2="415" y1="209" y2="216"/><rect x="412" y="211" width="7" height="2"/></g>
+            <g class="candle down"><line x1="425" x2="425" y1="207" y2="218"/><rect x="422" y="211" width="7" height="5"/></g>
+            <g class="candle up"><line x1="435" x2="435" y1="212" y2="219"/><rect x="432" y="214" width="7" height="2"/></g>
+            <g class="candle down"><line x1="445" x2="445" y1="210" y2="221"/><rect x="442" y="214" width="7" height="5"/></g>
+            <g class="candle up"><line x1="455" x2="455" y1="215" y2="222"/><rect x="452" y="217" width="7" height="2"/></g>
+            <g class="candle down"><line x1="465" x2="465" y1="213" y2="224"/><rect x="462" y="217" width="7" height="5"/></g>
+            <g class="candle up"><line x1="475" x2="475" y1="218" y2="225"/><rect x="472" y="220" width="7" height="2"/></g>
+            <g class="candle down"><line x1="485" x2="485" y1="216" y2="227"/><rect x="482" y="220" width="7" height="5"/></g>
+            <g class="candle up"><line x1="495" x2="495" y1="221" y2="228"/><rect x="492" y="223" width="7" height="2"/></g>
+            <g class="candle down"><line x1="505" x2="505" y1="219" y2="230"/><rect x="502" y="223" width="7" height="5"/></g>
+
+            <!-- Current price line -->
+            <line class="current-price-line" x1="0" y1="226" x2="500" y2="226"/>
+            <rect class="current-price-bg" x="500" y="218" width="40" height="16" rx="2"/>
+            <text class="price-label current" x="520" y="229" text-anchor="middle">63,612</text>
+
+            <!-- Price axis labels (right side) -->
+            <text class="price-label" x="520" y="140" text-anchor="middle">65,200</text>
+            <text class="price-label" x="520" y="170" text-anchor="middle">64,700</text>
+            <text class="price-label" x="520" y="200" text-anchor="middle">64,200</text>
+            <text class="price-label" x="520" y="245" text-anchor="middle">63,500</text>
+
+            <!-- Hollow circle fill markers (SHORT: sells at highs/peaks of bouncing market, buys at lows) -->
+            <!-- Sells at local highs -->
+            <g class="fill-marker-sell">
+              <circle class="outer" cx="55" cy="132" r="9"/>
+              <circle class="inner" cx="55" cy="132" r="6"/>
+              <circle class="ring" cx="55" cy="132" r="6"/>
+            </g>
+            <g class="fill-marker-sell">
+              <circle class="outer" cx="115" cy="150" r="9"/>
+              <circle class="inner" cx="115" cy="150" r="6"/>
+              <circle class="ring" cx="115" cy="150" r="6"/>
+            </g>
+            <g class="fill-marker-sell">
+              <circle class="outer" cx="195" cy="168" r="9"/>
+              <circle class="inner" cx="195" cy="168" r="6"/>
+              <circle class="ring" cx="195" cy="168" r="6"/>
+            </g>
+            <g class="fill-marker-sell">
+              <circle class="outer" cx="295" cy="188" r="9"/>
+              <circle class="inner" cx="295" cy="188" r="6"/>
+              <circle class="ring" cx="295" cy="188" r="6"/>
+            </g>
+
+            <!-- Buys at local pullback bottoms -->
+            <g class="fill-marker-buy">
+              <circle class="outer" cx="85" cy="146" r="9"/>
+              <circle class="inner" cx="85" cy="146" r="6"/>
+              <circle class="ring" cx="85" cy="146" r="6"/>
+            </g>
+            <g class="fill-marker-buy">
+              <circle class="outer" cx="165" cy="162" r="9"/>
+              <circle class="inner" cx="165" cy="162" r="6"/>
+              <circle class="ring" cx="165" cy="162" r="6"/>
+            </g>
+            <g class="fill-marker-buy">
+              <circle class="outer" cx="265" cy="180" r="9"/>
+              <circle class="inner" cx="265" cy="180" r="6"/>
+              <circle class="ring" cx="265" cy="180" r="6"/>
+            </g>
+            <g class="fill-marker-buy">
+              <circle class="outer" cx="365" cy="200" r="9"/>
+              <circle class="inner" cx="365" cy="200" r="6"/>
+              <circle class="ring" cx="365" cy="200" r="6"/>
+            </g>
+          </svg>
+        </div>
+        <div class="rsi-pane">
+          <span class="rsi-pane-label">RSI</span>
+          <span class="rsi-pane-value">43.2</span>
+          <svg viewBox="0 0 500 24" preserveAspectRatio="none">
+            <line class="rsi-band" x1="0" y1="6" x2="500" y2="6"/>
+            <line class="rsi-band" x1="0" y1="18" x2="500" y2="18"/>
+            <polyline class="rsi-line" points="0,8 25,10 50,12 75,15 100,13 125,11 150,14 175,18 200,16 225,12 250,15 275,19 300,17 325,13 350,16 375,20 400,18 425,14 450,17 475,15 500,13"/>
+          </svg>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ============================================================
+         ANALYTICS GRID
+         ============================================================ -->
+    <div class="analytics-grid">
+
+      <div class="analytics-panel">
+        <div class="modern-tabs">
+          <button class="tab-btn active">Performance</button>
+          <button class="tab-btn">Trade Log</button>
+          <button class="tab-btn">Optimizer</button>
+          <button class="tab-btn">Walk-Forward</button>
+        </div>
+        <div class="tab-content">
+          <div class="perf-hero">
+            <div class="perf-hero-card profit">
+              <div class="perf-hero-label">Total P&amp;L</div>
+              <div class="perf-hero-value">+$1,247.30</div>
+              <div class="perf-hero-sub">+12.47% · Init $10,000.00</div>
+            </div>
+            <div class="perf-hero-card">
+              <div class="perf-hero-label">Win Rate</div>
+              <div class="perf-hero-value">64<span class="suffix">%</span></div>
+              <div class="perf-hero-sub">82W / 46L · 128 trades</div>
+            </div>
+          </div>
+
+          <div class="perf-secondary">
+            <div class="stat-card">
+              <span class="stat-label">Long P&amp;L</span>
+              <div class="stat-value text-profit">+$842.10</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Short P&amp;L</span>
+              <div class="stat-value text-profit">+$405.20</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Trades</span>
+              <div class="stat-value">128</div>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Max DD</span>
+              <div class="stat-value text-loss">−$324.18</div>
+            </div>
+          </div>
+
+          <div class="trade-log-section">
+            <div class="trade-log-label">
+              <span class="trade-log-label-title">Recent Fills</span>
+              <span class="trade-log-label-count">128 total · showing latest 8</span>
+            </div>
+            <div class="trade-table">
+              <div class="trade-table-head">
+                <div>Side</div><div>Type</div><div>Lvl</div><div>Price</div><div>Size</div><div>P&amp;L</div>
+              </div>
+              <div class="trade-row long">
+                <div><span class="badge badge-long">LONG</span></div>
+                <div class="trade-type">SELL</div>
+                <div>L11</div>
+                <div class="trade-price">65,162.40</div>
+                <div class="trade-size">0.0142</div>
+                <div class="trade-pnl text-profit">+$24.18</div>
+              </div>
+              <div class="trade-row short">
+                <div><span class="badge badge-short">SHORT</span></div>
+                <div class="trade-type">BUY</div>
+                <div>S6</div>
+                <div class="trade-price">63,810.00</div>
+                <div class="trade-size">0.0156</div>
+                <div class="trade-pnl text-profit">+$18.42</div>
+              </div>
+              <div class="trade-row long">
+                <div><span class="badge badge-long">LONG</span></div>
+                <div class="trade-type">BUY</div>
+                <div>L7</div>
+                <div class="trade-price">64,210.50</div>
+                <div class="trade-size">0.0142</div>
+                <div class="trade-pnl text-profit">+$8.42</div>
+              </div>
+              <div class="trade-row short">
+                <div><span class="badge badge-short">SHORT</span></div>
+                <div class="trade-type">SELL</div>
+                <div>S4</div>
+                <div class="trade-price">64,512.20</div>
+                <div class="trade-size">0.0156</div>
+                <div class="trade-pnl text-profit">+$12.85</div>
+              </div>
+              <div class="trade-row long">
+                <div><span class="badge badge-long">LONG</span></div>
+                <div class="trade-type">SELL</div>
+                <div>L9</div>
+                <div class="trade-price">64,820.10</div>
+                <div class="trade-size">0.0142</div>
+                <div class="trade-pnl text-profit">+$15.20</div>
+              </div>
+              <div class="trade-row short">
+                <div><span class="badge badge-short">SHORT</span></div>
+                <div class="trade-type">BUY</div>
+                <div>S2</div>
+                <div class="trade-price">63,640.80</div>
+                <div class="trade-size">0.0157</div>
+                <div class="trade-pnl text-loss">−$4.10</div>
+              </div>
+              <div class="trade-row long">
+                <div><span class="badge badge-long">LONG</span></div>
+                <div class="trade-type">BUY</div>
+                <div>L5</div>
+                <div class="trade-price">64,002.30</div>
+                <div class="trade-size">0.0142</div>
+                <div class="trade-pnl text-profit">+$6.92</div>
+              </div>
+              <div class="trade-row short">
+                <div><span class="badge badge-short">SHORT</span></div>
+                <div class="trade-type">SELL</div>
+                <div>S8</div>
+                <div class="trade-price">64,940.00</div>
+                <div class="trade-size">0.0156</div>
+                <div class="trade-pnl text-profit">+$22.18</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="analytics-side">
+        <!-- COMBINED P&L CARD -->
+        <div class="cpnl-card">
+          <div class="cpnl-label">Equity</div>
+          <div class="cpnl-hero">$11,247.30</div>
+          <div class="cpnl-delta-row">
+            <span class="cpnl-delta">+$1,247.30</span>
+            <span class="cpnl-delta-pct">+12.47%</span>
+          </div>
+          <div class="cpnl-grid">
+            <div class="cpnl-stat">
+              <span class="cpnl-stat-label">Realized</span>
+              <div class="cpnl-stat-value text-profit">+$842.10</div>
+            </div>
+            <div class="cpnl-stat">
+              <span class="cpnl-stat-label">Unrealized</span>
+              <div class="cpnl-stat-value text-profit">+$405.20</div>
+            </div>
+            <div class="cpnl-stat">
+              <span class="cpnl-stat-label">Long</span>
+              <div class="cpnl-stat-value text-profit">+$842.10</div>
+            </div>
+            <div class="cpnl-stat">
+              <span class="cpnl-stat-label">Short</span>
+              <div class="cpnl-stat-value text-profit">+$405.20</div>
+            </div>
+          </div>
+          <div class="cpnl-spark">
+            <div class="cpnl-spark-label">
+              <span class="cpnl-spark-label-text">Equity Curve</span>
+              <span class="cpnl-spark-label-range">10,000 → 11,247</span>
+            </div>
+            <svg viewBox="0 0 280 70" width="100%" height="70" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="spark-gradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#10b981" stop-opacity="0.4"/>
+                  <stop offset="100%" stop-color="#10b981" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <!-- Zero line -->
+              <line class="spark-zero" x1="0" y1="56" x2="280" y2="56"/>
+              <!-- Filled area -->
+              <path class="spark-area" d="M0,56 L0,52 L10,54 L20,53 L30,50 L40,52 L50,48 L60,46 L70,49 L80,45 L90,42 L100,44 L110,40 L120,38 L130,42 L140,38 L150,34 L160,36 L170,32 L180,28 L190,30 L200,24 L210,26 L220,22 L230,18 L240,20 L250,16 L260,14 L270,11 L280,8 L280,56 Z"/>
+              <!-- Line on top -->
+              <polyline class="spark-line" points="0,52 10,54 20,53 30,50 40,52 50,48 60,46 70,49 80,45 90,42 100,44 110,40 120,38 130,42 140,38 150,34 160,36 170,32 180,28 190,30 200,24 210,26 220,22 230,18 240,20 250,16 260,14 270,11 280,8"/>
+              <!-- End dot -->
+              <circle class="spark-dot" cx="280" cy="8" r="3.5"/>
+            </svg>
+          </div>
+        </div>
+
+        <!-- ADAPTIVE EVENTS CARD -->
+        <div class="adaptive-card">
+          <div class="adaptive-header">
+            <span class="adaptive-header-title">Adaptive Events</span>
+            <span class="adaptive-header-status"><span class="dot"></span><span>LIVE</span></span>
+          </div>
+          <div class="adaptive-feed">
+            <div class="adaptive-event">
+              <div class="event-time">14:42</div>
+              <div class="event-dot dot-trend"></div>
+              <div class="event-label">Trend Change</div>
+              <div class="event-meta">UP</div>
+            </div>
+            <div class="adaptive-event">
+              <div class="event-time">14:35</div>
+              <div class="event-dot dot-derisk"></div>
+              <div class="event-label">De-Risk</div>
+              <div class="event-meta">SHORT × 0.5</div>
+            </div>
+            <div class="adaptive-event">
+              <div class="event-time">14:28</div>
+              <div class="event-dot dot-breakout"></div>
+              <div class="event-label">Breakout</div>
+              <div class="event-meta">+0.62</div>
+            </div>
+            <div class="adaptive-event">
+              <div class="event-time">14:22</div>
+              <div class="event-dot dot-reentry"></div>
+              <div class="event-label">Re-Entry</div>
+              <div class="event-meta">LONG</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+    </div>
+
+  </main>
+
+</div>
+
+</div>
+
+</body>
+</html>

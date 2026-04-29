@@ -534,6 +534,12 @@ interface TradingChartProps {
   resistanceLevel?: number;
   height?: number;
   combo?: ComboOverlayData;
+  leverage?: number;
+  indicators?: {
+    bbb?: number;
+    rsi?: number;
+    macdSign?: 'up' | 'down';
+  };
 }
 
 export default function TradingChart({
@@ -547,6 +553,8 @@ export default function TradingChart({
   currentCandleIdx,
   height = 400,
   combo,
+  leverage,
+  indicators,
 }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -876,23 +884,61 @@ export default function TradingChart({
     }
   }, [combo, candles, currentCandleIdx]);
 
+  const filledPct = gridLevels.length > 0 ? (filledLevelIndices.size / gridLevels.length) * 100 : 0;
+  const leverageLabel = leverage !== undefined
+    ? `Lev ${Number.isInteger(leverage) ? leverage.toFixed(0) : leverage.toFixed(1)}×`
+    : null;
+  const hasIndicators = indicators && (
+    indicators.bbb !== undefined || indicators.rsi !== undefined || indicators.macdSign !== undefined
+  );
+
   return (
     <div className="relative">
+      {/* Side accent ribbon */}
+      <div className={`side-ribbon ${side === 'long' ? 'side-ribbon-long' : 'side-ribbon-short'}`} />
+
       {/* Chart header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--card-border)' }}>
-        <div className="flex items-center gap-2">
+      <div className="chart-panel-header">
+        <div className="chart-header-group">
           <span className={`badge ${side === 'long' ? 'badge-long' : 'badge-short'}`}>
             {side.toUpperCase()}
           </span>
-          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-            {gridLevels.length} levels
-          </span>
+          {leverageLabel && <span className="chip-leverage">{leverageLabel}</span>}
+          <span className="chip-meta">{gridLevels.length} Levels</span>
+          <div className="filled-meter">
+            <div className="filled-meter-bar">
+              <div
+                className={side === 'long' ? 'filled-meter-fill' : 'filled-meter-fill filled-meter-fill-short'}
+                style={{ width: `${filledPct}%` }}
+              />
+            </div>
+            <span className="filled-meter-label">{filledLevelIndices.size}/{gridLevels.length}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-            Filled: {filledLevelIndices.size}/{gridLevels.length}
-          </span>
-        </div>
+        {hasIndicators && (
+          <div className="chart-header-group">
+            {indicators?.bbb !== undefined && (
+              <div className="indicator-chip">
+                <span className="indicator-chip-key">BB%B</span>
+                <span className="indicator-chip-val">{indicators.bbb.toFixed(2)}</span>
+              </div>
+            )}
+            {indicators?.rsi !== undefined && (
+              <div className="indicator-chip">
+                <span className="indicator-chip-key">RSI</span>
+                <span className="indicator-chip-val">{indicators.rsi.toFixed(1)}</span>
+              </div>
+            )}
+            {indicators?.macdSign && (
+              <div className="indicator-chip">
+                <span className="indicator-chip-key">MACD</span>
+                <span className={`indicator-chip-val ${indicators.macdSign}`}>
+                  {indicators.macdSign === 'up' ? '▲' : '▼'}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
       {/* Chart container */}
       <div ref={containerRef} style={{ width: '100%', height: `${height}px` }} />

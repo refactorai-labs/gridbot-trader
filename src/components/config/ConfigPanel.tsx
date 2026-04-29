@@ -33,6 +33,7 @@ function AccordionSection({
   toggle,
   onToggle,
   toggleDisabled,
+  id,
 }: {
   title: string;
   children: React.ReactNode;
@@ -41,12 +42,13 @@ function AccordionSection({
   toggle?: boolean;
   onToggle?: (v: boolean) => void;
   toggleDisabled?: boolean;
+  id?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const hasToggle = toggle !== undefined;
 
   return (
-    <div className="accordion-section">
+    <div className="accordion-section" id={id}>
       <button
         onClick={() => setOpen(!open)}
         className="accordion-header"
@@ -437,7 +439,7 @@ export default function ConfigPanel({
   // Collapsed view
   if (isCollapsed) {
     return (
-      <div className="card p-3">
+      <div className="card config-panel-collapsed p-3">
         <button onClick={onToggleCollapse} className="flex items-center gap-2 w-full"
           style={{ color: 'var(--text-secondary)' }}>
           <Settings size={14} />
@@ -449,20 +451,20 @@ export default function ConfigPanel({
   }
 
   return (
-    <div className="card p-4 flex flex-col gap-0">
+    <div className="card config-panel p-4 flex flex-col gap-0">
       {/* Header */}
-      <div className="flex items-center justify-between pb-3">
+      <div className="flex items-center justify-between pb-3 config-panel-header">
         <div className="flex items-center gap-2">
           <Settings size={14} style={{ color: 'var(--grid-neutral)' }} />
           <span className="card-header text-xs">Configuration</span>
         </div>
-        <button onClick={onToggleCollapse} style={{ color: 'var(--text-muted)' }}>
+        <button className="playback-btn p-1.5" onClick={onToggleCollapse} style={{ color: 'var(--text-muted)' }}>
           <ChevronUp size={14} />
         </button>
       </div>
 
       {/* ── General Settings ── */}
-      <AccordionSection title="General" defaultOpen={true}>
+      <AccordionSection title="General" defaultOpen={true} id="cfg-general">
         <div className="flex flex-col gap-3">
           <div>
             <label className="form-label">Name</label>
@@ -515,6 +517,7 @@ export default function ConfigPanel({
         toggle={gridLongEnabled}
         onToggle={onGridLongToggle}
         toggleDisabled={comboConfig.enabled}
+        id="cfg-grid-long"
       >
         <GridSideConfig side="long" config={longConfig} onChange={setLongConfig} />
       </AccordionSection>
@@ -527,6 +530,7 @@ export default function ConfigPanel({
         toggle={gridShortEnabled}
         onToggle={onGridShortToggle}
         toggleDisabled={comboConfig.enabled}
+        id="cfg-grid-short"
       >
         <GridSideConfig side="short" config={shortConfig} onChange={setShortConfig} />
       </AccordionSection>
@@ -538,6 +542,7 @@ export default function ConfigPanel({
         color="var(--grid-long)"
         toggle={dcaLongEnabled}
         onToggle={onDcaLongToggle}
+        id="cfg-dca-long"
       >
         <DCAConfigInline config={dcaLongConfig} onChange={onDcaLongConfigChange} direction="LONG" />
       </AccordionSection>
@@ -549,6 +554,7 @@ export default function ConfigPanel({
         color="var(--grid-short)"
         toggle={dcaShortEnabled}
         onToggle={onDcaShortToggle}
+        id="cfg-dca-short"
       >
         <DCAConfigInline config={dcaShortConfig} onChange={onDcaShortConfigChange} direction="SHORT" />
       </AccordionSection>
@@ -560,6 +566,7 @@ export default function ConfigPanel({
         color="var(--supervisor, #22d3ee)"
         toggle={comboConfig.enabled}
         onToggle={(v) => onComboConfigChange({ ...comboConfig, enabled: v })}
+        id="cfg-combo"
       >
         <ComboBotConfigEditor config={comboConfig} onChange={onComboConfigChange} />
       </AccordionSection>
@@ -571,6 +578,7 @@ export default function ConfigPanel({
         color="var(--adaptive-accent)"
         toggle={adaptiveEnabled}
         onToggle={setAdaptiveEnabled}
+        id="cfg-adaptive"
       >
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -587,12 +595,12 @@ export default function ConfigPanel({
       </AccordionSection>
 
       {/* ── Data Manager ── */}
-      <AccordionSection title="Data Manager" defaultOpen={false}>
+      <AccordionSection title="Data Manager" defaultOpen={false} id="cfg-data">
         <DataManagerInline />
       </AccordionSection>
 
       {/* ── Run Button ── */}
-      <div className="pt-4 mt-1" style={{ borderTop: '1px solid var(--card-border)' }}>
+      <div className="pt-4 mt-1 config-run-footer">
         <button
           className="btn btn-primary w-full flex items-center justify-center gap-2"
           onClick={handleRun}

@@ -1,3 +1,112 @@
+# Active Plan — Context Reconstruction
+
+**Status:** Completed for current strategy-purpose analysis.
+
+## Todo
+
+- [x] Read project instructions and the existing task history in `tasks/todo.md`.
+- [x] Confirm whether prior chat context is directly accessible in this session.
+- [x] Read the current Combo Bot/Raider core files: supervisor, state machine, adaptive engine, sizing, funding/slippage, walk-forward optimizer, and combo UI entry points.
+- [x] Read the API and persistence paths that save/replay combo simulations.
+- [x] Summarize the grounded project context, shipped phases, known limits, and likely next steps from opened files only.
+- [x] Add a review section for this context pass after the summary is complete.
+
+## Current Findings
+
+- Prior chat transcripts are not directly available to me unless their content is present in this thread or stored in repo files.
+- `tasks/todo.md` contains substantial prior work history for the Combo Bot/Raider, including Phase 6 UI, Phase 7 ETH acceptance tooling, and Phase 8 combo-only bug fixes.
+- I will treat `tasks/todo.md`, `AGENTS.md`, and the source files I open as the source of truth.
+
+## Review — Context Reconstruction
+
+- Opened the Combo/Raider execution path: `src/lib/combo/supervisor.ts`, `src/lib/combo/stateMachine.ts`, `src/lib/combo/adaptiveEngine.ts`, `src/lib/combo/sizing.ts`, `src/lib/combo/supervisorRunner.ts`.
+- Opened supporting tests: `src/__tests__/combo.test.ts` and `src/__tests__/comboSupervisor.test.ts`.
+- Opened config/API/persistence paths: `src/components/config/ComboBotConfig.tsx`, `src/app/api/simulations/route.ts`, `src/app/api/simulations/[id]/replay/route.ts`, `src/lib/simulation/engine.ts`, `src/lib/optimizer/walkForwardCombo.ts`, `src/app/api/walk-forward/route.ts`, and relevant Prisma schema sections.
+- Current implemented purpose: backtest a dual-side adaptive grid supervisor where each side can stop out independently, cool down, reopen in risk tiers, hibernate after repeated failed retries, and be evaluated through simulation replay and walk-forward optimization.
+- Main caveat: the current Combo/Raider implementation does not yet run a true continuous classic long/short grid pair underneath all market conditions; it seeds ATR-centered dynamic side grids on breakout/reopen events and uses synthetic market entries plus grid counter-orders.
+
+---
+
+# Active Plan — UI Redesign Review
+
+**Status:** Implementing approved screenshot-aligned redesign.
+
+## Generated UI Directions
+
+- [x] Option 1 — premium dark quant terminal with left config rail, central chart, right metrics, bottom logs.
+- [x] Option 2 — calm light brokerage workstation with compact command bar and right insight panels.
+- [x] Option 3 — dark graphite split workspace with vertical mode toolbar and analytics drawer.
+- [x] Option 4 — hybrid light workspace with dark strategy rail and focused strategy-builder workflow.
+- [x] Option 5 — analytics-first institutional comparison layout with run summaries and dense tables.
+
+Generated preview files:
+- `/Users/sandormaraczy/.codex/generated_images/019dcb0c-4cee-7af2-8c80-ac138ae85e29/ig_060710c9e3de2ebb0169ee59bbfe3c8191ba96d862ebb608ae.png`
+- `/Users/sandormaraczy/.codex/generated_images/019dcb0c-4cee-7af2-8c80-ac138ae85e29/ig_060710c9e3de2ebb0169ee5b1ee6188191a6a445d7108f26b0.png`
+- `/Users/sandormaraczy/.codex/generated_images/019dcb0c-4cee-7af2-8c80-ac138ae85e29/ig_060710c9e3de2ebb0169ee5b6fd7848191b452671de6c52cad.png`
+- `/Users/sandormaraczy/.codex/generated_images/019dcb0c-4cee-7af2-8c80-ac138ae85e29/ig_060710c9e3de2ebb0169ee5a6999148191a98f47768f12b10f.png`
+- `/Users/sandormaraczy/.codex/generated_images/019dcb0c-4cee-7af2-8c80-ac138ae85e29/ig_060710c9e3de2ebb0169ee5a08fc10819194fbed2c3d6b146b.png`
+
+## Scope Guardrails
+
+- [x] Keep backend routes, Prisma schema, simulation engines, optimizer logic, and strategy logic unchanged.
+- [x] Limit work to frontend presentation and layout files unless a compile error forces a tiny type-only adjustment.
+- [x] Preserve existing props, state flow, API payloads, and event handlers.
+- [x] Keep changes simple and localized; no new component library.
+
+## Todo
+
+- [x] Inspect current dashboard, theme, chart wrappers, config sidebar, playback controls, and result panels.
+- [x] Run one UI-focused sub-agent to independently map UX risks and smallest safe file set.
+- [x] Confirm preferred direction: modern dark trading dashboard with icon rail + config drawer.
+- [x] Update `src/app/globals.css` tokens and shared primitives for a cleaner trading-workstation theme. _(Pass 2 visual-polish section appended; additive only.)_
+- [x] Redesign `src/app/page.tsx` layout only: top metadata bar, icon rail + drawer, two-chart workspace, analytics area. _(Topbar date row + pnl chip refined; structural shell unchanged.)_
+- [~] Refresh `src/components/config/ConfigPanel.tsx` visually. _(Deferred — accordion already shipped in earlier pass; no visual gap surfaced this round.)_
+- [x] Refresh `src/components/simulation/PlaybackControls.tsx` as a compact transport bar with stable sizing. _(Circular play with halo, segmented speed, gradient scrubber.)_
+- [x] Refresh chart headers in `src/components/charts/TradingChart.tsx` and `src/components/simulation/DCAChart.tsx` without changing chart data or fill-marker logic. _(Side ribbon + leverage chip + filled-meter + indicator chip slot. Marker math untouched.)_
+- [x] Refresh readout surfaces in `src/components/simulation/CombinedPnL.tsx`, `src/components/results/PerformanceSummary.tsx`, and `src/components/results/TradeLog.tsx`. _(Hero equity + sparkline; hero/secondary split; side-color edge rows + sticky head.)_
+- [~] Review combo UI consistency. _(ComboPane left as-is — its design language is already shipped in Phase 6.)_
+- [x] Run typecheck/build-safe verification and the existing test suite where practical. _(tsc clean · 140/140 tests · `npm run build` green.)_
+- [x] Add a review section below with changed files, verification results, and any residual UI risks.
+
+## Pass-2 review (2026-04-26)
+
+**Prototype reference:** `design/dashboard-polish-prototype.html` (1,885 lines, generated via `frontend-design` skill before any component edit).
+
+**Files touched (8):**
+- `src/app/globals.css` — appended a "Visual Polish — Pass 2" section: refined card shadow stack, side ribbon, chart-panel-header, indicator chip / leverage chip / chip-meta / filled-meter classes, fully styled transport bar (`.transport-bar`, `.transport-group`, `.transport-scrubber`, `.transport-readout`, `.speed-selector`, `.transport-toggle-btn`, `.playback-btn.transport-play`), gradient scrubber track via `--scrubber-progress` CSS var, refined `.modern-tabs` active underline with neutral glow, perf-hero cards, `.cpnl-hero` + `.cpnl-delta-chip`, full `.equity-sparkline` token set, `.trade-log-table` with side-color left edge + sticky head, `.topbar-date-arrow` + `.topbar-pnl-chip`. All additive — existing tokens and existing combo-pane CSS untouched.
+- `src/components/charts/TradingChart.tsx` — added optional `leverage` and `indicators` props (BB%B, RSI, MACD sign). Replaced the bare header JSX above the chart canvas with side ribbon + badge + leverage chip + filled-meter + indicator chip cluster. **Lines 164–165, 639, 734–742 (fill marker coordinate math + primitive attachment) were not modified.**
+- `src/components/simulation/DCAChart.tsx` — same header treatment for visual parity. Markers logic untouched.
+- `src/components/simulation/CombinedPnL.tsx` — full restructure: hero `$X.XX` mono readout at top, sign-coloured P&L number + delta chip, 2×2 breakdown grid, optional adaptive status pill, optional sparkline. New optional `equityHistory?: number[]` prop. Pure-SVG sparkline (`EquitySparkline`), `useMemo` keyed on the array, downsampled to ≤120 points.
+- `src/components/results/PerformanceSummary.tsx` — split into 2 hero cards (Total P&L profit-tinted, Win Rate) + 4 secondary stat tiles. tabular-nums everywhere.
+- `src/components/results/TradeLog.tsx` — semantic `<table class="trade-log-table">` with sticky `<thead>` and 2px left side-color edge per row, denser rows, alternating row tint, hover state.
+- `src/components/simulation/PlaybackControls.tsx` — circular green play with ring (`.transport-play`), gradient scrubber driven by `--scrubber-progress` inline style, segmented speed pills inside `.speed-selector`, dedicated Fit-All toggle (`.transport-toggle-btn`).
+- `src/app/page.tsx` — topbar date row uses `→` arrow instead of word labels; topbar pnl readout gets a separate sign-coloured chip; `equityHistory` is now derived from `replayData.pnlSnapshots` and passed to `<CombinedPnL>`.
+
+**Verification:**
+- `npx tsc --noEmit` — clean.
+- `npm test` — 140/140 pass across 7 files (combo, supervisor, gridPnl, indicators, optimizer, stitchedFitness, comboSupervisor).
+- `npm run build` — Next.js production build succeeds; `/` route 92 kB / 179 kB First Load JS, no warnings related to changed components.
+- Manual smoke not yet run by me; user should compare side-by-side with `design/dashboard-polish-prototype.html` and the two reference screenshots (`/Users/sandormaraczy/.codex/generated_images/019dcb0c-…/ig_…ee5f…png` and `…ee5b6f…png`).
+
+**Hard guardrail status:** `GridFillMarkerPrimitive` and its attachment in `TradingChart.tsx` were not touched. Buy fills still render as green hollow circles at exact `(candles[fill.candleIdx].timestamp, fill.price)` coordinates, sell fills as red, both with `zOrder() === 'top'`.
+
+**Residual UI risks / known follow-ups:**
+- Indicator chips (BB%B / RSI / MACD) on the chart header are wired through props but `page.tsx` does not yet compute/pass real values — chips render only when those props are supplied. Wiring real indicator state is a future PR; no chip currently shows on real charts. The `leverage` prop is similarly unused at the call sites.
+- Sparkline derives `equityHistory` per render via `replayData.pnlSnapshots.filter(...).map(...)`. With ~140 max points this is cheap, but on very long replays (>10K snapshots) it would be worth `useMemo`-ing in `page.tsx` itself.
+- Light-theme verification was not run manually; CSS additions include explicit `[data-theme="light"]` overrides for the new surfaces (transport bar, perf-hero card, indicator chip, trade-log header, speed selector) but a visual pass on the toggle is recommended.
+- ConfigPanel and ComboPane were intentionally not touched — their styling already matches the language and the gap-list did not include them.
+
+## Fill-Marker Guardrail
+
+- [x] Confirmed current buy/sell circles are `TradingChart` fill markers anchored from `fillCandleIdx` + `fillPrice`.
+- [ ] Preserve `GridFillMarkerPrimitive` semantics: circles stay on chart fill locations, above candles, with buy = green and sell = red/coral.
+
+## Review
+
+_To be filled after implementation._
+
+---
+
 # Combo Bot (Dual Trailing v3.1) — Implementation Plan
 
 **Status:** Awaiting your approval before any code is written.
@@ -446,3 +555,37 @@ Goal: make the explicit breakout/reopen market entry realize profit through a pa
 - The averaging grid budget reserves the one-grid-unit market entry before calculating grid base order size.
 - Tests now assert that monotone favorable long trends close the market entry at TP and realize profit, while legacy grid round-trips still pass through adjacency.
 - Verification: `npm test` passes (140 tests / 7 files); `npm run build` passes.
+
+---
+
+## UI Review-Findings Fix Pass — 2026-04-27
+
+**Status:** Complete.
+
+### Findings addressed
+- **P1 — Negative Total P&L lost its sign** (`PerformanceSummary.tsx`): replaced `Math.abs(totalPnl)` rendering with explicit `+`/`-` prefix so a loss now shows `-$X.XX` instead of `$X.XX`.
+- **P2 — Topbar P&L was grid-only** (`page.tsx`): `pnlTotal` now sums grid `currentSnapshot` realized+unrealized **plus** DCA cumulative realized P&L from `dcaLongCurrentSnapshot`/`dcaShortCurrentSnapshot`. Topbar chip is hidden when no P&L source exists, eliminating the misleading `+$0.00` on DCA-only runs that were still loading.
+- **P2 — Combined equity vs. delta mismatch** (`page.tsx` → `CombinedPnL`): `totalEquity` is now derived as `initialCapital + pnlTotal`, so the hero number and the embedded delta describe the same value. DCA-only and mixed views are now internally consistent.
+- **P2 — Transport bar overflow on mobile** (`globals.css`): `.transport-bar` gets `flex-wrap: wrap` + `row-gap: 8px`. `.transport-scrubber` `min-width` dropped from 200px to 140px with `flex: 1 1 220px`. Added a `@media (max-width: 720px)` rule that places the scrubber on its own row.
+- **P3 — Performance stats fixed 4 columns** (`PerformanceSummary.tsx`): `grid-cols-4` → `grid-cols-2 md:grid-cols-4`.
+- **P3 — Rail buttons all open the same drawer**: deferred. ConfigPanel sections don't have anchor IDs yet, so wiring deep-link nav would expand scope into ConfigPanel restructuring. The rail still opens the same drawer (no regression vs Pass 2).
+
+### Slider color (user request)
+- `.timeline-scrubber` track fill, thumb border, and thumb ring shadow recolored from `var(--grid-long)` (green) to `#2563eb` with `rgba(37, 99, 235, 0.18)` ring — matches the `.btn-primary` Run Simulation button. Light theme inherits the same blue.
+
+### Files touched (3)
+- `src/components/results/PerformanceSummary.tsx` — sign fix on Total P&L hero, responsive secondary stats grid.
+- `src/app/page.tsx` — strategy-aware topbar P&L (grid + DCA), coherent `totalEquity` to `CombinedPnL`, hide topbar chip when no P&L source.
+- `src/app/globals.css` — transport bar wrap + ≤720px scrubber-on-own-row block, scrubber recolored to `#2563eb`.
+
+### Hard guardrails preserved
+- `GridFillMarkerPrimitive` and its `TradingChart.tsx` attachment untouched.
+- Marker math (`candles[fill.candleIdx].timestamp` + `fill.price`) untouched.
+- Long/short two-chart layout, config submit flow, DCA/combo/optimizer/playback/trade log access — all untouched.
+- Backend, simulation engines, order matcher, Prisma schema — untouched.
+
+### Verification
+- `npx tsc --noEmit` — clean.
+- `npm test` — 140/140 pass across 7 files.
+- `npm run build` — green; `/` route still 92 kB / 179 kB First Load JS.
+- Manual smoke not run by me — recommend a quick check in browser: DCA-only run topbar matches DCA P&L; CombinedPnL hero and delta agree; ≤720px viewport wraps the transport bar; a losing sim renders `-$X.XX`; scrubber renders blue.
