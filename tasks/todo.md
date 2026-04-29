@@ -2,6 +2,15 @@
 
 **Status:** Completed for current strategy-purpose analysis.
 
+## Task — Review play button color change
+
+- [ ] Inspect current local modified files.
+- [ ] Review the changed CSS against nearby playback control styles.
+- [ ] Judge release readiness and note any risks.
+- [ ] Add review summary after completing the review.
+
+---
+
 ## Todo
 
 - [x] Read project instructions and the existing task history in `tasks/todo.md`.
@@ -24,6 +33,17 @@
 - Opened config/API/persistence paths: `src/components/config/ComboBotConfig.tsx`, `src/app/api/simulations/route.ts`, `src/app/api/simulations/[id]/replay/route.ts`, `src/lib/simulation/engine.ts`, `src/lib/optimizer/walkForwardCombo.ts`, `src/app/api/walk-forward/route.ts`, and relevant Prisma schema sections.
 - Current implemented purpose: backtest a dual-side adaptive grid supervisor where each side can stop out independently, cool down, reopen in risk tiers, hibernate after repeated failed retries, and be evaluated through simulation replay and walk-forward optimization.
 - Main caveat: the current Combo/Raider implementation does not yet run a true continuous classic long/short grid pair underneath all market conditions; it seeds ATR-centered dynamic side grids on breakout/reopen events and uses synthetic market entries plus grid counter-orders.
+
+---
+
+## Task — Fix play button color: green → blue
+
+- [x] Read `PlaybackControls.tsx` — no inline color overrides, all styling is in CSS
+- [x] Located `.playback-btn.transport-play` block in `globals.css` (lines 1077–1097)
+- [x] Replaced all green values (`rgba(16,185,129,...)`, `--grid-long-bg/border`) with `#2563eb` blue matching the scrubber
+
+### Review
+Single block edit in `globals.css`. Play button background, border, icon color, and glow ring now all use `rgba(37, 99, 235, ...)` / `#2563eb` — identical to the scrubber track and thumb. Hover deepens glow and border slightly. No component files touched.
 
 ---
 
