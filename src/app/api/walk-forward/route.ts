@@ -28,7 +28,9 @@ export async function POST(request: NextRequest) {
 
     const candles5m = await getCachedCandles(symbol, '5m', new Date(startTime), new Date(endTime));
     if (candles5m.length === 0) {
-      return NextResponse.json({ error: 'No candles cached for the requested window' }, { status: 404 });
+      return NextResponse.json({
+        error: `No cached candles for ${symbol} between ${new Date(startTime).toISOString()} and ${new Date(endTime).toISOString()}. Use the Data Manager to download.`,
+      }, { status: 404 });
     }
     const fundingRates = await getCachedFundingRates(symbol, new Date(startTime), new Date(endTime));
 

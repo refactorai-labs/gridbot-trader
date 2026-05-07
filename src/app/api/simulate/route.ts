@@ -38,7 +38,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (candles5m.length === 0) {
-      return NextResponse.json({ error: 'No candle data available' }, { status: 400 });
+      return NextResponse.json({
+        error: 'No candle data available. Provide candles in the request body or download cached data via the Data Manager.',
+      }, { status: 400 });
     }
 
     // Run simulation synchronously

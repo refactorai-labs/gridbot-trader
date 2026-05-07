@@ -63,7 +63,11 @@ export async function runComboSimulationFromDb(simulationId: string): Promise<vo
   try {
     const binanceSymbol = getBinanceSymbol(sim.poolAddress, sim.pair);
     const candles5m = await getCachedCandles(binanceSymbol, '5m', sim.startTime, sim.endTime);
-    if (candles5m.length === 0) throw new Error('No candle data available for the specified range');
+    if (candles5m.length === 0) {
+      throw new Error(
+        `No cached candles for ${binanceSymbol} between ${sim.startTime.toISOString()} and ${sim.endTime.toISOString()}. Use the Data Manager to download.`
+      );
+    }
     const candles1h = aggregate5mTo(candles5m, 60);
     const candles4h = aggregate5mTo(candles5m, 240);
 

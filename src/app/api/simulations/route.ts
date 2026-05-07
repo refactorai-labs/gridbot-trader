@@ -118,7 +118,9 @@ async function handleDCASimulation(body: DCASimulationConfig & { strategyType: s
   );
 
   if (candles5m.length === 0) {
-    return NextResponse.json({ error: 'No candle data available for the specified range' }, { status: 400 });
+    return NextResponse.json({
+      error: `No candle data available for ${config.pair} between ${new Date(config.startTime).toISOString()} and ${new Date(config.endTime).toISOString()} (Binance returned no klines).`,
+    }, { status: 400 });
   }
 
   // Run DCA simulation

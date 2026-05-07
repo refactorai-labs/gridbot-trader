@@ -820,6 +820,64 @@ Implementation will not start until you confirm this plan.
 
 - `slippageCost` is present in the ablation report shape but remains `0` because existing fills do not retain an un-slipped reference price. Tracking exact slippage attribution needs a small fill/accounting extension.
 - The Prisma schema can only express one default row shape, so the schema defaults are long-side defaults; normal UI/API creation stores explicit long and short side config rows.
+
+---
+
+# Active Plan — Candle Cache Gap-Fill + Error Wording (Phase 1)
+
+**Status:** Implemented. Verified.
+
+**Reference:** `~/.claude/plans/cached-giggling-cookie.md` for the full structured plan.
+
+## Todo
+
+- [x] Replace 90%-of-expected hit rule in `src/lib/data/candleCache.ts` with exact gap-detection (`computeMissingGaps`, exported) using `Math.ceil(startMs/tfMs)` and `Math.floor((endMs-1)/tfMs)` bucket math.
+- [x] Short-circuit `computeMissingGaps` to `[]` for `endMs <= startMs` or sub-bucket ranges; `getOrFetchCandles` skips Binance.
+- [x] After per-gap fetch + store, re-query the cache once and run a final coverage check; throw an actionable error with ISO-formatted unresolved range if any gap remains.
+- [x] Add empty-candles 404 guard to `src/app/api/simulations/[id]/replay/route.ts`.
+- [x] Update error strings (context-aware) in `engine.ts:58`, `walk-forward/route.ts:31`, `combo/supervisorRunner.ts:66`, `simulations/route.ts:120`, `simulate/route.ts:41`.
+- [x] Write `src/__tests__/candleCache.test.ts` with pure helper unit tests + `getOrFetchCandles` integration tests (mock `../lib/prisma` and `../lib/data/binanceApi`; sequential `findMany.mockResolvedValueOnce`).
+- [x] Verify: `npx tsc --noEmit`, `npm test`, `npm run build`.
+- [x] Add review section here when done.
+
+## Review — Implementation Complete
+
+**Behavior change:**
+- `getOrFetchCandles` no longer re-pulls the entire range when the cache drops below 90% coverage. It now: (1) reads cached rows, (2) computes the precise list of missing `[gapStart, gapEnd)` bucket-aligned windows via the new exported `computeMissingGaps`, (3) fetches each gap from Binance and stores it, (4) re-queries the cache so the returned array reflects what's now persisted, (5) runs a final coverage check and throws with an ISO-formatted unresolved range if Binance returned nothing for a gap (delisted symbol, pre-listing range, transient API miss).
+- Bucket math is exact and matches the cache query's half-open `[startMs, endMs)` convention with strict `openTime >= startMs` / `openTime < endMs`: `firstExpectedMs = Math.ceil(startMs / tfMs) * tfMs`, `lastExpectedMs = Math.floor((endMs - 1) / tfMs) * tfMs`.
+- `computeMissingGaps` short-circuits to `[]` for `endMs <= startMs` and for sub-bucket ranges (range narrower than one bucket), so callers like the DataManager date picker (which can produce same-day ranges) don't accidentally trigger Binance traffic.
+- Replay route now returns 404 with an actionable error when the cache is empty for a sim's range, instead of slicing an empty array silently.
+- Error strings across all five candle-fetch sites are now context-aware: cache-only consumers get "Use the Data Manager to download"; the auto-fetching DCA route says "Binance returned no klines"; the optimizer's mixed-input route says "Provide candles or download via the Data Manager".
+
+**Files changed:**
+- `src/lib/data/candleCache.ts` — added exported `computeMissingGaps`; rewrote `getOrFetchCandles` decision logic with re-query + final coverage check.
+- `src/app/api/simulations/[id]/replay/route.ts` — added empty-array 404 guard.
+- `src/lib/simulation/engine.ts`, `src/app/api/walk-forward/route.ts`, `src/lib/combo/supervisorRunner.ts`, `src/app/api/simulations/route.ts`, `src/app/api/simulate/route.ts` — error string improvements only.
+
+**Files added:**
+- `src/__tests__/candleCache.test.ts` — first test file in the repo to use `vi.mock`. Mocks `../lib/prisma` and `../lib/data/binanceApi` (not sibling exports of `candleCache.ts`), and uses sequential `findMany.mockResolvedValueOnce(initial).mockResolvedValueOnce(final)` so the post-store re-query observes the would-be-inserted rows.
+
+**Test coverage added (16 cases):**
+- `computeMissingGaps`: empty cache → full-range gap; full coverage → []; head-only / tail-only / mid / two-disjoint gaps; off-grid `startMs` ceils forward (12:33 → 12:35); off-grid `endMs` floors backward; `endMs <= startMs` → []; sub-bucket range → [].
+- `getOrFetchCandles`: cache full → no Binance call; cache empty → one fetch over the full range; mid hole → exactly one fetch covering only the hole; head + tail holes → exactly two fetches with correct ranges; Binance returns nothing for a gap → throws ISO-formatted error containing both endpoints; malformed range → returns `[]` without calling Binance.
+
+**Verification results:**
+- `npx tsc --noEmit` — passes (no output).
+- `npm test` — 181 tests pass across 9 files (165 existing + 16 new). No regressions.
+- `npm run build` — Next.js production build succeeds.
+
+**No changes to:** strategies, indicators, aggregator, Prisma schema, UI components, optimizer search loops, walk-forward fitness. Strategy outputs are bit-for-bit unchanged, so existing backtests remain reproducible.
+
+### Remaining limitations / deferred to future plans
+
+- **D — Indicator warmup pre-roll.** First N candles still produce NaN indicators; effective trade start drifts forward of `startDate` for indicators with long lookbacks. Fixing this changes first-day trade behavior and requires backtest re-baselining.
+- **E — Aggregator wall-clock alignment.** `aggregate5mTo` still anchors group boundaries at array index 0, not at exchange-aligned UTC boundaries. Indicator values therefore differ slightly from TradingView's. Fixing it changes every existing 1H/4H indicator value → guaranteed test breakage and a deliberate reproducibility break.
+- **F — DataManager progress bar.** The `onProgress` callback is plumbed through `getOrFetchCandles` but `/api/candles` discards it. Wiring it to the UI needs SSE or a chunked response.
+- **G — UTC vs local date display.** `new Date('YYYY-MM-DD').toISOString()` interprets the picker as midnight UTC, which can confuse users in non-UTC timezones.
+
+## Out of scope
+
+- Indicator warmup pre-roll (D), aggregator wall-clock alignment (E), DataManager progress bar (F), UTC date display (G). Each will be a separate plan.
 - Current walk-forward is still the existing single-parameter-set stitched OOS runner. Nested train-optimize/blind-OOS and +/-10% perturbation stability remain intentionally deferred.
 
 ---

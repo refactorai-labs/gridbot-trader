@@ -56,7 +56,9 @@ export async function runSimulation(simulationId: string): Promise<void> {
     );
 
     if (candles5m.length === 0) {
-      throw new Error('No candle data available for the specified range');
+      throw new Error(
+        `No cached candles for ${binanceSymbol} between ${sim.startTime.toISOString()} and ${sim.endTime.toISOString()}. Use the Data Manager to download.`
+      );
     }
 
     // Aggregate to simulation timeframe if needed

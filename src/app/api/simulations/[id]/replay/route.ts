@@ -41,6 +41,11 @@ export async function GET(
       binanceSymbol, '5m',
       simulation.startTime, simulation.endTime
     );
+    if (candles5m.length === 0) {
+      return NextResponse.json({
+        error: `No cached candles for ${binanceSymbol} between ${simulation.startTime.toISOString()} and ${simulation.endTime.toISOString()}. Use the Data Manager to download.`,
+      }, { status: 404 });
+    }
     const simTimeframeMins = simulation.comboBotEnabled ? 5 : getTimeframeMinutes(simulation.timeframe);
     const candles = simTimeframeMins === 5 ? candles5m : aggregate5mTo(candles5m, simTimeframeMins);
 

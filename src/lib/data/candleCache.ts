@@ -73,7 +73,44 @@ export async function storeCandlesInCache(
   return totalStored;
 }
 
-// Fetch candles, caching in database. Returns cached data if available.
+// Compute missing contiguous bucket ranges in [startMs, endMs) given an ascending cached list.
+// Returns half-open [gapStartMs, gapEndMs) windows aligned to bucket boundaries.
+// Returns [] for malformed/sub-bucket ranges so the caller can short-circuit.
+export function computeMissingGaps(
+  cached: OHLC[],
+  startMs: number,
+  endMs: number,
+  tfMs: number
+): Array<{ startMs: number; endMs: number }> {
+  if (endMs <= startMs || tfMs <= 0) return [];
+
+  // Smallest bucket boundary >= startMs (matches cache query openTime >= startMs).
+  const firstExpectedMs = Math.ceil(startMs / tfMs) * tfMs;
+  // Largest bucket boundary < endMs (matches cache query openTime < endMs).
+  const lastExpectedMs = Math.floor((endMs - 1) / tfMs) * tfMs;
+
+  if (firstExpectedMs > lastExpectedMs) return [];
+
+  const gaps: Array<{ startMs: number; endMs: number }> = [];
+  let cursorMs = firstExpectedMs;
+
+  for (const c of cached) {
+    const cMs = c.timestamp * 1000;
+    if (cMs < cursorMs) continue; // outside expected window or duplicate
+    if (cMs > cursorMs) {
+      gaps.push({ startMs: cursorMs, endMs: cMs });
+    }
+    cursorMs = cMs + tfMs;
+  }
+
+  if (cursorMs <= lastExpectedMs) {
+    gaps.push({ startMs: cursorMs, endMs: lastExpectedMs + tfMs });
+  }
+
+  return gaps;
+}
+
+// Fetch candles, caching in database. Fills only missing gaps; never re-pulls fully cached data.
 export async function getOrFetchCandles(
   pair: string,
   timeframe: string,
@@ -81,30 +118,37 @@ export async function getOrFetchCandles(
   endTime: Date,
   onProgress?: (fetched: number) => void
 ): Promise<OHLC[]> {
-  // Check cache first
+  const startMs = startTime.getTime();
+  const endMs = endTime.getTime();
+  const tfMs = getTimeframeMinutes(timeframe) * 60_000;
+
   const cached = await getCachedCandles(pair, timeframe, startTime, endTime);
+  const gaps = computeMissingGaps(cached, startMs, endMs, tfMs);
 
-  // Calculate expected candle count for the range
-  const timeframeMins = getTimeframeMinutes(timeframe);
-  const rangeMinutes = (endTime.getTime() - startTime.getTime()) / 60000;
-  const expectedCandles = Math.floor(rangeMinutes / timeframeMins);
+  if (gaps.length === 0) return cached;
 
-  // If we have >= 90% of expected candles, use cache
-  if (cached.length >= expectedCandles * 0.9) {
-    return cached;
+  for (const gap of gaps) {
+    const fetched = await fetchBinanceKlines(pair, timeframe, gap.startMs, gap.endMs, onProgress);
+    if (fetched.length > 0) {
+      await storeCandlesInCache(pair, timeframe, fetched);
+    }
   }
 
-  // Fetch from Binance API
-  const fetched = await fetchBinanceKlines(
-    pair, timeframe,
-    startTime.getTime(), endTime.getTime(),
-    onProgress
-  );
+  // Re-query so the returned array reflects exactly what's now persisted.
+  const finalCandles = await getCachedCandles(pair, timeframe, startTime, endTime);
 
-  // Store in cache
-  await storeCandlesInCache(pair, timeframe, fetched);
+  // Final coverage check: callers must get a complete range or an explicit error.
+  const remaining = computeMissingGaps(finalCandles, startMs, endMs, tfMs);
+  if (remaining.length > 0) {
+    const ranges = remaining
+      .map(g => `[${new Date(g.startMs).toISOString()}, ${new Date(g.endMs).toISOString()})`)
+      .join(', ');
+    throw new Error(
+      `Unable to fetch ${pair} ${timeframe} candles for ${ranges}; Binance returned no data for this range`
+    );
+  }
 
-  return fetched;
+  return finalCandles;
 }
 
 export function getTimeframeMinutes(timeframe: string): number {
