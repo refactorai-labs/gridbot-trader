@@ -66,14 +66,13 @@ Per the plan's "End-to-end acceptance" section:
 - [ ] 4.5 Max drawdown on stitched OOS curve is within spec expectations (< 25% ideally)
 - [ ] 4.6 In the UI: load one fold's simulation; phase transitions match the AdaptiveEvent log; AVWAP anchors at the first ER > 0.6 candle; 4-light reopen board turns all green exactly at Tier 1 entry
 
-## Step 5 — AVWAP ablation (spec §11 q.2)
+## Step 5 — Reopen-policy and AVWAP ablation
 
-Run the Optuna study a second time with `--study combo-eth-ablation` and toggle `avwap_enabled` to `False` in the search space (edit `optuna_driver.py` line that does `suggest_categorical('avwap_enabled', [True, False])` to fix it to `False`). Compare:
+The Optuna search now sweeps `reopen_policy` (`full_v31` / `atr_rsi_avwap` / `atr_rsi` / `mvp_current`) and `avwap_enabled` jointly with the rest of the parameters, so a single 200-trial run already produces the ablation matrix. After the run, group trials by these two categoricals (`study.trials_dataframe()` makes this trivial) and compare best fitness per cell.
 
-- Best trial fitness with AVWAP
-- Best trial fitness without AVWAP
+If you want a focused single-axis ablation (e.g., AVWAP on vs off only), pin one categorical by editing `optuna_driver.py` to `trial.suggest_categorical("reopen_policy", ["full_v31"])` for that run and use a separate `--study` name so the SQLite study stays coherent.
 
-If AVWAP contributes meaningfully, the with-AVWAP fitness should be materially higher. This answers spec §11 q.2 (is AVWAP worth keeping?).
+Spec §11 q.2 (is AVWAP worth keeping?) is answered by the AVWAP-on/off cells of the matrix; the policy variants answer the broader research question of which reopen stack survives OOS.
 
 ## Step 6 — Known scope limits
 

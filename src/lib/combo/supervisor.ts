@@ -11,6 +11,7 @@ import {
 } from '../types';
 import { AdaptiveEngine, AdaptiveSignals, DEFAULT_ADAPTIVE_CONFIG } from './adaptiveEngine';
 import { ComboBotStateMachine, ComboEvent, PositionSnapshot } from './stateMachine';
+import { evaluateReopenPolicy } from './reopenPolicy';
 import { allocateCapital, atrScaledGridStep, slPrice } from './sizing';
 import {
   PnLState,
@@ -98,14 +99,18 @@ export interface ComboSimulationResult {
   totalFundingCost: number;
   longFundingCost: number;
   shortFundingCost: number;
+  /** Cumulative slippage cost in USD across all fill paths (entry, regular grid, SL, market close). */
+  totalSlippageCost: number;
+  longSlippageCost: number;
+  shortSlippageCost: number;
 }
 
 const DEFAULT_LONG_CFG: ComboBotSideConfig = {
   averagingDepth: 5,
   slBasePercent: 0.015,
-  slAtrMultiplier: 1.5,
-  slFloor: 0.01,
-  slCap: 0.04,
+  slAtrMultiplier: 1.0,
+  slFloor: 0.02,
+  slCap: 0.06,
   tier1Size: 0.25,
   tier2Size: 0.5,
   tier3Size: 1.0,
@@ -117,6 +122,10 @@ const DEFAULT_LONG_CFG: ComboBotSideConfig = {
 const DEFAULT_SHORT_CFG: ComboBotSideConfig = {
   ...DEFAULT_LONG_CFG,
   averagingDepth: 2, // spec §1: short runs shallower
+  slBasePercent: 0.008,
+  slAtrMultiplier: 0.7,
+  slFloor: 0.015,
+  slCap: 0.04,
 };
 
 function sideCfgOrDefault(cfg: ComboBotSideConfig | undefined, side: GridSide): ComboBotSideConfig {
@@ -130,12 +139,12 @@ function sideCfgOrDefault(cfg: ComboBotSideConfig | undefined, side: GridSide): 
  * These are the minimum-viable heuristics for Phase 3c. Richer user-configurable
  * conditions come in Phase 6 via the ConditionEvaluator wiring.
  */
-function evaluateConditions(
+function evaluateEntryCondition(
   side: GridSide,
   signals: AdaptiveSignals,
   price: number,
   cfg: ComboBotConfig
-): { entry: boolean; reopen: boolean } {
+): boolean {
   const regimeTrending = signals.regime === 'trending';
 
   const avwapOk = (() => {
@@ -150,16 +159,10 @@ function evaluateConditions(
     return price < signals.avwap * (1 + tolerance);
   })();
 
-  const entry = regimeTrending
+  return regimeTrending
     && avwapOk
     && !isNaN(signals.rsi)
     && (side === 'long' ? signals.rsi < cfg.rsiLongThreshold : signals.rsi > cfg.rsiShortThreshold);
-
-  // Reopen: same trend regime + RSI coiled zone (neutral area) + AVWAP alignment.
-  const rsiCoiled = !isNaN(signals.rsi) && signals.rsi > 40 && signals.rsi < 60;
-  const reopen = regimeTrending && avwapOk && rsiCoiled;
-
-  return { entry, reopen };
 }
 
 function positionSnapshotForSide(
@@ -341,6 +344,31 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
   let totalFundingCost = 0;
   let longFundingCost = 0;
   let shortFundingCost = 0;
+  // Slippage cost accumulators in USD. A buy fill above intended price or a sell
+  // fill below intended price both cost the trader; we accumulate the absolute
+  // delta × notional-quantity at every applySlippage site.
+  const slippageCostBySide: Record<GridSide, number> = { long: 0, short: 0 };
+  function recordSlippage(side: GridSide, sizeUSD: number, originalPrice: number, adjustedPrice: number): void {
+    if (originalPrice <= 0 || adjustedPrice <= 0 || sizeUSD <= 0) return;
+    const qty = sizeUSD / adjustedPrice;
+    slippageCostBySide[side] += Math.abs(adjustedPrice - originalPrice) * qty;
+  }
+  // Helpers that emit fills (applyForcedCloseSL, openMarketPosition, closeMarketPosition)
+  // run applySlippage internally. Capture cost from the appended fills against the known
+  // reference price the helper was invoked with.
+  function recordSlippageFromAppendedFills(
+    refPrice: number,
+    side: GridSide | null,
+    fillsArr: Fill[],
+    sliceStart: number,
+  ): void {
+    if (refPrice <= 0) return;
+    for (let k = sliceStart; k < fillsArr.length; k++) {
+      const f = fillsArr[k];
+      if (side !== null && f.side !== side) continue;
+      recordSlippage(f.side, f.size, refPrice, f.fillPrice);
+    }
+  }
 
   let prevTimeSec = candles5m.length > 0 ? candles5m[0].timestamp - 1 : 0;
 
@@ -353,6 +381,10 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
   const longGrid: SideGridState = emptySideGridState();
   const shortGrid: SideGridState = emptySideGridState();
   const gridLevels = Math.max(4, cfg.gridLevels ?? 10);
+  const atrHistory: number[] = [];
+  let previousRsi: number | null = null;
+  let previousPrice: number | null = null;
+  let previousAvwap: number | null = null;
 
   for (let i = 0; i < candles5m.length; i++) {
     const candle = candles5m[i];
@@ -385,6 +417,11 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
       candles1h, agg1hIdx,
       candles4h, agg4hIdx,
     );
+    const effectiveAtr = Number.isFinite(signals.blendedAtr) ? signals.blendedAtr : signals.atr;
+    if (Number.isFinite(effectiveAtr)) {
+      atrHistory.push(effectiveAtr);
+      if (atrHistory.length > 100) atrHistory.shift();
+    }
 
     // Funding drag settle
     if (fundingRates.length > 0 && pnlState.openPositions.length > 0) {
@@ -413,7 +450,37 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
       gridState: SideGridState,
     ): void => {
       if (!sm) return;
-      const cond = evaluateConditions(side, signals, candle.close, cfg);
+      const entryConditionMet = evaluateEntryCondition(side, signals, candle.close, cfg);
+      const smState = sm.getState();
+      // Only evaluate the reopen policy during COOLDOWN — that is the only phase
+      // where reopenConditionsMet is consumed. Gating here also ensures
+      // reopenDiagnostics ride only events emitted during the cooldown tick
+      // (retry_incremented, tier1_reopen, hibernation_entered) and not unrelated
+      // lifecycle events like breakout_entered or position_opened.
+      const policyResult = smState.phase === 'COOLDOWN'
+        ? evaluateReopenPolicy({
+            side,
+            price: candle.close,
+            previousPrice,
+            atr: effectiveAtr,
+            // Prefer the ATR captured at the most recent SL — that is the shock the
+            // reopen ratio gate is meant to compare against. Fall back to the original
+            // breakout ATR only when no SL has occurred in this lifecycle.
+            atrAtBreakout: smState.atrAtLastSL ?? smState.atrAtPhaseEntry,
+            atrHistory,
+            rsi: signals.rsi,
+            previousRsi,
+            avwap: signals.avwap,
+            previousAvwap,
+            regime: signals.regime,
+            config: {
+              policy: cfg.reopenPolicy ?? 'full_v31',
+              avwapEnabled: cfg.avwapEnabled,
+              rsiLongCross: cfg.rsiLongThreshold,
+              rsiShortCross: cfg.rsiShortThreshold,
+            },
+          })
+        : null;
       const posSnap = positionSnapshotForSide(pnlState, side, candle.close, allocatedCap);
 
       const { instruction, events: smEvents } = sm.tick({
@@ -424,12 +491,14 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
         candleLow: candle.low,
         signals,
         position: posSnap,
-        entryConditionMet: cond.entry,
-        reopenConditionsMet: cond.reopen,
+        entryConditionMet,
+        reopenConditionsMet: policyResult?.allowed ?? false,
+        reopenDiagnostics: policyResult?.diagnostics,
       });
 
       // SL hit — close all open positions + tear down the grid.
       if (instruction.slHit && instruction.slPrice !== null && posSnap.hasPosition) {
+        const fillsBefore = fills.length;
         applyForcedCloseSL(
           pnlState,
           side,
@@ -444,6 +513,7 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
           candle.close,
           fills,
         );
+        recordSlippageFromAppendedFills(instruction.slPrice, side, fills, fillsBefore);
         teardownGrid(gridState);
       }
 
@@ -465,6 +535,7 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
           );
           if (!posHasSide(pnlState, side)) {
             const positionId = `combo_entry_${side}_${i}`;
+            const fillsBefore = fills.length;
             const entryFill = openMarketPosition(
               pnlState,
               side,
@@ -478,6 +549,7 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
               positionId,
               fills,
             );
+            recordSlippageFromAppendedFills(candle.close, side, fills, fillsBefore);
             if (entryFill) {
               const tpOrder = createMarketEntryTakeProfitOrder(entryFill, gridState.levels);
               if (tpOrder) gridState.pending.push(tpOrder);
@@ -488,6 +560,7 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
           // retroactively inflated (matchOrders still runs after runSide this candle).
           gridState.nextSizeMultiplier = instruction.sizeMultiplier;
         } else if (e.type === 'cycle_complete' && posHasSide(pnlState, side)) {
+          const fillsBefore = fills.length;
           closeMarketPosition(
             pnlState,
             side,
@@ -500,6 +573,7 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
             totalCapital,
             fills,
           );
+          recordSlippageFromAppendedFills(candle.close, side, fills, fillsBefore);
           teardownGrid(gridState);
         }
       }
@@ -533,14 +607,16 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
         // Remove the filled pending order
         gs.pending = gs.pending.filter(o => o.id !== fill.orderId);
         if (slippageCfg.basisBp !== 0) {
+          const rawFillPrice = fill.fillPrice;
           fill.fillPrice = applySlippage(
-            fill.fillPrice,
+            rawFillPrice,
             fill.type,
             fill.side,
             0,
             false,
             slippageCfg,
           );
+          recordSlippage(fill.side, fill.size, rawFillPrice, fill.fillPrice);
         }
         fill.fees = fill.size * feeRate;
         // fill.size is already leveraged notional (baseOrderSize = allocatedCap * leverage / levels).
@@ -557,6 +633,7 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
           const sameCandleSL = slPrice(sideCfg, fill.side, postFillPos.avgEntry, signals.atr);
           if (remainingPathTouchesSL(candle, fill, fill.side, sameCandleSL)) {
             fills.push(fill);
+            const fillsBefore = fills.length;
             applyForcedCloseSL(
               pnlState,
               fill.side,
@@ -571,6 +648,7 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
               candle.close,
               fills,
             );
+            recordSlippageFromAppendedFills(sameCandleSL, fill.side, fills, fillsBefore);
             teardownGrid(gs);
             stoppedSides.add(fill.side);
             const slEvents = sm.forceStopLoss({
@@ -602,6 +680,10 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
 
     updateDrawdown(pnlState, totalCapital, candle.close);
 
+    previousRsi = Number.isFinite(signals.rsi) ? signals.rsi : previousRsi;
+    previousPrice = candle.close;
+    previousAvwap = signals.avwap !== null && Number.isFinite(signals.avwap) ? signals.avwap : previousAvwap;
+
     prevTimeSec = candle.timestamp;
 
     // Snapshot
@@ -631,6 +713,9 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
     totalFundingCost,
     longFundingCost,
     shortFundingCost,
+    totalSlippageCost: slippageCostBySide.long + slippageCostBySide.short,
+    longSlippageCost: slippageCostBySide.long,
+    shortSlippageCost: slippageCostBySide.short,
   };
 }
 
@@ -820,6 +905,7 @@ function supervisorEvent(e: ComboEvent, longMult: number, shortMult: number): Co
       side: e.side,
       phase: e.phase,
       snapshot: e.snapshot,
+      reopenDiagnostics: e.reopenDiagnostics,
     }),
     longMultiplier: longMult,
     shortMultiplier: shortMult,

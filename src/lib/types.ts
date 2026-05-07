@@ -274,6 +274,7 @@ export interface IndicatorCondition {
 // ──── Combo Bot (Dual Trailing v3.1) ────
 
 export type ComboMode = 'dual' | 'long' | 'short';
+export type ReopenPolicyName = 'mvp_current' | 'atr_rsi' | 'atr_rsi_avwap' | 'full_v31';
 
 // Lifecycle phases (diagram 3). Hibernation is semi-absorbing.
 export type BotPhase =
@@ -305,6 +306,7 @@ export interface ComboBotConfig {
   leverage: number;
   allocationLong: number; // only used in dual; 0.5..0.75
   avwapEnabled: boolean;
+  reopenPolicy?: ReopenPolicyName;
   totalCapital: number; // USDT — single source of truth when combo is on
   gridLevels: number;   // grid levels per side (spec §1 averaging depth × 2)
   longSide?: ComboBotSideConfig;
@@ -318,6 +320,24 @@ export interface ComboBotConfig {
   rsiShortThreshold: number;   // 65 default
 }
 
+export interface ReopenDiagnostics {
+  atrRatioOk: boolean;
+  atrDecliningOk: boolean;
+  rsiCrossOk: boolean;
+  // Always the exact reclaim/rejection boolean — honest across policies and
+  // AVWAP-on/off ablation runs. Use `avwapRequired` to know whether the
+  // selected policy/config actually consumed it for `allowed`.
+  avwapOk: boolean;
+  avwapRequired: boolean;
+}
+
+export interface ReopenContainmentState {
+  lower: number;
+  upper: number;
+  recentCloses: boolean[];
+  tier2HoldCount: number;
+}
+
 export interface BotState {
   side: GridSide;
   phase: BotPhase;
@@ -328,6 +348,10 @@ export interface BotState {
   lastSLCandleIdx: number | null;
   lastSLPrice: number | null;
   atrAtPhaseEntry: number | null;
+  // ATR captured at the most recent SL transition. Reopen ratio gates compare
+  // against this when present, falling back to atrAtPhaseEntry only if no SL
+  // has occurred in this lifecycle.
+  atrAtLastSL: number | null;
   breakoutPrice: number | null;
 }
 

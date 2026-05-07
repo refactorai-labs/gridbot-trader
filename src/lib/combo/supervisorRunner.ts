@@ -80,6 +80,7 @@ export async function runComboSimulationFromDb(simulationId: string): Promise<vo
       leverage: sim.comboLeverage ?? 5,
       allocationLong: sim.comboAllocationLong ?? 0.6,
       avwapEnabled: sim.comboAvwapEnabled,
+      reopenPolicy: 'full_v31',
       totalCapital,
       gridLevels: 10,
       longSide: longSideRow ? rowToSideCfg(longSideRow) : undefined,

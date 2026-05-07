@@ -19,7 +19,8 @@ export interface ReopenLights {
   cooldownElapsed: boolean;
   regimeTrending: boolean;
   atrCompressed: boolean;
-  avwapAligned: boolean;
+  // null = AVWAP not required by the active policy/config; UI hides the light.
+  avwapAligned: boolean | null;
 }
 
 export interface BotPhaseView {

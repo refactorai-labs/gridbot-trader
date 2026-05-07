@@ -235,9 +235,9 @@ model ComboBotConfiguration {
 
   // Stop-loss: combined base% + ATR×k, clamped to [floor, cap]
   slBasePercent   Float @default(0.015) // 1.5%
-  slAtrMultiplier Float @default(1.5)
-  slFloor         Float @default(0.010) // 1.0% minimum SL
-  slCap           Float @default(0.040) // 4.0% maximum SL
+  slAtrMultiplier Float @default(1.0)
+  slFloor         Float @default(0.020) // 2.0% long-side minimum SL; short configs are stored explicitly
+  slCap           Float @default(0.060) // 6.0% long-side maximum SL; short configs are stored explicitly
 
   // Reopen tier sizing fractions (of baseline) — 25/50/100 per spec §6
   tier1Size Float @default(0.25)

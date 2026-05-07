@@ -7,9 +7,9 @@ import { ComboBotConfig, ComboBotSideConfig, ComboMode, GridSide } from '@/lib/t
 export const DEFAULT_COMBO_SIDE_LONG: ComboBotSideConfig = {
   averagingDepth: 5,
   slBasePercent: 0.015,
-  slAtrMultiplier: 1.5,
-  slFloor: 0.01,
-  slCap: 0.04,
+  slAtrMultiplier: 1.0,
+  slFloor: 0.02,
+  slCap: 0.06,
   tier1Size: 0.25,
   tier2Size: 0.5,
   tier3Size: 1.0,
@@ -21,6 +21,10 @@ export const DEFAULT_COMBO_SIDE_LONG: ComboBotSideConfig = {
 export const DEFAULT_COMBO_SIDE_SHORT: ComboBotSideConfig = {
   ...DEFAULT_COMBO_SIDE_LONG,
   averagingDepth: 2, // spec §1 — asymmetric
+  slBasePercent: 0.008,
+  slAtrMultiplier: 0.7,
+  slFloor: 0.015,
+  slCap: 0.04,
 };
 
 export const DEFAULT_COMBO_CONFIG: ComboBotConfig = {
@@ -29,6 +33,7 @@ export const DEFAULT_COMBO_CONFIG: ComboBotConfig = {
   leverage: 5,
   allocationLong: 0.6,
   avwapEnabled: true,
+  reopenPolicy: 'full_v31',
   totalCapital: 10000,
   gridLevels: 10,
   longSide: DEFAULT_COMBO_SIDE_LONG,

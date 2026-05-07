@@ -273,7 +273,9 @@ function ReopenStack({ lights }: { lights: NonNullable<BotPhaseView['reopenLight
       <Light on={lights.cooldownElapsed} tag="CD"    />
       <Light on={lights.regimeTrending}  tag="REG"   />
       <Light on={lights.atrCompressed}   tag="ATR"   />
-      <Light on={lights.avwapAligned}    tag="AVWAP" orange />
+      {lights.avwapAligned !== null && (
+        <Light on={lights.avwapAligned}  tag="AVWAP" orange />
+      )}
 
       <style jsx>{`
         .reopen-stack {

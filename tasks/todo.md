@@ -1,3 +1,87 @@
+# Active Plan — Strategy Document Feasibility Review
+
+**Status:** Completed.
+
+## Todo
+
+- [x] Identify the provided archive contents and locate the main strategy document.
+- [x] Read current project instructions, task history, package setup, and persistence schema enough to frame the review.
+- [x] Thoroughly read `files/dual-grid-bot-strategy-v3.1.md` from the provided zip, including the diagrams where useful.
+- [x] Compare the proposed feature set against the existing grid, combo supervisor, indicator, optimizer, API, and UI code paths.
+- [x] Give a grounded opinion on whether the functionality can work, where it is strong, where it is risky, and what would need validation before trusting it.
+- [x] Add a review section here summarizing what was reviewed and the main conclusions.
+
+## Initial Context
+
+- The archive contains `dual-grid-bot-strategy-v3.1.md`, three SVG diagrams, and a nested strategy zip.
+- The project already has Binance candle/funding cache support, ATR/ER/AVWAP indicators, a combo supervisor, grid/DCA simulation paths, walk-forward tooling, and Prisma persistence for combo-related configuration.
+- I will keep the review analytical only unless you ask for implementation changes.
+
+## Review — Strategy Document Feasibility
+
+- Read the full `dual-grid-bot-strategy-v3.1.md` spec and all three diagrams from `/Users/sandormaraczy/Downloads/files 2.zip`. The nested zip contains the same document and diagrams.
+- Reviewed the relevant local implementation: `src/lib/combo/supervisor.ts`, `src/lib/combo/stateMachine.ts`, `src/lib/combo/adaptiveEngine.ts`, `src/lib/combo/sizing.ts`, `src/lib/combo/supervisorRunner.ts`, indicator helpers, slippage/funding models, combo config UI, Prisma combo models, simulation routes, and combo walk-forward fitness.
+- Opinion: the feature set is conceptually workable as a backtested strategy framework. The strongest parts are the clear side-specific risk model, explicit state machine, event-anchored AVWAP, funding/slippage awareness, and the insistence on out-of-sample validation rather than raw backtest Sharpe.
+- Main caution: the current codebase implements a useful MVP, not the exact v3.1 spec. The adaptive engine has ATR/ER/RSI/AVWAP and anchor persistence support, but the current reopen decision is a simpler trend + neutral RSI + AVWAP-tolerance heuristic. It does not yet enforce the spec's four-condition AND gate: ATR ratio below breakout ATR, ATR slope declining, RSI crossing 65/35, and AVWAP reject/reclaim.
+- Other gaps: defaults in code differ from the spec in places, especially SL multiplier/floor/cap and hibernation/cooldown expressed in 5m candles; tier advancement currently uses a fixed short candle count instead of the spec's 80% containment over 24 closes and 12-candle hold; DB runner hardcodes some adaptive parameters; optimizer has stitched OOS and PSR-style scoring, but no true genetic algorithm, no correction for number of genomes tested, and no per-parameter +/-10% perturbation stability test.
+- Risk assessment: the strategy could work in the narrow sense of being implementable and backtestable, but profitability is unproven. The biggest real risks are leverage/margin path risk during fast cascades, false reopen timing, optimizer overfitting, regime dependence, and Binance candle-level backtest limitations around intra-candle path/liquidity.
+- Recommended next validation before trusting it: implement the exact reopen stack behind an ablation switch; compare current MVP vs exact v3.1 vs no-AVWAP; run long OOS windows across BTC 2021-2026 plus ETH as a sanity check; include fees, funding, ATR-scaled SL slippage, and parameter perturbation; judge by drawdown, liquidation buffer, false-reopen rate, and fold stability rather than total return alone.
+
+## Review — Combo Optimization Feasibility
+
+- Checked `src/lib/optimizer/randomSearch.ts`, `src/lib/optimizer/walkForward.ts`, `src/lib/optimizer/walkForwardCombo.ts`, `src/lib/optimizer/stitchedFitness.ts`, `src/components/OptimizerTab.tsx`, and `/api/walk-forward`.
+- Current DCA optimizer is UI-driven random search over DCA parameters, scored mostly by Sharpe with simple constraints.
+- Current combo optimizer support is lower-level: `/api/walk-forward` can evaluate one supplied combo config across stitched out-of-sample folds, using PSR/Sharpe fallback, fold stability, and drawdown penalty.
+- There is no current combo parameter-search loop, no UI for combo optimization, no ablation matrix runner, and no exact v3.1 reopen-mode variants yet.
+- Conclusion: the current codebase can evaluate some of the proposed baselines manually by changing `ComboBotConfig` mode and `avwapEnabled`, but it cannot yet run the full six-way test matrix or optimize the exact v3.1 strategy without small but important additions.
+
+---
+
+# Active Plan — Combo Optimization Scope Analysis
+
+**Status:** Planning only.
+
+## Todo
+
+- [x] Review current combo engine, adaptive indicator, optimizer, walk-forward, and UI/API paths.
+- [x] Identify what can be tested now versus what needs new work.
+- [x] Decide whether scope should be cut or phased.
+- [x] Propose the simplest implementation plan for exact v3.1 reopen logic, ablations, walk-forward, and optimization.
+
+## Review — Scope Recommendation
+
+- Do not cut the core strategy scope: dual combo bot, long/short sides, ATR, ER, RSI, AVWAP, tiered reopen, per-side metrics, walk-forward, and ablation testing are all part of the minimum useful research system.
+- Cut or defer live trading, a fancy optimizer UI, genetic algorithm, broad indicator combinatorics, and any "best settings" claim from a single backtest.
+- Current code has a strong base: combo engine, state machine, adaptive indicator engine, funding/slippage, stitched OOS scoring, and an endpoint that evaluates one combo config.
+- Current code is missing the proof harness: exact reopen policy variants, full v3.1 reopen diagnostics, ablation runner, combo parameter search, per-side/fold metrics, and parameter perturbation stability.
+- Recommended next architecture: add a `reopenPolicy`/variant layer first, then an ablation runner, then combo search, then Bayesian/TPE optimization once the objective function is stable.
+
+---
+
+# Active Plan — Audit Plan Review
+
+**Status:** Completed planning review.
+
+## Todo
+
+- [x] Verify the audit's claims against `conditionEvaluator`, combo supervisor, schema, Optuna driver, walk-forward, and tests.
+- [x] Separate accurate findings from overstatements or risky implementation assumptions.
+- [x] Decide whether to agree with the proposed milestones and identify changes before implementation.
+
+## Review — Audit Plan Findings
+
+- I agree with the plan's core framing: the next product milestone should be a strategy research engine, not live trading or UI polish.
+- The repo does have the claimed Optuna TPE sidecar at `optimizer/optuna_driver.py`; my earlier statement that there was no combo parameter-search loop was incomplete because I had only checked the TypeScript/UI path.
+- The repo also already has `DECLINING_N`, `RATIO_BELOW`, and `TOUCHED_AND_REJECTED` in `conditionEvaluator.ts`, with tests. They are useful, but `RATIO_BELOW` currently compares to recent max history, not explicitly `ATR_current / ATR_at_breakout`, so full v3.1 still needs breakout ATR state.
+- I agree with adding `ReopenPolicy`, diagnostics, per-side/fold metrics, and a CLI ablation runner as Milestone 1.
+- I would change the policy ladder: `atr_rsi_avwap` and `full_v31` should not be identical. `atr_rsi_avwap` should be the current-style AVWAP alignment/reject test, while `full_v31` should add tier containment/hold semantics and spec-exact crossings.
+- I would not add `atrAtBreakout` only to `AVWAPAnchor`; it belongs either in a broader breakout context object or a new persisted combo regime/breakout state. Tying ATR state to AVWAP makes the schema semantically narrow.
+- I would avoid claiming "70% built" as a release-readiness measure. The building blocks exist, but the remaining 30% is the correctness-critical research harness.
+- I would not fix short-side SL defaults only in `sizing.ts`; the defaults live in config/schema/driver/test fixtures. The formula function is generic, while the per-side default values are what need correction.
+- I would keep M2 random search before relying on Optuna, even though Optuna exists, because the objective is not stable until M1 proves the ablation/reporting harness.
+
+---
+
 # Active Plan — Context Reconstruction
 
 **Status:** Completed for current strategy-purpose analysis.
@@ -124,6 +208,27 @@ Generated preview files:
 ## Review
 
 _To be filled after implementation._
+
+---
+
+# Active Plan — v3.1 Research Plan Review
+
+**Status:** Reviewing only; no implementation changes.
+
+## Todo
+
+- [x] Read the current task history before modifying this file.
+- [x] Inspect the referenced combo state machine, supervisor, shared types, walk-forward runner, and tests.
+- [x] Compare the submitted findings against the revised plan.
+- [x] Provide a grounded verdict on whether the findings were targeted and resolved.
+- [x] Add a review section summarizing this assessment.
+
+## Review — v3.1 Research Plan Corrections
+
+- The findings are targeted and grounded in the current code. `stateMachine.ts` still reads ATR/ER directly, `supervisor.ts` still owns the simple reopen heuristic, defaults differ from the spec, and walk-forward metrics are currently too thin for ablation attribution.
+- The revised plan resolves the broad architecture direction: keep `adaptiveEngine.ts` pure, move market-condition decisions into the supervisor, add reopen policy variants, add diagnostics, use effective ATR, and defer Prisma persistence.
+- Not all findings are fully resolved in the written plan. The plan still contradicts itself on simulation-level vs per-side `reopenPolicy`, does not explicitly add `lastEffectiveAtr`, does not add `hibernationExitOk` to `TickInputs`, does not reset containment history on `tier1_reopen`, does not specify failed reopen runtime tracking, and keeps timestamped ablation output while requiring byte-identical CSV determinism.
+- Before implementation, tighten those points in the plan so M1 stays a clean ablation instead of mixing policy, side, and state-machine behavior changes.
 
 ---
 
@@ -609,3 +714,249 @@ Goal: make the explicit breakout/reopen market entry realize profit through a pa
 - `npm test` — 140/140 pass across 7 files.
 - `npm run build` — green; `/` route still 92 kB / 179 kB First Load JS.
 - Manual smoke not run by me — recommend a quick check in browser: DCA-only run topbar matches DCA P&L; CombinedPnL hero and delta agree; ≤720px viewport wraps the transport bar; a losing sim renders `-$X.XX`; scrubber renders blue.
+
+---
+
+# Active Plan — Submitted Combo v3.1 Plan Review
+
+**Status:** Reviewing only; no implementation changes.
+
+## Todo
+
+- [x] Read the current combo, indicator, simulation, optimizer, API, UI, and schema files relevant to the submitted plan.
+- [x] Compare each major claim in the submitted plan against the current implementation.
+- [x] Identify outdated assumptions, duplicated work, missing work, and risky sequencing.
+- [x] Refine the plan into the smallest practical milestone order.
+- [x] Add a review section here summarizing findings and recommended changes.
+
+## Review — Submitted Combo v3.1 Plan Findings
+
+- The submitted v2 plan is directionally right but stale relative to the repo. Combo-as-checkbox, dual/long/short modes, schema fields, side configs, AVWAP anchor persistence, adaptive engine, state machine, funding, slippage, replay overlays, `/api/walk-forward`, and the Optuna driver already exist.
+- The remaining product risk is not scaffolding. It is strategy correctness: current reopen logic is still a simple supervisor heuristic (`trending + RSI coiled + AVWAP tolerance`) instead of the v3.1 four-condition AND gate.
+- Exact v3.1 still needs a first-class reopen policy module with diagnostics for: `ATR_current / ATR_at_breakout`, ATR declining for N candles, RSI cross through 65/35, and AVWAP reject/reclaim. Current `ConditionEvaluator` has useful operators, but `AVWAP` returns `NaN`, `RATIO_BELOW` compares against recent history rather than breakout ATR, and the combo supervisor does not consume a reusable policy object.
+- The current state machine has the main phases and hibernation, but tier advancement is still a fixed two-candle timer. It does not implement 80% containment over 24 closes for Tier 2 or a 12-candle hold before Tier 3/full restore.
+- Defaults do not match the spec baseline: current long and short SL defaults are mostly symmetrical except averaging depth, while the spec calls for long `1.5% + ATR x 1.0`, floor/cap `2%/6%`, and short `0.8% + ATR x 0.7`, floor/cap `1.5%/4%`. Cooldown/hibernation units also need a deliberate decision because the spec text mixes "candles" with 4H/5m implications.
+- Walk-forward exists, but it is the single-parameter-set robustness variant. It does not do classic per-fold training optimization followed by blind OOS, and it does not currently use the training window except for fold boundary spacing. The plan must stop saying the current endpoint performs "optimizer on 12m train -> blind 3m OOS" unless that nested optimization is actually built.
+- Fitness has PSR/Sharpe fallback, fold-Sharpe stability, and drawdown penalty. It does not correct PSR for number of trials/genomes, and it does not run +/-10% parameter perturbation stability.
+- The Optuna sidecar exists and is usable, but the search space includes broad/default ranges that do not exactly match the spec baseline. It should become a later milestone after the policy/diagnostic harness proves that the simulated behavior is the strategy being tested.
+- The UI exists for enabling combo and editing core knobs. It does not yet expose policy variants, condition-by-condition reopen lights, false-reopen metrics, or ablation matrices. Those matter more than more styling.
+- Recommended refined order:
+  1. M1: Add `ReopenPolicy` + diagnostics only. Keep schema stable. Add tests for all four conditions and both sides.
+  2. M2: Replace the supervisor's simple reopen heuristic with policy variants: current MVP, ATR+RSI, ATR+RSI+AVWAP, full v3.1.
+  3. M3: Implement spec tier containment/hold semantics and failed-reopen counters with regression tests.
+  4. M4: Add a deterministic ablation runner/report over cached ETH/BTC data. Output per-side SLs, reopen attempts, false reopens, cooldown/hibernation time, drawdown, funding, slippage, and stitched OOS fitness.
+  5. M5: Only then tune Optuna search space and fitness perturbation. Treat Optuna as optimizer plumbing, not proof of strategy correctness.
+  6. M6: UI polish for the reopen stack lights and ablation results once the metrics are stable.
+
+---
+
+# Active Plan — Combo Bot v3.1 Exact Reopen + Research Harness
+
+**Status:** Awaiting explicit implementation approval.
+
+Goal: make the existing opt-in Combo Bot match the v3.1 dual-grid reopen lifecycle exactly enough for research-grade backtests and walk-forward validation. Do not rebuild existing scaffolding. Keep classic grid and DCA behavior unchanged when Combo Bot is disabled.
+
+## Current Grounding
+
+- `src/lib/combo/supervisor.ts` still derives reopen from a local heuristic: trending regime + coiled RSI + AVWAP tolerance.
+- `src/lib/combo/stateMachine.ts` still advances reopen tiers after `TIER_ADVANCE_CANDLES = 2`.
+- Current long/short defaults are mostly symmetrical except depth; v3.1 needs asymmetric SL defaults.
+- `/api/walk-forward`, `walkForwardCombo.ts`, and `optimizer/optuna_driver.py` already exist, but current walk-forward evaluates one parameter set across OOS folds; it is not nested train-optimize/blind-OOS.
+- Combo replay/UI infrastructure already exists, so backend policy correctness and deterministic diagnostics come first.
+
+## Todo
+
+- [x] Read `tasks/todo.md` and inspect the current combo supervisor, state machine, shared types, config defaults, tests, and walk-forward runner before planning changes.
+- [x] Write this implementation plan in `tasks/todo.md`.
+- [x] Wait for explicit implementation approval before editing source code.
+- [x] Add shared types for `ReopenPolicyName`, `ReopenDiagnostics`, policy inputs/results, and containment state.
+- [x] Implement pure reopen policy evaluation with variants: `mvp_current`, `atr_rsi`, `atr_rsi_avwap`, and `full_v31`.
+- [x] Add unit tests for long and short reopen policy behavior:
+  - ATR ratio requires `ATR_current / ATR_at_breakout < 0.6`.
+  - ATR declining requires the configured number of strictly declining ATR values.
+  - Long RSI requires crossing up through 35.
+  - Short RSI requires crossing down through 65.
+  - Long AVWAP requires reclaim from below.
+  - Short AVWAP requires touch/reject from above.
+  - `avwapEnabled=false` bypasses only AVWAP.
+- [x] Wire policy output into `supervisor.ts`, replacing only the reopen heuristic while preserving current entry behavior.
+- [x] Store reopen diagnostics in `AdaptiveEvent.detailsJson` through the existing `ComboSupervisorEvent` path for UI/debugging.
+- [x] Add supervisor/state-machine coverage proving stopped sides do not reopen until selected policy diagnostics are all true.
+- [x] Replace fixed tier auto-advance with v3.1 containment state:
+  - Tier 1 reopens at 25%.
+  - Tier 2 requires at least 80% of the last 24 closes inside the frozen/reopen containment band.
+  - Tier 3 requires 12 additional valid containment candles.
+  - Reset containment history on SL, hibernation, fresh breakout, and new Tier 1 reopen.
+- [x] Add tier regression tests for no two-candle auto-advance, 80%/24 containment, 12-candle Tier 3 hold, and SL reset behavior.
+- [x] Align v3.1 default side config in UI defaults, supervisor fallback defaults, API/schema defaults if needed, test fixtures, and Optuna seed/search ranges:
+  - Long: depth 5, `1.5% + ATR x 1.0`, floor/cap `2% / 6%`.
+  - Short: depth 2, `0.8% + ATR x 0.7`, floor/cap `1.5% / 4%`.
+  - Shared leverage remains 5x; allocation remains 60/40.
+  - Treat cooldown/hibernation as 5m candles; leave hibernation at 288 unless we intentionally choose the spec's 24-candle behavior.
+- [x] Add deterministic combo ablation runner/reporting over cached candle windows with policy variants and AVWAP on/off.
+- [x] Report per side: stop-outs, reopen attempts, successful reopens, false reopens, cooldown time, hibernation time, realized/unrealized P&L, max drawdown, funding cost, slippage cost, trade count, and stitched fitness.
+- [x] Add research harness tests for deterministic output, AVWAP on/off config isolation, clear missing-data failure, and stable 12m/3m/3m fold boundaries.
+- [~] Refine Optuna only after policy diagnostics and ablation metrics are stable; search ranges now center v3.1 defaults, +/-10% perturbation stability remains a later optimizer phase.
+- [~] Add UI reopen-stack diagnostics and policy/ablation selectors only after backend metrics are stable. Reopen-stack diagnostics are wired; policy/ablation selectors are deferred to avoid expanding UI scope before using the harness on real cached BTC/ETH windows.
+- [x] Run verification after implementation milestones: `npm test`, `npx tsc --noEmit`, and `npm run build`.
+- [x] Add a review section here with changed files, behavior summary, verification results, and remaining limitations.
+
+## Approval Gate
+
+Implementation will not start until you confirm this plan.
+
+## Review — Implementation Complete
+
+- Added `src/lib/combo/reopenPolicy.ts` with pure policy evaluation for `mvp_current`, `atr_rsi`, `atr_rsi_avwap`, and `full_v31`. The exact policies expose `atrRatioOk`, `atrDecliningOk`, `rsiCrossOk`, and `avwapOk`.
+- Supervisor reopen logic now uses the policy result instead of the old coiled-RSI heuristic. Entry logic remains unchanged. Reopen diagnostics are persisted in `detailsJson` on emitted combo events.
+- State-machine tier progression no longer auto-advances after two candles. Tier 2 requires 80% containment over a 24-close frozen reopen band; Tier 3 requires 12 additional valid containment closes and then returns the side to normal `RUNNING` at full size instead of forcing a market close.
+- v3.1 defaults are aligned in supervisor fallback config, UI defaults, Prisma long-side defaults, DB runner default policy, and Optuna search ranges: long `1.5% + ATR x 1.0` with `2%/6%`; short `0.8% + ATR x 0.7` with `1.5%/4%`; leverage 5x and allocation 60/40 preserved.
+- Added `src/lib/optimizer/comboAblation.ts`, a deterministic pure ablation runner over supplied 5m candles. It evaluates policy variants and AVWAP on/off, returning per-side lifecycle/P&L/cost/trade metrics plus stitched fitness.
+- UI derivation now reads stored reopen diagnostics for the reopen-stack lights instead of hardcoded approximations. Policy/ablation selectors remain deferred until real BTC/ETH cached-window runs confirm the backend metrics are the right shape.
+- Tests added/updated in `src/__tests__/combo.test.ts` and `src/__tests__/comboAblation.test.ts` for policy diagnostics, containment tiering, deterministic ablation output, AVWAP isolation, missing-candle failure, and fold boundary stability.
+- Verification: `npm test` passes (154 tests / 8 files), `npx tsc --noEmit` passes, and `npm run build` passes.
+
+### Remaining limitations
+
+- `slippageCost` is present in the ablation report shape but remains `0` because existing fills do not retain an un-slipped reference price. Tracking exact slippage attribution needs a small fill/accounting extension.
+- The Prisma schema can only express one default row shape, so the schema defaults are long-side defaults; normal UI/API creation stores explicit long and short side config rows.
+- Current walk-forward is still the existing single-parameter-set stitched OOS runner. Nested train-optimize/blind-OOS and +/-10% perturbation stability remain intentionally deferred.
+
+---
+
+## Combo v3.1 Follow-Up Fix Pass — 2026-05-07
+
+**Status:** Complete.
+
+### Fixes shipped
+
+- **Step 1 — ATR reopen reference refreshed on every SL.** `BotState` now carries `atrAtLastSL`. The state machine writes it inside `enterCooldownFromSL` (so both wick-SL and `forceStopLoss` paths capture it) and clears it on `hibernation_exit`. The supervisor passes `atrAtLastSL ?? atrAtPhaseEntry` into `evaluateReopenPolicy` so the ratio gate compares against the most recent shock, not the original breakout.
+- **Step 2 — Truthful slippage cost.** Added `longSlippageCost`, `shortSlippageCost`, `totalSlippageCost` to `ComboSimulationResult`. The supervisor now records cost at all four `applySlippage` sites (regular grid fill, market entry, market close, forced/post-fill SL). The ablation runner reads those fields instead of hardcoding zero.
+- **Step 3 — Uniform diagnostics.** `reopenPolicy.ts` always computes the four exact diagnostic booleans (`computeDiagnostics`); only the `allowed` combination differs by policy. `mvp_current` keeps its legacy allow logic but now exposes honest, comparable lights.
+- **Step 4 — Diagnostics gated to COOLDOWN ticks.** Supervisor only evaluates `evaluateReopenPolicy` while the side phase is COOLDOWN. Events outside that phase (`breakout_entered`, `position_opened`, `sl_triggered`, `cooldown_entered`) carry `undefined` reopen diagnostics; cooldown-tick events (`retry_incremented`, `tier1_reopen`, `hibernation_entered`) carry the four-boolean object.
+- **Step 5 — Optuna policy categorical.** `optimizer/optuna_driver.py` sweeps `reopen_policy` ∈ {`full_v31`, `atr_rsi_avwap`, `atr_rsi`, `mvp_current`} alongside `avwap_enabled`. `PHASE7_RUNBOOK.md` Step 5 updated.
+
+### Tests added
+
+- `combo.test.ts` — `atrAtLastSL` capture on SL; reset on hibernation_exit; uniform diagnostics under `mvp_current`; legacy-compatible `mvp_current` allow.
+- `comboAblation.test.ts` — finite/non-negative `slippageCost` field on every run; nonzero slippage cost when fills occur.
+- `comboSupervisor.test.ts` — diagnostics persisted only on cooldown-driven events; absent on breakout/position/SL events.
+
+### Verification
+
+- `npx tsc --noEmit` — clean.
+- `npm test` — **161 / 161** tests pass across 8 files (was 154 before this pass; +7).
+- `npm run build` — green; `/` route 92.4 kB / 180 kB First Load JS.
+
+### Files touched
+
+- `src/lib/types.ts` — `BotState.atrAtLastSL`.
+- `src/lib/combo/stateMachine.ts` — capture/reset `atrAtLastSL`.
+- `src/lib/combo/supervisor.ts` — slippage accumulators, four `recordSlippage(...)` instrumentations, COOLDOWN-only policy gate, `atrAtLastSL` reference, three new fields on `ComboSimulationResult`.
+- `src/lib/combo/reopenPolicy.ts` — uniform `computeDiagnostics`, separated `mvpAllow`.
+- `src/lib/optimizer/comboAblation.ts` — wires `result.long/shortSlippageCost` into per-side metrics.
+- `optimizer/optuna_driver.py` — `reopen_policy` categorical.
+- `PHASE7_RUNBOOK.md` — Step 5 rewritten.
+- `src/__tests__/combo.test.ts`, `src/__tests__/comboSupervisor.test.ts`, `src/__tests__/comboAblation.test.ts` — new tests as listed above.
+
+### Remaining intentional deferrals
+
+- Containment-band ATR multiplier stays hardcoded at ±1 ATR until ablation results justify a knob.
+- UI policy/ablation selector remains deferred; reopen-stack lights are now backed by uniform diagnostics so adding the selector is a small follow-up.
+- `cycle_complete` event is still defined on the type union though the new tier-3 path bypasses it; left in place as a forward-compat hook.
+
+---
+
+## Combo v3.1 Follow-Up Review Plan — 2026-05-07
+
+**Status:** Review complete.
+
+- [x] Read the relevant implementation files for ATR reopen reference, slippage accounting, reopen diagnostics, ablation reporting, and Optuna policy selection.
+- [x] Read the relevant regression tests and compare them against the requested follow-up test coverage.
+- [x] Run the verification commands: `npm test`, `npx tsc --noEmit`, and `npm run build`.
+- [x] Record findings and add a review summary here.
+
+### Review Summary
+
+- Verification passed: `npm test` reports 161/161 tests passing, `npx tsc --noEmit` is clean, and `npm run build` completes successfully.
+- No blocking implementation bugs found in the five requested follow-up areas.
+- Main residual risk: the requested supervisor regression for "latest SL ATR reference is passed into reopen policy" is only indirectly covered. The state machine captures `atrAtLastSL`, and supervisor code uses `atrAtLastSL ?? atrAtPhaseEntry`, but no integration test proves the supervisor-level policy gate consumes that newer ATR reference across two SL cycles.
+- Secondary residual risk: slippage reporting is nonzero and plumbed into ablation, but the nonzero ablation test is conditional on fills existing. The fixture currently produces fills, but an unconditional assertion with a fixture that guarantees slipped fills would be stronger.
+
+---
+
+## Combo v3.1 Follow-Up Review Fixes — 2026-05-07
+
+**Status:** Complete.
+
+### Fixes shipped
+
+- **AVWAP diagnostic is now honest, not a bypass flag.** `computeDiagnostics` in `src/lib/combo/reopenPolicy.ts` no longer short-circuits `avwapOk` to `true` when AVWAP is disabled. It always reports the exact reclaim/rejection boolean. A new `avwapRequired` boolean — added to `ReopenDiagnostics` in `src/lib/types.ts` — reports whether the active policy + config actually consumes `avwapOk` for the `allowed` decision. `evaluateReopenPolicy` adds `avwapOk` to the gate only when `avwapRequired` is true, so AVWAP-off ablation rows now stay comparable to AVWAP-on rows on every diagnostic field.
+- **UI consumes the new field.** `src/components/combo/derive.ts` returns `avwapAligned: null` when `avwapRequired === false`, and `src/components/combo/ComboBotDeck.tsx` skips rendering the AVWAP light when null. Light still renders red/green honestly when AVWAP is required.
+- **Supervisor latest-SL ATR is now exercised in supervisor tests.** Two new tests in `src/__tests__/comboSupervisor.test.ts`: a `vi.spyOn(reopenPolicy, 'evaluateReopenPolicy')` integration test that proves the supervisor passes a finite `atrAtBreakout` on every COOLDOWN tick after an SL (i.e. it never silently drops the captured `atrAtLastSL`); and a focused unit test that calls `evaluateReopenPolicy` twice with different `atrAtBreakout` values and asserts the diagnostic flips, proving the contract that supervisor.ts:469's `atrAtLastSL ?? atrAtPhaseEntry` is meaningful.
+- **Ablation slippage test is now unconditional.** `src/__tests__/comboAblation.test.ts:119` no longer wraps its assertion in `if (totalFills > 0)`. The fixture is engineered (long warmup, sustained trend, relaxed RSI thresholds) to reliably produce a market-entry fill, so the test fails loudly if the fixture drifts to zero fills.
+
+### Tests added/updated
+
+- `combo.test.ts` — three updated/new AVWAP cases: honest `avwapOk` when disabled and no reclaim (`avwapRequired=false`, `allowed=true`); honest `avwapOk` when disabled and reclaim does hold; AVWAP-on with no reclaim blocks `allowed`. `avwapRequired=false` assertion added to the mvp_current diagnostics test.
+- `comboSupervisor.test.ts` — extended the persisted-diagnostics shape check to include `avwapRequired` boolean. Added the spy-based supervisor integration test and the focused unit test described above.
+- `comboAblation.test.ts` — fixture engineered to guarantee fills; assertion is now unconditional.
+
+### Verification
+
+- `npm test` — **165 / 165** tests pass across 8 files (was 161 before this pass; +4 tests).
+- `npx tsc --noEmit` — clean.
+- `npm run build` — green; `/` route still 92.4 kB / 180 kB First Load JS.
+
+### Files touched
+
+- `src/lib/types.ts` — `ReopenDiagnostics` gains `avwapRequired: boolean`.
+- `src/lib/combo/reopenPolicy.ts` — `computeDiagnostics` always computes exact AVWAP boolean; `evaluateReopenPolicy` consults `avwapRequired` to decide whether AVWAP enters the gate.
+- `src/components/combo/types.ts` — `ReopenLights.avwapAligned` widened to `boolean | null`.
+- `src/components/combo/derive.ts` — passes `null` for `avwapAligned` when AVWAP not required by the active policy/config.
+- `src/components/combo/ComboBotDeck.tsx` — conditionally renders the AVWAP light.
+- `src/__tests__/combo.test.ts` — AVWAP test cases updated; new AVWAP-on-no-reclaim case added.
+- `src/__tests__/comboSupervisor.test.ts` — `avwapRequired` shape check; spy-based latest-SL ATR test; focused unit test for the policy ATR-reference contract.
+- `src/__tests__/comboAblation.test.ts` — guaranteed-fill fixture, unconditional slippage assertion.
+
+### Remaining intentional deferrals
+
+- Containment-band ATR multiplier knob (still hardcoded at ±1 ATR).
+- UI policy/ablation selector (still deferred per the 2026-05-07 review).
+- A two-SL integration test asserting the *value* of `atrAtBreakout` flips between the first and second SL is not in scope; the spy test confirms the wiring is exercised on every cooldown tick after the first SL, and the unit test confirms a different ATR reference yields a different diagnostic — together they cover the contract.
+
+---
+
+## Combo v3.1 — Tighten Supervisor Latest-SL ATR Test — 2026-05-07
+
+**Status:** Complete.
+
+### What changed
+
+The earlier spy test `"supervisor passes atrAtLastSL (when set) into evaluateReopenPolicy after an SL"` only asserted `atrAtBreakout` was finite. That left the regression gap open: had `supervisor.ts:469` been rewritten to drop `atrAtLastSL ??` and use `atrAtPhaseEntry` forever, the test would still pass because `atrAtPhaseEntry` is finite after breakout. The test has been replaced by `"supervisor passes the most-recent-SL ATR into evaluateReopenPolicy, not the original breakout ATR"`, which asserts the value, not just finiteness.
+
+### How
+
+- The test re-runs `AdaptiveEngine` independently on the same candles, mirroring `supervisor.ts:309-317` (full explicit config, not just defaults) and the supervisor's `<=`-pointer-advance loop at `supervisor.ts:411-412` (because `aggregate5mTo` stamps each aggregated candle with its first 5m candle's timestamp). It records `signals.atr` at every candle index.
+- It scans `result.events` for the breakout and SL candle indices and reads `atrPerCandle` at each — these are the supervisor's view of `atrAtPhaseEntry` and `atrAtLastSL` respectively.
+- A hard `expect(slEvents).toHaveLength(1)` sanity assertion guarantees the per-call equality below is well-defined; with multiple SLs the expected ATR would shift mid-stream.
+- A second sanity assertion `atrAtSLExpected > atrAtBreakoutExpected * 2` confirms the fixture deliberately diverges the two values, so the equality check has discriminating power.
+- Every spy call's `atrAtBreakout` is asserted equal to `atrAtSLExpected` within `1e-9`, AND explicitly NOT equal to `atrAtBreakoutExpected`. Because the supervisor gates `evaluateReopenPolicy` to COOLDOWN, every spy call fires post-SL and shares the same expected value.
+
+### Fixture redesign
+
+The original fixture (warmup → trend → sharp drop → recovery) put breakout and SL within the same 4H bar, so the 4H ATR didn't change between them and the test had no discriminating power. The new fixture is: warmup → gentle trend → long high-volatility chop with wide intra-candle wicks → sharp drop. A wide-SL side-config override (`slBasePercent: 0.20`, `slCap: 0.20`) prevents the chop from accidentally triggering SL. With this fixture: `atrAtBreakoutExpected ≈ 66`, `atrAtSLExpected ≈ 185` (≈2.8× ratio).
+
+### Sanity check
+
+Temporarily edited `supervisor.ts:469` to drop `atrAtLastSL ??` (use `atrAtPhaseEntry` only) — the test failed loudly with `expected 119.29... to be less than 1e-9` (value mismatch). Reverted.
+
+### Verification
+
+- `npm test` — **165 / 165** pass.
+- `npx tsc --noEmit` — clean.
+- `npm run build` — green; `/` route 92.4 kB / 180 kB First Load JS.
+
+### Files touched
+
+- `src/__tests__/comboSupervisor.test.ts` — added `AdaptiveEngine`/`DEFAULT_ADAPTIVE_CONFIG` import; replaced the spy test body with the value-equality version; redesigned the fixture for ATR divergence.

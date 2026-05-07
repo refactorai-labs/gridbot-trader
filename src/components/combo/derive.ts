@@ -11,7 +11,7 @@ const PHASE_EVENT_MAP: Record<string, BotPhase> = {
   cooldown_entered: 'COOLDOWN',
   tier1_reopen: 'REOPENING',
   tier2_scale: 'REOPENING',
-  tier3_scale: 'REOPENING',
+  tier3_scale: 'RUNNING',
   cycle_complete: 'IDLE',
   hibernation_entered: 'HIBERNATING',
   hibernation_exit: 'IDLE',
@@ -51,22 +51,38 @@ export function deriveBotPhaseView(
     if (e.eventType in PHASE_EVENT_MAP) phase = PHASE_EVENT_MAP[e.eventType];
     if (e.eventType in TIER_EVENT_MAP) currentTier = TIER_EVENT_MAP[e.eventType];
     if (e.eventType === 'retry_incremented') retryCount = Math.min(retryCap, retryCount + 1);
-    if (e.eventType === 'cycle_complete') retryCount = 0;
+    if (e.eventType === 'cycle_complete' || e.eventType === 'tier3_scale') retryCount = 0;
     lastEventType = e.eventType;
     lastEventCandleIdx = e.candleIdx;
   }
 
-  // Reopen stack lights — approximated from events (true four-light evaluation needs adaptive engine state)
-  const hasCooldownStarted = sideEvents.some(e => e.eventType === 'cooldown_entered');
+  const latestDiagnostics = [...sideEvents].reverse().map(e => {
+    try {
+      const details = JSON.parse(e.detailsJson) as {
+        reopenDiagnostics?: {
+          atrRatioOk: boolean;
+          atrDecliningOk: boolean;
+          rsiCrossOk: boolean;
+          avwapOk: boolean;
+          avwapRequired?: boolean;
+        };
+      };
+      return details.reopenDiagnostics;
+    } catch {
+      return undefined;
+    }
+  }).find(Boolean);
+
   const reopenLights: ReopenLights | undefined = phase === 'COOLDOWN' || phase === 'REOPENING'
     ? {
         cooldownElapsed: sideEvents.some(e => e.eventType === 'tier1_reopen' || e.eventType === 'retry_incremented'),
-        regimeTrending: true, // coarse: combo bot wouldn't be running without trending regime at this point
-        atrCompressed: phase === 'REOPENING',
-        avwapAligned: phase === 'REOPENING',
+        regimeTrending: latestDiagnostics?.rsiCrossOk ?? false,
+        atrCompressed: latestDiagnostics ? latestDiagnostics.atrRatioOk && latestDiagnostics.atrDecliningOk : false,
+        avwapAligned: latestDiagnostics?.avwapRequired === false
+          ? null
+          : (latestDiagnostics?.avwapOk ?? false),
       }
     : undefined;
-  void hasCooldownStarted;
 
   return {
     side,

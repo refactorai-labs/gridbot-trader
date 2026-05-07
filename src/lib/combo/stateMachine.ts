@@ -1,4 +1,11 @@
-import { GridSide, BotPhase, BotState, ComboBotSideConfig } from '../types';
+import {
+  GridSide,
+  BotPhase,
+  BotState,
+  ComboBotSideConfig,
+  ReopenDiagnostics,
+  ReopenContainmentState,
+} from '../types';
 import { AdaptiveSignals } from './adaptiveEngine';
 import { slPrice, tierSize } from './sizing';
 
@@ -43,6 +50,7 @@ export interface ComboEvent {
     price: number;
     slPrice?: number | null;
   };
+  reopenDiagnostics?: ReopenDiagnostics;
 }
 
 export interface TickInputs {
@@ -57,6 +65,7 @@ export interface TickInputs {
   position: PositionSnapshot;
   entryConditionMet: boolean;
   reopenConditionsMet: boolean;
+  reopenDiagnostics?: ReopenDiagnostics;
 }
 
 export interface TickResult {
@@ -64,13 +73,15 @@ export interface TickResult {
   events: ComboEvent[];
 }
 
-const TIER_ADVANCE_CANDLES = 2;
+const TIER2_CONTAINMENT_WINDOW = 24;
+const TIER2_CONTAINMENT_RATIO = 0.8;
+const TIER3_VALID_CONTAINMENT_CANDLES = 12;
 
 export class ComboBotStateMachine {
   private state: BotState;
   private sideCfg: ComboBotSideConfig;
   private erBelowHibernationCount: number = 0;
-  private candlesInTier: number = 0;
+  private containment: ReopenContainmentState | null = null;
   private HIBERNATION_ER_THRESHOLD = 0.3;
 
   constructor(side: GridSide, sideCfg: ComboBotSideConfig) {
@@ -85,6 +96,7 @@ export class ComboBotStateMachine {
       lastSLCandleIdx: null,
       lastSLPrice: null,
       atrAtPhaseEntry: null,
+      atrAtLastSL: null,
       breakoutPrice: null,
     };
   }
@@ -108,7 +120,7 @@ export class ComboBotStateMachine {
     this.enterCooldownFromSL(inp, slPriceVal, instr, events);
     if (this.state.phase === 'COOLDOWN') {
       this.state.currentTier = 0;
-      this.candlesInTier = 0;
+      this.resetContainment();
     }
     return events;
   }
@@ -152,6 +164,7 @@ export class ComboBotStateMachine {
       this.state.phase = 'BREAKOUT';
       this.state.breakoutPrice = inp.price;
       this.state.atrAtPhaseEntry = inp.signals.atr;
+      this.resetContainment();
       instr.allowNewOrders = true;
       instr.sizeMultiplier = 1.0;
       events.push(this.mkEvent('breakout_entered', inp));
@@ -200,7 +213,8 @@ export class ComboBotStateMachine {
 
       this.state.phase = 'REOPENING';
       this.state.currentTier = 1;
-      this.candlesInTier = 0;
+      this.resetContainment();
+      this.freezeContainmentBand(inp);
       instr.allowNewOrders = true;
       instr.sizeMultiplier = tierSize(1, this.sideCfg);
       events.push(this.mkEvent('tier1_reopen', inp));
@@ -216,23 +230,27 @@ export class ComboBotStateMachine {
       if (slHit) {
         this.enterCooldownFromSL(inp, sl, instr, events);
         this.state.currentTier = 0;
-        this.candlesInTier = 0;
+        this.resetContainment();
         return;
       }
-      this.candlesInTier++;
-      if (this.candlesInTier >= TIER_ADVANCE_CANDLES) {
-        if (this.state.currentTier < 3) {
-          this.state.currentTier = (this.state.currentTier + 1) as 1 | 2 | 3;
-          this.candlesInTier = 0;
-          const type: ComboEventType = this.state.currentTier === 2 ? 'tier2_scale' : 'tier3_scale';
-          events.push(this.mkEvent(type, inp));
-        } else {
-          // Tier 3 complete → cycle back to IDLE (success loop, diagram 3)
-          this.state.phase = 'IDLE';
+      const contained = this.recordContainment(inp.price);
+      if (this.state.currentTier === 1 && this.tier2ContainmentSatisfied()) {
+        this.state.currentTier = 2;
+        if (this.containment) this.containment.tier2HoldCount = 0;
+        events.push(this.mkEvent('tier2_scale', inp));
+      } else if (this.state.currentTier === 2) {
+        if (this.containment && contained) this.containment.tier2HoldCount++;
+        else if (this.containment) this.containment.tier2HoldCount = 0;
+
+        if ((this.containment?.tier2HoldCount ?? 0) >= TIER3_VALID_CONTAINMENT_CANDLES) {
+          this.state.currentTier = 3;
+          instr.sizeMultiplier = tierSize(3, this.sideCfg);
+          events.push(this.mkEvent('tier3_scale', inp));
+          this.state.phase = 'RUNNING';
           this.state.currentTier = 0;
           this.state.retryCount = 0;
-          this.candlesInTier = 0;
-          events.push(this.mkEvent('cycle_complete', inp));
+          this.resetContainment();
+          instr.allowNewOrders = true;
           return;
         }
       }
@@ -250,7 +268,9 @@ export class ComboBotStateMachine {
     if (this.erBelowHibernationCount >= this.sideCfg.hibernationCandles) {
       this.state.phase = 'IDLE';
       this.state.retryCount = 0;
+      this.state.atrAtLastSL = null;
       this.erBelowHibernationCount = 0;
+      this.resetContainment();
       events.push(this.mkEvent('hibernation_exit', inp));
     }
   }
@@ -270,8 +290,46 @@ export class ComboBotStateMachine {
     this.state.cooldownCandlesRemaining = this.sideCfg.cooldownCandles;
     this.state.lastSLCandleIdx = inp.candleIdx;
     this.state.lastSLPrice = slPriceVal;
+    if (Number.isFinite(inp.signals.atr) && inp.signals.atr > 0) {
+      this.state.atrAtLastSL = inp.signals.atr;
+    }
+    this.resetContainment();
     events.push(this.mkEvent('sl_triggered', inp, slPriceVal));
     events.push(this.mkEvent('cooldown_entered', inp));
+  }
+
+  private resetContainment(): void {
+    this.containment = null;
+  }
+
+  private freezeContainmentBand(inp: TickInputs): void {
+    const width = Number.isFinite(inp.signals.atr) && inp.signals.atr > 0
+      ? inp.signals.atr
+      : Math.max(0.00000001, inp.price * 0.005);
+    this.containment = {
+      lower: Math.max(0.00000001, inp.price - width),
+      upper: inp.price + width,
+      recentCloses: [],
+      tier2HoldCount: 0,
+    };
+  }
+
+  private recordContainment(price: number): boolean {
+    if (!this.containment) return false;
+    const contained = price >= this.containment.lower && price <= this.containment.upper;
+    this.containment.recentCloses.push(contained);
+    if (this.containment.recentCloses.length > TIER2_CONTAINMENT_WINDOW) {
+      this.containment.recentCloses.shift();
+    }
+    return contained;
+  }
+
+  private tier2ContainmentSatisfied(): boolean {
+    if (!this.containment || this.containment.recentCloses.length < TIER2_CONTAINMENT_WINDOW) {
+      return false;
+    }
+    const contained = this.containment.recentCloses.filter(Boolean).length;
+    return contained / TIER2_CONTAINMENT_WINDOW >= TIER2_CONTAINMENT_RATIO;
   }
 
   private mkEvent(type: ComboEventType, inp: TickInputs, slPriceVal?: number | null): ComboEvent {
@@ -288,6 +346,7 @@ export class ComboBotStateMachine {
         price: inp.price,
         slPrice: slPriceVal ?? null,
       },
+      reopenDiagnostics: inp.reopenDiagnostics,
     };
   }
 }

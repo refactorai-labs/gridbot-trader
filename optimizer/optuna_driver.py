@@ -48,11 +48,11 @@ except ImportError:
 def build_combo_cfg(trial: "optuna.Trial") -> dict:
     """Search space for the Combo Bot v3.1 parameters."""
     long_side = {
-        "averagingDepth":    trial.suggest_int("long_avg_depth", 3, 8),
-        "slBasePercent":     trial.suggest_float("long_sl_base", 0.005, 0.03),
-        "slAtrMultiplier":   trial.suggest_float("long_sl_atr_mult", 0.5, 3.0),
-        "slFloor":           0.005,
-        "slCap":             0.05,
+        "averagingDepth":    trial.suggest_int("long_avg_depth", 4, 6),
+        "slBasePercent":     trial.suggest_float("long_sl_base", 0.012, 0.018),
+        "slAtrMultiplier":   trial.suggest_float("long_sl_atr_mult", 0.8, 1.2),
+        "slFloor":           0.02,
+        "slCap":             0.06,
         "tier1Size":         trial.suggest_float("long_tier1", 0.15, 0.35),
         "tier2Size":         trial.suggest_float("long_tier2", 0.35, 0.65),
         "tier3Size":         1.0,
@@ -62,10 +62,10 @@ def build_combo_cfg(trial: "optuna.Trial") -> dict:
     }
     short_side = {
         "averagingDepth":    trial.suggest_int("short_avg_depth", 2, 5),
-        "slBasePercent":     trial.suggest_float("short_sl_base", 0.005, 0.03),
-        "slAtrMultiplier":   trial.suggest_float("short_sl_atr_mult", 0.5, 3.0),
-        "slFloor":           0.005,
-        "slCap":             0.05,
+        "slBasePercent":     trial.suggest_float("short_sl_base", 0.006, 0.010),
+        "slAtrMultiplier":   trial.suggest_float("short_sl_atr_mult", 0.5, 0.9),
+        "slFloor":           0.015,
+        "slCap":             0.04,
         "tier1Size":         trial.suggest_float("short_tier1", 0.15, 0.35),
         "tier2Size":         trial.suggest_float("short_tier2", 0.35, 0.65),
         "tier3Size":         1.0,
@@ -79,6 +79,13 @@ def build_combo_cfg(trial: "optuna.Trial") -> dict:
         "leverage":          trial.suggest_int("leverage", 3, 10),
         "allocationLong":    trial.suggest_float("allocation_long", 0.5, 0.75),
         "avwapEnabled":      trial.suggest_categorical("avwap_enabled", [True, False]),
+        # Sweep reopen policy alongside avwap so the search loop is the actual ablation
+        # experiment (full_v31 vs atr_rsi_avwap vs atr_rsi vs mvp_current), not just a
+        # parameter sweep around full_v31.
+        "reopenPolicy":      trial.suggest_categorical(
+            "reopen_policy",
+            ["full_v31", "atr_rsi_avwap", "atr_rsi", "mvp_current"],
+        ),
         "longSide":          long_side,
         "shortSide":         short_side,
         "atrPeriod":         trial.suggest_int("atr_period", 7, 21),
