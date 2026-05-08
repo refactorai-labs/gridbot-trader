@@ -17,6 +17,10 @@ import ComboWalkForwardPanel from './ComboWalkForwardPanel';
 import { OHLC, GridLevel, GridSide } from '@/lib/types';
 import { SessionView, BotPhaseView, PnLView, AdaptiveEventView, WalkForwardView, AVWAPAnchorData } from './types';
 import { computeAVWAP } from '@/lib/indicators/avwap';
+import { computeBB } from '@/lib/indicators/bollingerBandsB';
+import { computeRSI } from '@/lib/indicators/rsi';
+import { computeBlendedATRBands } from '@/lib/indicators/atr';
+import { computeSessionVWAP } from '@/lib/indicators/sessionVwap';
 
 interface Props {
   session: SessionView;
@@ -63,6 +67,14 @@ export default function ComboPane({
       ? computeAVWAP(candles, avwapAnchor.candleIdx).values
       : undefined;
 
+    // Indicator overlays — only compute when the toggle is on, to skip the work
+    // entirely (each is O(n) over the full candle array).
+    const closes = (overlay.bollingerBands || overlay.rsiPane) ? candles.map(c => c.close) : [];
+    const bb = overlay.bollingerBands ? computeBB(closes, 20, 2) : undefined;
+    const sessionVwap = overlay.vwap ? computeSessionVWAP(candles) : undefined;
+    const atr = overlay.atrBands ? computeBlendedATRBands(candles) : undefined;
+    const rsi = overlay.rsiPane ? computeRSI(closes, 14).values : undefined;
+
     const phaseMarkers: ComboPhaseMarker[] = [];
     const tierMarkers: ComboTierMarker[] = [];
     const slMarkers: ComboSLMarker[] = [];
@@ -101,6 +113,12 @@ export default function ComboPane({
 
     return {
       avwapSeries,
+      bbUpper: bb?.upper,
+      bbLower: bb?.lower,
+      sessionVwap,
+      atrUpper: atr?.upper,
+      atrLower: atr?.lower,
+      rsi,
       phaseMarkers,
       tierMarkers,
       slMarkers,
@@ -111,6 +129,10 @@ export default function ComboPane({
         reopenMarkers: overlay.reopenMarkers,
         slLines: overlay.slLines,
         pauseShading: overlay.pauseShading,
+        bollingerBands: overlay.bollingerBands,
+        vwap: overlay.vwap,
+        atrBands: overlay.atrBands,
+        rsiPane: overlay.rsiPane,
       },
     };
   }, [avwapAnchor, candles, events, overlay]);

@@ -8,6 +8,7 @@ import {
   ISeriesApi,
   CandlestickData,
   LineData,
+  LogicalRange,
   SeriesMarker,
   LineStyle,
   Time,
@@ -489,6 +490,10 @@ export interface ComboOverlayVisibility {
   phaseMarkers: boolean;
   slMarkers: boolean;
   reopenMarkers: boolean;
+  bollingerBands: boolean;
+  vwap: boolean;
+  atrBands: boolean;
+  rsiPane: boolean;
   // Future extension points (rendering not yet implemented):
   slLines: boolean;
   pauseShading: boolean;
@@ -515,6 +520,16 @@ export interface ComboSLMarker {
 export interface ComboOverlayData {
   /** Point series for Anchored VWAP (one value per candle, NaN when unset). */
   avwapSeries?: number[];
+  /** Bollinger Bands upper / lower (one value per candle, NaN when undefined). */
+  bbUpper?: number[];
+  bbLower?: number[];
+  /** Session VWAP (resets at UTC midnight). */
+  sessionVwap?: number[];
+  /** ATR envelope (close ± k · blended ATR). */
+  atrUpper?: number[];
+  atrLower?: number[];
+  /** RSI(14) values rendered in the sub-pane. */
+  rsi?: number[];
   phaseMarkers?: ComboPhaseMarker[];
   tierMarkers?: ComboTierMarker[];
   slMarkers?: ComboSLMarker[];
@@ -563,6 +578,19 @@ export default function TradingChart({
   const fillMarkerPrimitiveRef = useRef<GridFillMarkerPrimitive | null>(null);
   const eventTickPrimitiveRef = useRef<ComboEventTickPrimitive | null>(null);
   const avwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const bbUpperSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const bbLowerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const atrUpperSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const atrLowerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+
+  // RSI sub-pane (separate chart instance, time-range synced with main)
+  const rsiContainerRef = useRef<HTMLDivElement>(null);
+  const rsiChartRef = useRef<IChartApi | null>(null);
+  const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const syncingRangeRef = useRef<boolean>(false);
+
+  const rsiVisible = combo?.visibility?.rsiPane === true;
 
   // Track theme changes
   const [theme, setTheme] = useState('dark');
@@ -632,6 +660,50 @@ export default function TradingChart({
     });
     avwapSeriesRef.current = avwapSeries;
 
+    // Bollinger Bands (upper + lower), Session VWAP, ATR envelope.
+    // All quiet, restrained colors so they don't fight the candle pane.
+    const bbColor = theme === 'light' ? '#64748b' : '#94a3b8';
+    bbUpperSeriesRef.current = chart.addLineSeries({
+      color: bbColor,
+      lineWidth: 1,
+      crosshairMarkerVisible: false,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    bbLowerSeriesRef.current = chart.addLineSeries({
+      color: bbColor,
+      lineWidth: 1,
+      crosshairMarkerVisible: false,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    vwapSeriesRef.current = chart.addLineSeries({
+      color: theme === 'light' ? '#7c3aed' : '#a78bfa',
+      lineWidth: 1,
+      crosshairMarkerVisible: false,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    const atrColor = theme === 'light' ? '#475569' : '#64748b';
+    atrUpperSeriesRef.current = chart.addLineSeries({
+      color: atrColor,
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      crosshairMarkerVisible: false,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    atrLowerSeriesRef.current = chart.addLineSeries({
+      color: atrColor,
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      crosshairMarkerVisible: false,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
     // Background primitive (zone fill + grid lines + boundary axis labels), zOrder 'bottom'.
     const bgPrimitive = new GridZoneBackgroundPrimitive({
       levels: [],
@@ -678,6 +750,11 @@ export default function TradingChart({
       chartRef.current = null;
       seriesRef.current = null;
       avwapSeriesRef.current = null;
+      bbUpperSeriesRef.current = null;
+      bbLowerSeriesRef.current = null;
+      vwapSeriesRef.current = null;
+      atrUpperSeriesRef.current = null;
+      atrLowerSeriesRef.current = null;
     };
   }, [height, theme, side]);
 
@@ -770,7 +847,159 @@ export default function TradingChart({
       }
     }
     avwapSeriesRef.current.setData(data);
-  }, [combo, currentCandleIdx, candles]);
+  }, [combo, currentCandleIdx, candles, theme]);
+
+  // ── Indicator overlays — BB bands, Session VWAP, ATR envelope ──
+  useEffect(() => {
+    const endIdx = currentCandleIdx !== undefined
+      ? Math.min(currentCandleIdx + 1, candles.length)
+      : candles.length;
+
+    const renderSeries = (
+      series: ISeriesApi<'Line'> | null,
+      values: number[] | undefined,
+      visible: boolean
+    ) => {
+      if (!series) return;
+      if (!visible || !values || values.length === 0) {
+        series.setData([]);
+        return;
+      }
+      const data: LineData[] = [];
+      const upTo = Math.min(endIdx, values.length);
+      for (let i = 0; i < upTo; i++) {
+        const v = values[i];
+        if (isFinite(v)) data.push({ time: candles[i].timestamp as Time, value: v });
+      }
+      series.setData(data);
+    };
+
+    const bbVisible = combo?.visibility?.bollingerBands === true;
+    renderSeries(bbUpperSeriesRef.current, combo?.bbUpper, bbVisible);
+    renderSeries(bbLowerSeriesRef.current, combo?.bbLower, bbVisible);
+
+    const vwapVisible = combo?.visibility?.vwap === true;
+    renderSeries(vwapSeriesRef.current, combo?.sessionVwap, vwapVisible);
+
+    const atrVisible = combo?.visibility?.atrBands === true;
+    renderSeries(atrUpperSeriesRef.current, combo?.atrUpper, atrVisible);
+    renderSeries(atrLowerSeriesRef.current, combo?.atrLower, atrVisible);
+  }, [combo, currentCandleIdx, candles, theme]);
+
+  // ── RSI sub-pane — separate chart instance, time-scale synced with main ──
+  useEffect(() => {
+    if (!rsiVisible || !rsiContainerRef.current) return;
+
+    const colors = getChartColors();
+    const rsiChart = createChart(rsiContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: colors.background },
+        textColor: colors.text,
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 10,
+      },
+      grid: {
+        vertLines: { color: colors.gridLines },
+        horzLines: { color: colors.gridLines },
+      },
+      rightPriceScale: {
+        borderColor: colors.scaleBorder,
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      timeScale: {
+        borderColor: colors.scaleBorder,
+        timeVisible: false,
+        secondsVisible: false,
+        visible: false, // main chart's time axis is the reference
+      },
+      width: rsiContainerRef.current.clientWidth,
+      height: 90,
+    });
+
+    const rsiSeries = rsiChart.addLineSeries({
+      color: theme === 'light' ? '#2563eb' : '#60a5fa',
+      lineWidth: 1,
+      crosshairMarkerVisible: false,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    // Reference lines at 30 / 70.
+    rsiSeries.createPriceLine({
+      price: 70,
+      color: colors.gridLines,
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: '70',
+    });
+    rsiSeries.createPriceLine({
+      price: 30,
+      color: colors.gridLines,
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: '30',
+    });
+
+    rsiChartRef.current = rsiChart;
+    rsiSeriesRef.current = rsiSeries;
+
+    // Bidirectional time-range sync, guarded against feedback loops.
+    const mainChart = chartRef.current;
+    const onMainRange = (range: LogicalRange | null) => {
+      if (syncingRangeRef.current || !range || !rsiChartRef.current) return;
+      syncingRangeRef.current = true;
+      rsiChartRef.current.timeScale().setVisibleLogicalRange(range);
+      syncingRangeRef.current = false;
+    };
+    const onRsiRange = (range: LogicalRange | null) => {
+      if (syncingRangeRef.current || !range || !mainChart) return;
+      syncingRangeRef.current = true;
+      mainChart.timeScale().setVisibleLogicalRange(range);
+      syncingRangeRef.current = false;
+    };
+    mainChart?.timeScale().subscribeVisibleLogicalRangeChange(onMainRange);
+    rsiChart.timeScale().subscribeVisibleLogicalRangeChange(onRsiRange);
+
+    // Initial sync — copy main's range to RSI on mount.
+    const mainRange = mainChart?.timeScale().getVisibleLogicalRange();
+    if (mainRange) rsiChart.timeScale().setVisibleLogicalRange(mainRange);
+
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) rsiChart.applyOptions({ width: entry.contentRect.width });
+    });
+    observer.observe(rsiContainerRef.current);
+
+    return () => {
+      observer.disconnect();
+      mainChart?.timeScale().unsubscribeVisibleLogicalRangeChange(onMainRange);
+      rsiChart.timeScale().unsubscribeVisibleLogicalRangeChange(onRsiRange);
+      rsiChart.remove();
+      rsiChartRef.current = null;
+      rsiSeriesRef.current = null;
+    };
+  }, [rsiVisible, theme]);
+
+  // Push RSI data whenever it changes (also re-runs when sub-pane is created).
+  useEffect(() => {
+    if (!rsiSeriesRef.current) return;
+    const values = combo?.rsi;
+    if (!values || values.length === 0) {
+      rsiSeriesRef.current.setData([]);
+      return;
+    }
+    const endIdx = currentCandleIdx !== undefined
+      ? Math.min(currentCandleIdx + 1, candles.length)
+      : candles.length;
+    const data: LineData[] = [];
+    const upTo = Math.min(endIdx, values.length);
+    for (let i = 0; i < upTo; i++) {
+      const v = values[i];
+      if (isFinite(v)) data.push({ time: candles[i].timestamp as Time, value: v });
+    }
+    rsiSeriesRef.current.setData(data);
+  }, [combo, candles, currentCandleIdx, rsiVisible, theme]);
 
   useEffect(() => {
     if (!seriesRef.current) return;
@@ -790,6 +1019,10 @@ export default function TradingChart({
       reopenMarkers: true,
       slLines: true,
       pauseShading: true,
+      bollingerBands: false,
+      vwap: false,
+      atrBands: false,
+      rsiPane: false,
       ...(combo.visibility ?? {}),
     };
 
@@ -882,7 +1115,7 @@ export default function TradingChart({
       ticks.sort((a, b) => (a.time as number) - (b.time as number));
       eventTickPrimitiveRef.current.updateConfig({ ticks });
     }
-  }, [combo, candles, currentCandleIdx]);
+  }, [combo, candles, currentCandleIdx, theme]);
 
   const filledPct = gridLevels.length > 0 ? (filledLevelIndices.size / gridLevels.length) * 100 : 0;
   const leverageLabel = leverage !== undefined
@@ -942,6 +1175,9 @@ export default function TradingChart({
       </div>
       {/* Chart container */}
       <div ref={containerRef} style={{ width: '100%', height: `${height}px` }} />
+      {rsiVisible && (
+        <div ref={rsiContainerRef} style={{ width: '100%', height: '90px' }} />
+      )}
     </div>
   );
 }

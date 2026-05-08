@@ -1018,3 +1018,51 @@ Temporarily edited `supervisor.ts:469` to drop `atrAtLastSL ??` (use `atrAtPhase
 ### Files touched
 
 - `src/__tests__/comboSupervisor.test.ts` — added `AdaptiveEngine`/`DEFAULT_ADAPTIVE_CONFIG` import; replaced the spy test body with the value-equality version; redesigned the fixture for ATR divergence.
+
+---
+
+# Active Plan — Wire up dead indicator toggles on dual / combo chart
+
+**Status:** Completed.
+
+## Problem
+
+`ComboOverlayPanel` (right rail of the Dual Grid Bot / Combo Bot chart) exposes four indicator toggles — Bollinger Bands, Session VWAP, ATR bands, RSI sub-pane — that did nothing. Toggle state was persisted to localStorage and reached `ComboPane` state, but neither `ComboPane` nor `TradingChart` had any code to compute or render those indicators.
+
+## Todo
+
+- [x] Add `computeSessionVWAP` (resets at UTC midnight) — new file.
+- [x] Add `computeBlendedATRBands` to `atr.ts` (uses existing `blendedATR` + `aggregate5mTo`).
+- [x] Extend `ComboOverlayVisibility` and `ComboOverlayData` with the four flags + precomputed series.
+- [x] Create BB / VWAP / ATR line series in `TradingChart` init effect; render them via a new combo overlay effect.
+- [x] Add an RSI sub-pane: separate `IChartApi` instance below the main chart, time-range synced bidirectionally with a guard flag.
+- [x] Wire `ComboPane` to compute series in its `useMemo` (only when the toggle is on) and pass them through `combo`.
+- [x] Type-check, full unit test suite, Next.js production build, dev server smoke.
+
+## Review
+
+### Files touched
+
+- `src/lib/indicators/sessionVwap.ts` — new, ~30 lines. Cumulative VWAP that resets on UTC day boundaries (timestamps stored as Unix seconds).
+- `src/lib/indicators/atr.ts` — added `ATRBandsSeries` interface and `computeBlendedATRBands` helper; reuses the existing `blendedATR(atr4h, atr1h, factor=1.4)` convention used by `adaptiveEngine`. Aggregates 5m → 1H/4H via `aggregate5mTo`, projects HTF ATR back onto the 5m timeline by index (`floor(i/12)`, `floor(i/48)`).
+- `src/components/charts/TradingChart.tsx` — extended `ComboOverlayVisibility` with `bollingerBands`, `vwap`, `atrBands`, `rsiPane`; extended `ComboOverlayData` with `bbUpper`, `bbLower`, `sessionVwap`, `atrUpper`, `atrLower`, `rsi`. Five new line series created in the existing init effect (BB grey, Session VWAP violet, ATR muted dashed). New `useEffect` mirrors the AVWAP pattern to push data when visible / clear when hidden. Conditional second `IChartApi` instance for the RSI sub-pane (90 px tall, time scale hidden, 30/70 reference lines), bidirectional time-range sync via `subscribeVisibleLogicalRangeChange` with a `syncingRangeRef` guard against feedback loops. The 4 new visibility flags default to `false` in the merge so existing call sites remain unchanged.
+- `src/components/combo/ComboPane.tsx` — imports the four indicator helpers; computes each series only when its toggle is on (skips O(n) work otherwise); spreads them into `comboOverlayData` and adds the four flags to `visibility`.
+
+### Architecture notes
+
+- TradingChart stays a dumb renderer: ComboPane precomputes `number[]` arrays and passes them through `combo`, exactly mirroring the existing AVWAP precedent.
+- ATR bands use the codebase's existing convention `max(atr4h, atr1h * 1.4)` rather than a fresh blend — keeps it consistent with `adaptiveEngine`.
+- RSI sub-pane is a separate chart instance (not a v5 multi-pane API) because the codebase uses lightweight-charts v3/v4 conventions throughout. Synced second chart is the standard equivalent for v3/v4.
+
+### Verification
+
+- `npx tsc --noEmit` — clean.
+- `npx vitest run` — 181/181 pass (47 indicator tests, 39 combo, etc., all green).
+- `npx next build` — green; `/` route 93.9 kB / 181 kB First Load JS.
+- Dev server boots (HTTP 200 on `localhost:3000`). Visual verification of each toggle in dual + single combo modes is up to the user — I cannot drive a browser from this environment.
+
+### Out of scope (not addressed by this change)
+
+- The standalone single-grid chart in `src/app/page.tsx` has no overlay panel and was not part of the complaint.
+- The header `indicators` chip prop on TradingChart is a separate, also-unused feature.
+- `slLines`, `pauseShading`, `pnlOverlay` toggles are still not rendered (their entries in `ComboOverlayVisibility` already carry a "not yet implemented" comment from earlier work).

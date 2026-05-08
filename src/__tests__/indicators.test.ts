@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { computeBB, computeBBAtIndex } from '../lib/indicators/bollingerBandsB';
 import { computeRSI, computeRSIAtIndex } from '../lib/indicators/rsi';
 import { computeMACD, computeMACDAtIndex } from '../lib/indicators/macd';
-import { computeATR, computeATRAtIndex, blendedATR } from '../lib/indicators/atr';
+import { computeATR, computeATRAtIndex, blendedATR, computeBlendedATRBands } from '../lib/indicators/atr';
 import { computeER, computeERAtIndex } from '../lib/indicators/efficiencyRatio';
 import { computeAVWAP, computeAVWAPAtIndex } from '../lib/indicators/avwap';
 import { ConditionEvaluator } from '../lib/indicators/conditionEvaluator';
@@ -486,6 +486,37 @@ describe('ATR (Wilder)', () => {
     expect(blendedATR(5, 3, 1.4)).toBeCloseTo(5, 10);     // 5 > 3 * 1.4 = 4.2
     expect(blendedATR(5, 4, 1.4)).toBeCloseTo(5.6, 10);    // 4 * 1.4 = 5.6 > 5
     expect(blendedATR(NaN, 4, 1.4)).toBeNaN();
+  });
+
+  it('computeBlendedATRBands has no look-ahead bias (prefix-stable)', () => {
+    // Bands at index k must depend only on candles[0..k]. A simple way to
+    // assert this: extending the array beyond k must not retroactively change
+    // band[k]. The bug pattern was projecting an in-progress HTF bucket's
+    // ATR (built from the full bucket, including candles after k) onto k.
+    const N = 800;
+    const longer: OHLC[] = [];
+    for (let i = 0; i < N; i++) {
+      const close = 100 + Math.sin(i / 13) * 4 + i / N;
+      longer.push({
+        timestamp: i * 300,
+        open: close,
+        high: close + 0.5,
+        low: close - 0.5,
+        close,
+        volume: 100,
+      });
+    }
+    const longerBands = computeBlendedATRBands(longer);
+
+    // 4H ATR(14) needs ≥ 672 5m candles before any closed bucket has a
+    // non-NaN ATR; sample a few k past that warmup.
+    for (const k of [700, 720, 723, 750, 780]) {
+      expect(longerBands.upper[k]).not.toBeNaN();
+      const prefix = longer.slice(0, k + 1);
+      const prefixBands = computeBlendedATRBands(prefix);
+      expect(prefixBands.upper[k]).toBeCloseTo(longerBands.upper[k], 10);
+      expect(prefixBands.lower[k]).toBeCloseTo(longerBands.lower[k], 10);
+    }
   });
 });
 
