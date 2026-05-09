@@ -171,6 +171,15 @@ export interface SimulationSummary {
   lossCount?: number;
   comboBotEnabled?: boolean;
   comboMode?: ComboMode | null;
+  comboGridLevels?: number;
+  fundingDataMissing?: boolean;
+  requireDirectionalConfirmation?: boolean;
+  totalSlippageCost?: number | null;
+  longSlippageCost?: number | null;
+  shortSlippageCost?: number | null;
+  totalFundingCost?: number | null;
+  longFundingCost?: number | null;
+  shortFundingCost?: number | null;
 }
 
 // Pair configuration
@@ -318,6 +327,7 @@ export interface ComboBotConfig {
   erRegimeThreshold: number;   // ER_smooth > threshold → AVWAP anchor drops, regime = "trending"
   rsiLongThreshold: number;    // 35 default
   rsiShortThreshold: number;   // 65 default
+  requireDirectionalConfirmation?: boolean; // Phase 4.1: strict-side AVWAP + no-new-low/high gate
 }
 
 export interface ReopenDiagnostics {
@@ -329,6 +339,17 @@ export interface ReopenDiagnostics {
   // selected policy/config actually consumed it for `allowed`.
   avwapOk: boolean;
   avwapRequired: boolean;
+}
+
+// Per-side entry-time diagnostics, captured every candle by `evaluateEntryCondition`
+// and persisted on `breakout_entered` events. `directionOk` is forward-compatible
+// for the Phase 4.1 directional-confirmation filter; `undefined` until that flag
+// is implemented + enabled.
+export interface EntryDiagnostics {
+  regimeTrending: boolean;
+  avwapOk: boolean;
+  rsiOk: boolean;
+  directionOk?: boolean;
 }
 
 export interface ReopenContainmentState {

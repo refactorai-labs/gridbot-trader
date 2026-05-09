@@ -143,3 +143,55 @@ export function coerceComboMode(raw: string | null | undefined): ComboMode {
   if (raw === 'long' || raw === 'short') return raw;
   return 'dual';
 }
+
+/**
+ * Derive cooldown candle ranges (inclusive) for a given side from the persisted
+ * event stream.
+ *
+ * A cooldown window opens on `cooldown_entered` and closes when the side leaves
+ * COOLDOWN. The state machine has four exits (stateMachine.ts:204-227):
+ * - `tier1_reopen`     → REOPENING (reopen path, NOT in the legacy closure list)
+ * - `hibernation_entered` → HIBERNATING
+ * - `breakout_entered` and `cycle_complete` close the rare external-exit paths.
+ *
+ * Without `tier1_reopen` in the closure list, shading bleeds across REOPENING /
+ * RUNNING until the next breakout — the bug surfaced in the second review.
+ */
+export function deriveCooldownRanges(
+  events: AdaptiveEventView[],
+  side: GridSide,
+  totalCandles: number,
+): Array<{ startIdx: number; endIdx: number }> {
+  const ranges: Array<{ startIdx: number; endIdx: number }> = [];
+  let openStart: number | null = null;
+
+  const sorted = [...events].sort((a, b) => a.candleIdx - b.candleIdx);
+  for (const e of sorted) {
+    let evSide: GridSide | null = null;
+    try {
+      const d = JSON.parse(e.detailsJson) as { side?: string };
+      if (d.side === 'long' || d.side === 'short') evSide = d.side;
+    } catch { /* noop */ }
+    if (evSide !== side) continue;
+
+    if (e.eventType === 'cooldown_entered') {
+      openStart = e.candleIdx;
+    } else if (
+      e.eventType === 'breakout_entered'
+      || e.eventType === 'tier1_reopen'
+      || e.eventType === 'hibernation_entered'
+      || e.eventType === 'cycle_complete'
+    ) {
+      if (openStart !== null) {
+        ranges.push({ startIdx: openStart, endIdx: Math.max(openStart, e.candleIdx - 1) });
+        openStart = null;
+      }
+    }
+  }
+
+  // Run ended without leaving COOLDOWN — close the range at the last candle.
+  if (openStart !== null && totalCandles > 0) {
+    ranges.push({ startIdx: openStart, endIdx: totalCandles - 1 });
+  }
+  return ranges;
+}

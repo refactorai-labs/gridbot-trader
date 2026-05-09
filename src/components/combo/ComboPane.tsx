@@ -21,6 +21,8 @@ import { computeBB } from '@/lib/indicators/bollingerBandsB';
 import { computeRSI } from '@/lib/indicators/rsi';
 import { computeBlendedATRBands } from '@/lib/indicators/atr';
 import { computeSessionVWAP } from '@/lib/indicators/sessionVwap';
+import { deriveCooldownRanges } from './derive';
+import { ReopenDiagnostics } from '@/lib/types';
 
 interface Props {
   session: SessionView;
@@ -61,7 +63,14 @@ export default function ComboPane({
 }: Props) {
   const [overlay, setOverlay] = useState<ComboOverlayState>(() => loadOverlayState());
 
-  const comboOverlayData: ComboOverlayData = useMemo(() => {
+  const comboOverlayData: ComboOverlayData & {
+    _longSlSeries: number[];
+    _shortSlSeries: number[];
+    _longCooldownRanges: Array<{ startIdx: number; endIdx: number }>;
+    _shortCooldownRanges: Array<{ startIdx: number; endIdx: number }>;
+    _longCooldownTickDiagnostics: Array<{ candleIdx: number; diagnostics: ReopenDiagnostics }>;
+    _shortCooldownTickDiagnostics: Array<{ candleIdx: number; diagnostics: ReopenDiagnostics }>;
+  } = useMemo(() => {
     // AVWAP series from persisted anchor (spec §10.4 — deterministic recomputation)
     const avwapSeries = avwapAnchor && avwapAnchor.candleIdx < candles.length
       ? computeAVWAP(candles, avwapAnchor.candleIdx).values
@@ -79,14 +88,50 @@ export default function ComboPane({
     const tierMarkers: ComboTierMarker[] = [];
     const slMarkers: ComboSLMarker[] = [];
 
-    for (const e of events) {
+    // Per-side SL price + cooldown-tick diagnostics derivation.
+    // Walk events in chronological order; track the active SL per side and emit
+    // per-candle SL price arrays. Cooldown ranges come from the canonical helper
+    // (`deriveCooldownRanges`) below — single source of truth for the closure list.
+    const longSl = new Array<number>(candles.length).fill(NaN);
+    const shortSl = new Array<number>(candles.length).fill(NaN);
+    const longCooldownTickDiagnostics: Array<{ candleIdx: number; diagnostics: ReopenDiagnostics }> = [];
+    const shortCooldownTickDiagnostics: Array<{ candleIdx: number; diagnostics: ReopenDiagnostics }> = [];
+    let activeLongSl: number | null = null;
+    let activeShortSl: number | null = null;
+    let lastEventCandleIdx = -1;
+
+    const sortedEvents = [...events].sort((a, b) => a.candleIdx - b.candleIdx);
+
+    const fillSlRange = (target: number[], from: number, to: number, value: number | null) => {
+      if (value === null || !Number.isFinite(value)) return;
+      const start = Math.max(0, from);
+      const end = Math.min(candles.length - 1, to);
+      for (let i = start; i <= end; i++) target[i] = value;
+    };
+
+    for (const e of sortedEvents) {
       let side: GridSide = 'long';
       let price: number | undefined;
+      let slPrice: number | null | undefined;
+      let reopenDiagnostics: ReopenDiagnostics | undefined;
       try {
-        const d = JSON.parse(e.detailsJson) as { side?: GridSide; snapshot?: { price?: number } };
+        const d = JSON.parse(e.detailsJson) as {
+          side?: GridSide;
+          snapshot?: { price?: number; slPrice?: number | null };
+          reopenDiagnostics?: ReopenDiagnostics;
+        };
         if (d.side === 'long' || d.side === 'short') side = d.side;
         price = d.snapshot?.price;
+        slPrice = d.snapshot?.slPrice;
+        reopenDiagnostics = d.reopenDiagnostics;
       } catch { /* noop */ }
+
+      // Forward-fill the previous SL up to (but not including) this event's candle.
+      if (e.candleIdx > lastEventCandleIdx) {
+        fillSlRange(longSl, lastEventCandleIdx + 1, e.candleIdx - 1, activeLongSl);
+        fillSlRange(shortSl, lastEventCandleIdx + 1, e.candleIdx - 1, activeShortSl);
+        lastEventCandleIdx = e.candleIdx - 1;
+      }
 
       switch (e.eventType) {
         case 'breakout_entered':
@@ -109,7 +154,41 @@ export default function ComboPane({
           tierMarkers.push({ candleIdx: e.candleIdx, tier: 3, side });
           break;
       }
+
+      // Track SL price for the active position. SL is set on `position_opened`
+      // (the supervisor's market entry has filled, snapshot.slPrice now carries
+      // the computed stop) and cleared on `sl_triggered` / `cycle_complete`.
+      // breakout_entered / tier1_reopen fire BEFORE the position exists so they
+      // do not carry a meaningful SL price.
+      if (e.eventType === 'position_opened') {
+        if (typeof slPrice === 'number' && Number.isFinite(slPrice)) {
+          if (side === 'long') activeLongSl = slPrice;
+          else activeShortSl = slPrice;
+        }
+      } else if (e.eventType === 'sl_triggered' || e.eventType === 'cycle_complete') {
+        if (side === 'long') activeLongSl = null;
+        else activeShortSl = null;
+      }
+
+      // Capture reopen-policy diagnostics for the failed-gate tooltip. These ride
+      // on cooldown-tick events: retry_incremented / tier1_reopen / hibernation_entered
+      // (gates passed) and reopen_check_failed (gates failed, emitted every post-expiry
+      // cooldown candle so the tooltip has per-candle coverage).
+      if (reopenDiagnostics) {
+        const arr = side === 'long' ? longCooldownTickDiagnostics : shortCooldownTickDiagnostics;
+        arr.push({ candleIdx: e.candleIdx, diagnostics: reopenDiagnostics });
+      }
     }
+
+    // Forward-fill remaining SL through the rest of the candle range.
+    fillSlRange(longSl, lastEventCandleIdx + 1, candles.length - 1, activeLongSl);
+    fillSlRange(shortSl, lastEventCandleIdx + 1, candles.length - 1, activeShortSl);
+
+    // Cooldown ranges via the canonical helper. Single source of truth for the
+    // closure event list (cooldown_entered → breakout_entered | tier1_reopen |
+    // hibernation_entered | cycle_complete).
+    const longCooldownRanges = deriveCooldownRanges(events, 'long', candles.length);
+    const shortCooldownRanges = deriveCooldownRanges(events, 'short', candles.length);
 
     return {
       avwapSeries,
@@ -122,6 +201,12 @@ export default function ComboPane({
       phaseMarkers,
       tierMarkers,
       slMarkers,
+      _longSlSeries: longSl,
+      _shortSlSeries: shortSl,
+      _longCooldownRanges: longCooldownRanges,
+      _shortCooldownRanges: shortCooldownRanges,
+      _longCooldownTickDiagnostics: longCooldownTickDiagnostics,
+      _shortCooldownTickDiagnostics: shortCooldownTickDiagnostics,
       visibility: {
         avwap: overlay.avwap,
         phaseMarkers: overlay.phaseMarkers,
@@ -144,18 +229,42 @@ export default function ComboPane({
 
   // Per-side overlay views: each chart shows only its own side's phase / SL / tier
   // markers. AVWAP and visibility flags are global so they pass through unchanged.
-  const longOverlay = useMemo<ComboOverlayData>(() => ({
-    ...comboOverlayData,
-    phaseMarkers: comboOverlayData.phaseMarkers?.filter(m => m.side === 'long'),
-    tierMarkers: comboOverlayData.tierMarkers?.filter(m => m.side === 'long'),
-    slMarkers: comboOverlayData.slMarkers?.filter(m => m.side === 'long'),
-  }), [comboOverlayData]);
-  const shortOverlay = useMemo<ComboOverlayData>(() => ({
-    ...comboOverlayData,
-    phaseMarkers: comboOverlayData.phaseMarkers?.filter(m => m.side === 'short'),
-    tierMarkers: comboOverlayData.tierMarkers?.filter(m => m.side === 'short'),
-    slMarkers: comboOverlayData.slMarkers?.filter(m => m.side === 'short'),
-  }), [comboOverlayData]);
+  const longOverlay = useMemo<ComboOverlayData>(() => {
+    const {
+      _longSlSeries, _shortSlSeries,
+      _longCooldownRanges, _shortCooldownRanges,
+      _longCooldownTickDiagnostics, _shortCooldownTickDiagnostics,
+      ...base
+    } = comboOverlayData;
+    void _shortSlSeries; void _shortCooldownRanges; void _shortCooldownTickDiagnostics;
+    return {
+      ...base,
+      phaseMarkers: comboOverlayData.phaseMarkers?.filter(m => m.side === 'long'),
+      tierMarkers: comboOverlayData.tierMarkers?.filter(m => m.side === 'long'),
+      slMarkers: comboOverlayData.slMarkers?.filter(m => m.side === 'long'),
+      slLineSeries: _longSlSeries,
+      cooldownRanges: _longCooldownRanges,
+      cooldownTickDiagnostics: _longCooldownTickDiagnostics,
+    };
+  }, [comboOverlayData]);
+  const shortOverlay = useMemo<ComboOverlayData>(() => {
+    const {
+      _longSlSeries, _shortSlSeries,
+      _longCooldownRanges, _shortCooldownRanges,
+      _longCooldownTickDiagnostics, _shortCooldownTickDiagnostics,
+      ...base
+    } = comboOverlayData;
+    void _longSlSeries; void _longCooldownRanges; void _longCooldownTickDiagnostics;
+    return {
+      ...base,
+      phaseMarkers: comboOverlayData.phaseMarkers?.filter(m => m.side === 'short'),
+      tierMarkers: comboOverlayData.tierMarkers?.filter(m => m.side === 'short'),
+      slMarkers: comboOverlayData.slMarkers?.filter(m => m.side === 'short'),
+      slLineSeries: _shortSlSeries,
+      cooldownRanges: _shortCooldownRanges,
+      cooldownTickDiagnostics: _shortCooldownTickDiagnostics,
+    };
+  }, [comboOverlayData]);
 
   const singleSide: GridSide = session.mode === 'short' ? 'short' : 'long';
   const singleLevels = singleSide === 'long' ? longLevels : shortLevels;

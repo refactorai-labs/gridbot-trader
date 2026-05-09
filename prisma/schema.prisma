@@ -37,6 +37,9 @@ model Simulation {
   comboLeverage       Float?  @default(5.0)
   comboAllocationLong Float?  @default(0.6) // fraction 0.5..0.75, only used in "dual" mode
   comboAvwapEnabled   Boolean @default(true) // feature flag for AVWAP reopen condition (ablation)
+  comboGridLevels     Int     @default(10)  // grid level count used by the combo engine; persisted so UI value reaches the simulation
+  fundingDataMissing  Boolean @default(false) // set when a combo run had zero funding rows for the requested window
+  requireDirectionalConfirmation Boolean @default(false) // Phase 4.1: strict-side AVWAP + no-new-low/high gate
 
   // Aggregate results (computed after simulation)
   totalPnl       Float?
@@ -52,6 +55,14 @@ model Simulation {
   maxDrawdownPct Float?
   finalEquity    Float?
   totalCandles   Int?
+
+  // Combo cost reporting (persisted from runComboSimulationCore result)
+  totalSlippageCost Float?
+  longSlippageCost  Float?
+  shortSlippageCost Float?
+  totalFundingCost  Float?
+  longFundingCost   Float?
+  shortFundingCost  Float?
 
   // Relations
   gridConfigs    GridConfiguration[]

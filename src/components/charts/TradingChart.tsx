@@ -18,9 +18,10 @@ import {
   ISeriesPrimitiveAxisView,
   SeriesAttachedParameter,
   SeriesType,
+  MouseEventParams,
 } from 'lightweight-charts';
 import { CanvasRenderingTarget2D } from 'fancy-canvas';
-import { OHLC, GridLevel, GridSide } from '@/lib/types';
+import { OHLC, GridLevel, GridSide, ReopenDiagnostics } from '@/lib/types';
 import { getChartColors } from '@/lib/constants';
 
 // ── Fill data for trade markers ──
@@ -479,6 +480,116 @@ class ComboEventTickPrimitive {
   }
 }
 
+// ── Cooldown Shading Primitive ──
+// zOrder: 'bottom' — paints semi-transparent vertical bands over candleIdx ranges
+// where a side was in COOLDOWN. Makes "no trades" windows visible on the chart so
+// the user can correlate quiet periods with reopen-policy gating.
+
+interface CooldownShadingRange {
+  /** Inclusive start timestamp (matched against candle timestamps in TradingChart). */
+  startTime: Time;
+  /** Inclusive end timestamp. */
+  endTime: Time;
+}
+
+interface CooldownShadingConfig {
+  ranges: CooldownShadingRange[];
+}
+
+class CooldownShadingRenderer implements ISeriesPrimitivePaneRenderer {
+  private _config: CooldownShadingConfig;
+  private _chart: IChartApiBase<Time>;
+
+  constructor(config: CooldownShadingConfig, chart: IChartApiBase<Time>) {
+    this._config = config;
+    this._chart = chart;
+  }
+
+  drawBackground(target: CanvasRenderingTarget2D) {
+    const ranges = this._config.ranges;
+    if (!ranges || ranges.length === 0) return;
+    const timeScale = this._chart.timeScale();
+
+    target.useBitmapCoordinateSpace(scope => {
+      const ctx = scope.context;
+      const ratio = scope.horizontalPixelRatio;
+      const vRatio = scope.verticalPixelRatio;
+      const height = scope.bitmapSize.height;
+
+      ctx.fillStyle = 'rgba(100, 116, 139, 0.10)';
+
+      for (const r of ranges) {
+        const x1 = timeScale.timeToCoordinate(r.startTime);
+        const x2 = timeScale.timeToCoordinate(r.endTime);
+        if (x1 === null || x2 === null) continue;
+        const left = Math.min(x1, x2) * ratio;
+        const right = Math.max(x1, x2) * ratio;
+        const width = Math.max(1, right - left);
+        ctx.fillRect(Math.round(left), 0, Math.round(width), Math.round(height * vRatio));
+      }
+    });
+  }
+
+  draw() {}
+}
+
+class CooldownShadingPaneView implements ISeriesPrimitivePaneView {
+  private _config: CooldownShadingConfig;
+  private _chart: IChartApiBase<Time>;
+
+  constructor(config: CooldownShadingConfig, chart: IChartApiBase<Time>) {
+    this._config = config;
+    this._chart = chart;
+  }
+
+  update(config: CooldownShadingConfig) {
+    this._config = config;
+  }
+
+  zOrder(): 'bottom' {
+    return 'bottom';
+  }
+
+  renderer(): ISeriesPrimitivePaneRenderer | null {
+    return new CooldownShadingRenderer(this._config, this._chart);
+  }
+}
+
+class CooldownShadingPrimitive {
+  private _config: CooldownShadingConfig;
+  private _paneView: CooldownShadingPaneView | null = null;
+  private _chart: IChartApiBase<Time> | null = null;
+  private _requestUpdate: (() => void) | null = null;
+
+  constructor(config: CooldownShadingConfig) {
+    this._config = config;
+  }
+
+  attached(param: SeriesAttachedParameter<Time, SeriesType>) {
+    this._chart = param.chart;
+    this._requestUpdate = param.requestUpdate;
+    this._paneView = new CooldownShadingPaneView(this._config, param.chart);
+  }
+
+  detached() {
+    this._chart = null;
+    this._requestUpdate = null;
+    this._paneView = null;
+  }
+
+  updateConfig(config: CooldownShadingConfig) {
+    this._config = config;
+    if (this._paneView) this._paneView.update(config);
+    this._requestUpdate?.();
+  }
+
+  updateAllViews() {}
+
+  paneViews(): readonly ISeriesPrimitivePaneView[] {
+    return this._paneView ? [this._paneView] : [];
+  }
+}
+
 // ── TradingChart Component ──
 
 // ── Combo overlay data shape (optional) ─────────────────────────────────────
@@ -494,7 +605,6 @@ export interface ComboOverlayVisibility {
   vwap: boolean;
   atrBands: boolean;
   rsiPane: boolean;
-  // Future extension points (rendering not yet implemented):
   slLines: boolean;
   pauseShading: boolean;
 }
@@ -533,6 +643,29 @@ export interface ComboOverlayData {
   phaseMarkers?: ComboPhaseMarker[];
   tierMarkers?: ComboTierMarker[];
   slMarkers?: ComboSLMarker[];
+  /**
+   * Per-candle SL price for the active position on this chart's side. NaN where
+   * no position is open. ComboPane derives this per side from the event stream
+   * (set on breakout/tier-reopen, cleared on sl_triggered / cycle_complete) and
+   * passes it through the per-side overlay so the long chart sees only long SL
+   * and vice versa.
+   */
+  slLineSeries?: number[];
+  /**
+   * Cooldown candle ranges for the active side. Each range is `[startIdx, endIdx]`
+   * inclusive. Used by the chart's pause-shading primitive to mark "no trades"
+   * windows so the user can correlate quiet periods with policy gating.
+   */
+  cooldownRanges?: Array<{ startIdx: number; endIdx: number }>;
+  /**
+   * Per-cooldown-tick reopen diagnostics, sorted by candleIdx. The tooltip looks
+   * up the most recent entry whose `candleIdx <= hovered` (and is inside the same
+   * cooldown range) to show which of the four reopen-policy gates was false on
+   * that tick. Populated by every post-expiry cooldown candle via the
+   * `reopen_check_failed` event, plus the success-path closure events
+   * (`retry_incremented` / `tier1_reopen` / `hibernation_entered`).
+   */
+  cooldownTickDiagnostics?: Array<{ candleIdx: number; diagnostics: ReopenDiagnostics }>;
   visibility?: Partial<ComboOverlayVisibility>;
 }
 
@@ -577,7 +710,9 @@ export default function TradingChart({
   const bgPrimitiveRef = useRef<GridZoneBackgroundPrimitive | null>(null);
   const fillMarkerPrimitiveRef = useRef<GridFillMarkerPrimitive | null>(null);
   const eventTickPrimitiveRef = useRef<ComboEventTickPrimitive | null>(null);
+  const cooldownShadingPrimitiveRef = useRef<CooldownShadingPrimitive | null>(null);
   const avwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const slLineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const bbUpperSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const bbLowerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
@@ -589,6 +724,19 @@ export default function TradingChart({
   const rsiChartRef = useRef<IChartApi | null>(null);
   const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const syncingRangeRef = useRef<boolean>(false);
+
+  // Cooldown failed-gate tooltip — driven by chart crosshair. Stays in sync with
+  // the latest combo overlay + candles via refs so the subscription doesn't need
+  // re-attaching on every render.
+  const comboRef = useRef(combo);
+  const candlesRef = useRef(candles);
+  comboRef.current = combo;
+  candlesRef.current = candles;
+  const [cooldownTooltip, setCooldownTooltip] = useState<{
+    x: number;
+    y: number;
+    diagnostics: ReopenDiagnostics | null;
+  } | null>(null);
 
   const rsiVisible = combo?.visibility?.rsiPane === true;
 
@@ -660,6 +808,17 @@ export default function TradingChart({
     });
     avwapSeriesRef.current = avwapSeries;
 
+    // SL line — red dashed, follows the active position's stop until close.
+    const slLineSeries = chart.addLineSeries({
+      color: '#ef4444',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      crosshairMarkerVisible: false,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    slLineSeriesRef.current = slLineSeries;
+
     // Bollinger Bands (upper + lower), Session VWAP, ATR envelope.
     // All quiet, restrained colors so they don't fight the candle pane.
     const bbColor = theme === 'light' ? '#64748b' : '#94a3b8';
@@ -727,6 +886,54 @@ export default function TradingChart({
     candlestickSeries.attachPrimitive(eventTickPrimitive as any);
     eventTickPrimitiveRef.current = eventTickPrimitive;
 
+    // Cooldown shading primitive (semi-transparent vertical bands), zOrder 'bottom'.
+    const cooldownShadingPrimitive = new CooldownShadingPrimitive({ ranges: [] });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    candlestickSeries.attachPrimitive(cooldownShadingPrimitive as any);
+    cooldownShadingPrimitiveRef.current = cooldownShadingPrimitive;
+
+    // Failed-gate tooltip on cooldown candles. Subscribe once; the handler reads
+    // the live combo/candles via refs, so prop changes don't require resubscribe.
+    const crosshairHandler = (param: MouseEventParams<Time>) => {
+      const c = comboRef.current;
+      const cs = candlesRef.current;
+      if (!param.point || param.time === undefined || !c || cs.length === 0) {
+        setCooldownTooltip(null);
+        return;
+      }
+      const ranges = c.cooldownRanges;
+      const ticks = c.cooldownTickDiagnostics;
+      if (!ranges || ranges.length === 0) {
+        setCooldownTooltip(null);
+        return;
+      }
+      // Map hovered time → candle index. Candles are timestamp-sorted; binary
+      // search would scale better but linear is fine for the few-thousand-candle
+      // case and avoids importing a helper.
+      const t = param.time as number;
+      let hoveredIdx = -1;
+      for (let i = 0; i < cs.length; i++) {
+        if (cs[i].timestamp === t) { hoveredIdx = i; break; }
+      }
+      if (hoveredIdx < 0) { setCooldownTooltip(null); return; }
+      // Inside any cooldown range?
+      const range = ranges.find(r => hoveredIdx >= r.startIdx && hoveredIdx <= r.endIdx);
+      if (!range) { setCooldownTooltip(null); return; }
+      // Most recent diagnostics entry within this range and at-or-before the hover.
+      let diagnostics: ReopenDiagnostics | null = null;
+      if (ticks && ticks.length > 0) {
+        for (let i = ticks.length - 1; i >= 0; i--) {
+          const tk = ticks[i];
+          if (tk.candleIdx >= range.startIdx && tk.candleIdx <= hoveredIdx) {
+            diagnostics = tk.diagnostics;
+            break;
+          }
+        }
+      }
+      setCooldownTooltip({ x: param.point.x, y: param.point.y, diagnostics });
+    };
+    chart.subscribeCrosshairMove(crosshairHandler);
+
     // Handle resize
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
@@ -737,19 +944,24 @@ export default function TradingChart({
 
     return () => {
       observer.disconnect();
+      chart.unsubscribeCrosshairMove(crosshairHandler);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (bgPrimitiveRef.current) candlestickSeries.detachPrimitive(bgPrimitiveRef.current as any);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (fillMarkerPrimitiveRef.current) candlestickSeries.detachPrimitive(fillMarkerPrimitiveRef.current as any);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (eventTickPrimitiveRef.current) candlestickSeries.detachPrimitive(eventTickPrimitiveRef.current as any);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (cooldownShadingPrimitiveRef.current) candlestickSeries.detachPrimitive(cooldownShadingPrimitiveRef.current as any);
       bgPrimitiveRef.current = null;
       fillMarkerPrimitiveRef.current = null;
       eventTickPrimitiveRef.current = null;
+      cooldownShadingPrimitiveRef.current = null;
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
       avwapSeriesRef.current = null;
+      slLineSeriesRef.current = null;
       bbUpperSeriesRef.current = null;
       bbLowerSeriesRef.current = null;
       vwapSeriesRef.current = null;
@@ -884,6 +1096,9 @@ export default function TradingChart({
     const atrVisible = combo?.visibility?.atrBands === true;
     renderSeries(atrUpperSeriesRef.current, combo?.atrUpper, atrVisible);
     renderSeries(atrLowerSeriesRef.current, combo?.atrLower, atrVisible);
+
+    const slLinesVisible = combo?.visibility?.slLines !== false;
+    renderSeries(slLineSeriesRef.current, combo?.slLineSeries, slLinesVisible);
   }, [combo, currentCandleIdx, candles, theme]);
 
   // ── RSI sub-pane — separate chart instance, time-scale synced with main ──
@@ -1000,6 +1215,33 @@ export default function TradingChart({
     }
     rsiSeriesRef.current.setData(data);
   }, [combo, candles, currentCandleIdx, rsiVisible, theme]);
+
+  // Cooldown shading: translate candleIdx ranges to chart time pairs and push to
+  // the primitive. Hidden when `pauseShading` is explicitly false.
+  useEffect(() => {
+    const primitive = cooldownShadingPrimitiveRef.current;
+    if (!primitive) return;
+    const visible = combo?.visibility?.pauseShading !== false;
+    if (!visible || !combo?.cooldownRanges || combo.cooldownRanges.length === 0 || candles.length === 0) {
+      primitive.updateConfig({ ranges: [] });
+      return;
+    }
+    const endIdx = currentCandleIdx !== undefined
+      ? Math.min(currentCandleIdx, candles.length - 1)
+      : candles.length - 1;
+    const ranges: CooldownShadingRange[] = [];
+    for (const r of combo.cooldownRanges) {
+      const start = Math.max(0, Math.min(r.startIdx, candles.length - 1));
+      const end = Math.max(0, Math.min(r.endIdx, candles.length - 1));
+      if (end < 0 || start > endIdx) continue;
+      const clampedEnd = Math.min(end, endIdx);
+      ranges.push({
+        startTime: candles[start].timestamp as Time,
+        endTime: candles[clampedEnd].timestamp as Time,
+      });
+    }
+    primitive.updateConfig({ ranges });
+  }, [combo, candles, currentCandleIdx]);
 
   useEffect(() => {
     if (!seriesRef.current) return;
@@ -1173,8 +1415,59 @@ export default function TradingChart({
           </div>
         )}
       </div>
-      {/* Chart container */}
-      <div ref={containerRef} style={{ width: '100%', height: `${height}px` }} />
+      {/* Chart container — wrapped in a relative box so the tooltip can be a sibling
+          (avoids React/lightweight-charts contention over the chart's DOM children). */}
+      <div style={{ position: 'relative', width: '100%' }}>
+        <div ref={containerRef} style={{ width: '100%', height: `${height}px` }} />
+        {cooldownTooltip && (() => {
+          const offsetX = 12;
+          const offsetY = 12;
+          const left = Math.max(4, cooldownTooltip.x + offsetX);
+          const top = Math.max(4, cooldownTooltip.y + offsetY);
+          const d = cooldownTooltip.diagnostics;
+          return (
+            <div
+              style={{
+                position: 'absolute',
+                left,
+                top,
+                pointerEvents: 'none',
+                background: 'rgba(15, 23, 42, 0.92)',
+                border: '1px solid rgba(100, 116, 139, 0.5)',
+                borderRadius: 4,
+                padding: '6px 8px',
+                fontFamily: 'var(--f-display)',
+                fontSize: 10.5,
+                letterSpacing: '0.06em',
+                color: '#e2e8f0',
+                zIndex: 10,
+                whiteSpace: 'nowrap',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 4, color: '#94a3b8' }}>COOLDOWN</div>
+              {d ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', columnGap: 8, rowGap: 2 }}>
+                  <span style={{ color: d.atrRatioOk ? '#22c55e' : '#ef4444' }}>{d.atrRatioOk ? '✓' : '✗'}</span>
+                  <span>ATR ratio</span>
+                  <span style={{ color: d.atrDecliningOk ? '#22c55e' : '#ef4444' }}>{d.atrDecliningOk ? '✓' : '✗'}</span>
+                  <span>ATR declining</span>
+                  <span style={{ color: d.rsiCrossOk ? '#22c55e' : '#ef4444' }}>{d.rsiCrossOk ? '✓' : '✗'}</span>
+                  <span>RSI cross</span>
+                  {d.avwapRequired && (
+                    <>
+                      <span style={{ color: d.avwapOk ? '#22c55e' : '#ef4444' }}>{d.avwapOk ? '✓' : '✗'}</span>
+                      <span>AVWAP reclaim</span>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div style={{ color: '#94a3b8' }}>no reopen attempt yet</div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
       {rsiVisible && (
         <div ref={rsiContainerRef} style={{ width: '100%', height: '90px' }} />
       )}

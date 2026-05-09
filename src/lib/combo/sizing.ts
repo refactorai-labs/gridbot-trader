@@ -1,6 +1,19 @@
 import { ComboBotSideConfig, ComboMode, GridSide } from '../types';
 
 /**
+ * Clamp a user-supplied gridLevels value to the engine's supported range.
+ * Lower bound 4: any fewer levels makes seedGrid produce a degenerate grid
+ * (a single buy + sell pair around the entry), which the supervisor was never
+ * designed for. Upper bound 50: keeps per-order notional from collapsing to
+ * a vanishing fraction of allocated capital. Use at the API boundary so the
+ * persisted DB value matches what the engine will actually run.
+ */
+export function clampGridLevels(n: number | undefined | null): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? n : 10;
+  return Math.max(4, Math.min(50, Math.floor(v)));
+}
+
+/**
  * Combined SL percent: slBasePercent + (ATR * slAtrMultiplier / entry), clamped to [slFloor, slCap].
  */
 export function slPercent(cfg: ComboBotSideConfig, atr: number, entry: number): number {

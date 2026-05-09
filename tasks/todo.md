@@ -1066,3 +1066,499 @@ Temporarily edited `supervisor.ts:469` to drop `atrAtLastSL ??` (use `atrAtPhase
 - The standalone single-grid chart in `src/app/page.tsx` has no overlay panel and was not part of the complaint.
 - The header `indicators` chip prop on TradingChart is a separate, also-unused feature.
 - `slLines`, `pauseShading`, `pnlOverlay` toggles are still not rendered (their entries in `ComboOverlayVisibility` already carry a "not yet implemented" comment from earlier work).
+## Dual Grid Combo Loss Plan Review — 2026-05-08
+
+### Todo
+- [x] Read the relevant combo reopen policy, supervisor ATR history, adaptive engine cadence, simulation persistence route, Prisma schema, supervisor runner, combo config UI, and current tests before making claims.
+- [x] Compare the original loss-review plan against the proposed implementation plan.
+- [x] Identify which items are still valid, already implemented, stale, or need narrower implementation.
+- [x] Share the findings.
+- [ ] Get user confirmation before any code changes.
+
+### Early Findings
+- The ATR reopen issue is still structurally valid in the current code: `supervisor.ts` still pushes `effectiveAtr` every 5m tick, while `reopenPolicy.ts` still requires a strictly declining tail.
+- The combo grid-level persistence issue is still valid: `Simulation` has no `comboGridLevels`, `simulations/route.ts` does not persist `combo.gridLevels`, and `supervisorRunner.ts` still runs combo with `gridLevels: 10`.
+- The pasted implementation plan is partly stale: slippage-cost tracking already exists in `runComboSimulationCore` and ablation output, but those fields are not persisted on `Simulation`.
+- Directional-entry filtering remains a reasonable strategy refinement, but it should come after engine correctness and observability, not before.
+
+---
+
+## Combo Bot — Truthfulness, Observability, Strategy Plan — 2026-05-08
+
+**Status:** In progress.
+
+### Goal
+
+Reduce misleading losses and improve strategy quality in the dual-grid combo bot by fixing engine correctness first, then observability, then strategy controls. Order matters: every claim made about strategy quality is meaningless until the engine is truthful and the run is observable.
+
+### Phase 1 — Engine correctness
+
+- [ ] **1.1 Fix ATR reopen gate.** Dedupe `atrHistory.push` in `src/lib/combo/supervisor.ts:421-424` so consecutive equals collapse. `strictlyDeclining` then sees unique 4H ATR values, not 5m duplicates.
+- [ ] **1.1 ATR-decline regression tests** in `src/__tests__/combo.test.ts`: declining 4H values across repeated 5m samples should pass; flat and increasing should fail.
+- [ ] **1.2 Add `Simulation.comboGridLevels Int @default(10)`** in `prisma/schema.prisma`; `npx prisma db push`.
+- [ ] **1.2 Persist `combo.gridLevels`** in `src/app/api/simulations/route.ts:42-46`.
+- [ ] **1.2 Read persisted value** in `src/lib/combo/supervisorRunner.ts:89` — replace hardcoded `gridLevels: 10`.
+- [ ] **1.2 Verify** `ComboBotConfig.tsx` sends `gridLevels` in POST; add if missing.
+- [ ] **1.2 Test** that an API POST with `combo.gridLevels = 20` results in a 20-level grid in the engine.
+- [ ] **1.3 Persist slippage cost** (`longSlippageCost`, `shortSlippageCost`, `totalSlippageCost`) on `Simulation`. Slippage is already computed in `supervisor.ts:351-371` — this is reporting only.
+- [ ] **1.3 Verify funding cost persistence**; add `longFundingCost`/`shortFundingCost`/`totalFundingCost` to `Simulation` if missing.
+- [ ] **1.3 Add `fundingDataMissing Boolean?`** flag set when `fundingRates.length === 0` for a combo run.
+- [ ] **1.4 Verification gate:** `npx tsc --noEmit`, `npm test`, `npm run build` all pass.
+
+### Phase 2 — Diagnostics
+
+- [ ] **2.1 Add `EntryDiagnostics`** type with `regimeTrending`, `avwapOk`, `rsiOk`, `directionOk?`. Capture in `evaluateEntryCondition` and emit on `breakout_entered` events.
+- [ ] **2.1 Persist** entry diagnostics on `AdaptiveEvent.detailsJson`.
+- [ ] **2.2 Chart markers**: entry, SL, cooldown_entered, tier1_reopen, hibernation_entered (lightweight-charts `setMarkers`).
+- [ ] **2.2 SL line** following the active position's stop until close.
+- [ ] **2.2 Cooldown shading** over candles where the side was in COOLDOWN.
+- [ ] **2.2 Failed-gate tooltip** showing which of the 4 reopen booleans was false on COOLDOWN candles.
+- [ ] **2.2 Show actual `gridLevels`** chip the engine used (post-1.2 fix), not just the UI input.
+
+### Phase 3 — Baseline replay (only after Phase 1 verified)
+
+- [ ] **3.1 Replay Run A:** identical to saved Jan–May 2026 WETH/USDC config, `gridLevels = 10`. Isolates ATR-fix effect.
+- [ ] **3.1 Replay Run B:** same config with `gridLevels = 20`. Measures combined effect.
+- [ ] **3.1 Capture metrics** for each run: reopen-event count, SL count per side, fees, slippage, funding, long PnL, short PnL, total PnL, max drawdown. Write comparison table here.
+- [ ] **3.2 Decide** whether to proceed to Phase 4 based on baseline.
+
+### Phase 4 — Strategy improvements (only if Phase 3 baselines confirm regime mismatch)
+
+- [ ] **4.1 Add `directionOk`** boolean and `requireDirectionalConfirmation` config flag (default off).
+- [ ] **4.1 Tests** for both flag states on chop and trending fixtures.
+- [ ] **4.2 Leverage A/B**: re-run at leverage ∈ {1, 2, 3, 5}; tabulate.
+- [ ] **4.2 Allocation A/B**: re-run at allocation ∈ {50/50, 60/40, long-only, short-only}; tabulate; recommend new defaults.
+- [ ] **4.3 UI-configurable entry conditions** as constrained presets:
+  1. Current behavior (preserved as default).
+  2. RSI extreme + trend regime only.
+  3. RSI extreme + AVWAP reclaim/reject.
+  4. Custom — `IndicatorCondition[]` evaluated by existing `ConditionEvaluator`.
+- [ ] **4.3 Persist** the selected preset + raw conditions on the simulation row for reproducibility.
+- [ ] **4.3 Tests** for each preset + round-trip persistence.
+
+### Verification gates
+
+After every phase: `npx tsc --noEmit`, `npm test`, `npm run build`.
+
+---
+
+## Phase 1 Review — 2026-05-08
+
+**Status:** Complete.
+
+### Changes shipped
+
+- **`src/lib/combo/supervisor.ts:421-428`** — `atrHistory.push` now dedupes consecutive equal values. ATR is recomputed only on 4H bar boundaries while the loop runs every 5m, so without dedupe the strict-declining gate could never pass.
+- **`src/__tests__/combo.test.ts`** — added three regression tests proving `atrDecliningOk` flips from false (flat / increasing) to true (declining) once consecutive equals are deduped.
+- **`prisma/schema.prisma`** — added on `Simulation`: `comboGridLevels Int @default(10)`, `fundingDataMissing Boolean @default(false)`, and six cost columns (`totalSlippageCost`, `longSlippageCost`, `shortSlippageCost`, `totalFundingCost`, `longFundingCost`, `shortFundingCost`). Pushed via `npx prisma db push`.
+- **`src/app/api/simulations/route.ts:47`** — persists `comboGridLevels: combo?.gridLevels ?? 10`.
+- **`src/lib/combo/supervisorRunner.ts:89`** — replaced hardcoded `gridLevels: 10` with `sim.comboGridLevels ?? 10`. Added `fundingDataMissing` flag wiring and persistence of slippage / funding costs in `persistComboResults`.
+- **`src/__tests__/comboSupervisor.test.ts`** — added an integration test that runs the same fixture with `gridLevels=10` and `gridLevels=20` and asserts the market-entry fill size halves (3000 → 1500), proving the UI value reaches the engine.
+
+### Verification
+
+- `npx tsc --noEmit` — clean.
+- `npm test` — **186 / 186** passing across 9 files.
+- `npm run build` — green; `/` route 93.9 kB / 181 kB First Load JS.
+
+### Files touched
+
+- `prisma/schema.prisma`
+- `src/lib/combo/supervisor.ts`
+- `src/lib/combo/supervisorRunner.ts`
+- `src/app/api/simulations/route.ts`
+- `src/__tests__/combo.test.ts`
+- `src/__tests__/comboSupervisor.test.ts`
+
+### Notes for next phase
+
+- `ConfigPanel.tsx:433` already passes the full `comboConfig` (including `gridLevels`) in the POST body as `combo`, so no UI-side change was needed.
+- Slippage cost was already computed in `runComboSimulationCore` and exposed on `ComboSimulationResult`. Phase 1.3 was a persistence-and-reporting wire-up only, as the merged review noted.
+- Funding cost fields were similarly already on the result; they are now persisted.
+- `fundingDataMissing` is now a queryable flag on `Simulation` — Phase 2.2 should surface it as a UI banner when true.
+
+---
+
+## Phase 2 Review — 2026-05-08
+
+**Status:** Complete (with one deferred item).
+
+### Changes shipped
+
+- **`src/lib/types.ts`** — added `EntryDiagnostics { regimeTrending, avwapOk, rsiOk, directionOk? }`. Extended `SimulationSummary` to expose the cost columns + `fundingDataMissing` + `comboGridLevels` to the client.
+- **`src/lib/combo/supervisor.ts`** — `evaluateEntryCondition` now returns `{ allowed, diagnostics }` instead of a bare boolean. Diagnostics ride only `breakout_entered` events via `supervisorEvent(e, ..., entryDiagnostics)`. They are absent on every other event type (mirrors the COOLDOWN-only gating already in place for `reopenDiagnostics`).
+- **`src/__tests__/comboSupervisor.test.ts`** — extended the persisted-diagnostics shape check to assert `entryDiagnostics` is present on `breakout_entered` (with all three booleans true, since `allowed=true` is required to fire) and undefined on `position_opened / sl_triggered / cooldown_entered / cooldown-tick` events.
+- **`src/components/charts/TradingChart.tsx`** — added `slLineSeries` + `cooldownRanges` to `ComboOverlayData`. Added a red dashed line series (`slLineSeriesRef`) that follows the active position's stop while it is open, gated by the existing `slLines` visibility toggle.
+- **`src/components/combo/ComboPane.tsx`** — derived per-side `slLineSeries` (NaN where no position) + `cooldownRanges` from the chronological event stream. Walk events to track active SL price + open cooldown windows; forward-fill SL through quiet candles. Per-side overlays now carry their own SL series and cooldown ranges (long chart shows long-side data, short chart shows short-side data).
+- **`src/components/combo/types.ts`** — extended `SessionView` with `gridLevels` (the value the engine actually used) and `fundingDataMissing`.
+- **`src/components/combo/ComboStatusStrip.tsx`** — added `GL=N` chip after `LEV` showing the engine-truthful gridLevels. Added an amber `FUNDING=missing` chip with hover-tooltip when the run had zero funding rows.
+- **`src/app/page.tsx`** — populates the new `SessionView` fields from `simulation.comboGridLevels` and `simulation.fundingDataMissing`.
+
+### Verification
+
+- `npx tsc --noEmit` — clean.
+- `npm test` — **186 / 186** passing across 9 files (no regressions; 1 new assertion block in `comboSupervisor.test.ts`).
+- `npm run build` — green; `/` route 93.9 kB / 181 kB First Load JS.
+
+### Files touched
+
+- `src/lib/types.ts`
+- `src/lib/combo/supervisor.ts`
+- `src/components/charts/TradingChart.tsx`
+- `src/components/combo/ComboPane.tsx`
+- `src/components/combo/types.ts`
+- `src/components/combo/ComboStatusStrip.tsx`
+- `src/app/page.tsx`
+- `src/__tests__/comboSupervisor.test.ts`
+
+### Deferred (acknowledged, not blocking Phase 3)
+
+- **Cooldown background shading primitive.** The `pauseShading` visibility toggle exists, the `cooldownRanges` data is now plumbed through the per-side overlay, but a `lightweight-charts` background primitive that paints semi-transparent vertical bands over the cooldown windows is not yet implemented. Modelled on the existing `GridZoneBackgroundRenderer`. Adding this is a self-contained renderer change that can land separately without disturbing data flow.
+- **Failed-gate tooltip on cooldown candles.** The four reopen booleans + `avwapRequired` are already persisted on `AdaptiveEvent.detailsJson` for cooldown-tick events, and `ComboBotDeck` already renders aggregated reopen lights. A per-candle hover tooltip on the chart that shows which booleans were false on a specific cooldown candle would require a custom crosshair-aware renderer; deferred until users find the deck-level lights insufficient.
+- **Phase 4.1 `directionOk` field is type-defined but not yet populated.** It will start carrying real data when the directional confirmation filter lands.
+
+### Notes for Phase 3
+
+- Phase 3 is the baseline replay: re-run the saved Jan–May 2026 WETH/USDC config (Run A: gridLevels=10, Run B: gridLevels=20) with all Phase 1+2 fixes in place, and tabulate reopen-event count, SL count per side, fees, slippage, funding, long PnL, short PnL, total PnL, max drawdown.
+- The new `Simulation.totalSlippageCost / longFundingCost / etc.` columns make this measurable directly from Prisma Studio without re-instrumenting the engine.
+- The `GL=N` chip and `FUNDING=missing` banner make any data-availability problems visible in the UI before measuring.
+
+---
+
+## Phase 2.5 Cleanup Review — 2026-05-08
+
+**Status:** Complete.
+
+### Why this phase exists
+
+A measured review of the Phase 1+2 work surfaced four real bugs (and two acknowledged deferrals). The chip / banner / SL line / cooldown shading I added in Phase 2 were data-flow leaks: the values existed in the DB but never reached the UI components that needed them.
+
+### Findings validated
+
+- **CONFIRMED:** API persisted `comboGridLevels` raw, engine clamped to min 4. DB and engine could disagree.
+- **CONFIRMED:** `page.tsx` setSimulation calls (lines 146-167 and 362-383) omitted the new fields, so my chip/banner fallbacks always picked up the local UI state instead of the run state. Phase 2.2 was effectively a no-op.
+- **CONFIRMED:** SL line was always all-NaN. ComboPane read `snapshot.slPrice` from `breakout_entered` / `tier1_reopen` events, but the state machine only emits SL price on `sl_triggered`.
+- **CONFIRMED:** `cooldownRanges` was computed and passed through but TradingChart had no renderer for it.
+- **PARTIAL:** test gap on POST→DB→runner — supervisor-level test already covers engine respect; the upstream gap was the read-back path covered by the page.tsx fix.
+- **DEFERRED:** per-candle failed-gate tooltip stays out of scope.
+
+### Changes shipped
+
+- **`src/lib/combo/sizing.ts`** — added `clampGridLevels(n)` helper. Range `[4, 50]`. Used at the API boundary (canonical) and at the engine (defense-in-depth).
+- **`src/app/api/simulations/route.ts`** — `comboGridLevels: clampGridLevels(combo?.gridLevels)`. DB row is now the single source of truth for what the engine ran.
+- **`src/lib/combo/supervisor.ts:393`** — calls `clampGridLevels(cfg.gridLevels)` instead of inline `Math.max(4, ...)`. Same behavior, kept as defense in depth.
+- **`src/lib/combo/stateMachine.ts:174-186`** — `position_opened` events now carry the active SL price (computed via `slPrice(sideCfg, side, position.avgEntry, signals.atr)`). This is the right event for "active SL" because `breakout_entered` fires before the position exists.
+- **`src/components/combo/ComboPane.tsx`** — switched the SL-tracking branch to read from `position_opened` (was incorrectly reading `breakout_entered` / `tier1_reopen`). The SL line now actually paints.
+- **`src/app/page.tsx:146-167, :362-383`** — both setSimulation callsites now copy `comboGridLevels`, `fundingDataMissing`, and the six cost fields (`totalSlippageCost / longSlippageCost / shortSlippageCost / totalFundingCost / longFundingCost / shortFundingCost`) into local state. The `GL=N` chip and `FUNDING=missing` banner now reflect actual run state.
+- **`src/components/charts/TradingChart.tsx`** — added `CooldownShadingRenderer / CooldownShadingPaneView / CooldownShadingPrimitive` modeled on the existing `GridZoneBackgroundPrimitive`. Paints semi-transparent slate bands (`rgba(100, 116, 139, 0.10)`) at zOrder bottom over each cooldown range. New useEffect translates `combo.cooldownRanges` (candleIdx pairs) to chart time pairs and pushes to the primitive. Hidden when `combo.visibility.pauseShading === false`.
+- **`src/__tests__/comboSupervisor.test.ts`** — added two tests:
+  - `clamps invalid gridLevels`: `gridLevels=2` → engine produces 4 (clamp), `gridLevels=999` → produces 50 (cap). Per-fill size confirms the math.
+  - `position_opened` events carry a finite `snapshot.slPrice` and that price is on the loss side of entry (sl < entry for long).
+
+### Verification
+
+- `npx tsc --noEmit` — clean.
+- `npm test` — **187 / 187** passing across 9 files (was 186; +1 net new test, +1 stronger assertion in the existing diagnostics test).
+- `npm run build` — green; `/` route 95.1 kB / 182 kB First Load JS (was 93.9 / 181 — +1.2 kB from the new primitive class).
+- Manual click-through smoke test pending — run a Jan–May 2026 ETH backtest with `combo.gridLevels = 20` to confirm the GL chip shows 20, the SL line draws, and cooldown bands shade visibly.
+
+### Files touched
+
+- `src/lib/combo/sizing.ts`
+- `src/lib/combo/supervisor.ts`
+- `src/lib/combo/stateMachine.ts`
+- `src/app/api/simulations/route.ts`
+- `src/app/page.tsx`
+- `src/components/combo/ComboPane.tsx`
+- `src/components/charts/TradingChart.tsx`
+- `src/__tests__/comboSupervisor.test.ts`
+
+### Out of scope (still deferred)
+
+- Per-candle failed-gate tooltip on cooldown candles. Deck-level reopen lights cover the aggregate signal. Re-evaluate after Phase 3 baseline if needed.
+- Phase 4 directional confirmation flag.
+- Optuna optimizer integration.
+
+---
+
+## Phase 2.6 Closure Review — 2026-05-08
+
+**Status:** Complete.
+
+### Why this phase exists
+
+Second review surfaced two open issues:
+- **P1 (CONFIRMED):** Cooldown shading bled into REOPENING / RUNNING because `tier1_reopen` was missing from the closure event list. State machine exits COOLDOWN to REOPENING via `tier1_reopen` (stateMachine.ts:225).
+- **P2:** Failed-gate tooltip was deferred twice and now flagged as required to complete Phase 2.
+
+Both fixed.
+
+### Changes shipped
+
+- **`src/components/combo/derive.ts`** — added `deriveCooldownRanges(events, side, totalCandles)` as the canonical helper. Closure list now includes `tier1_reopen` alongside `breakout_entered | hibernation_entered | cycle_complete`. Comment documents the state-machine exit paths.
+- **`src/components/combo/ComboPane.tsx`** — refactored to call `deriveCooldownRanges` instead of inline logic (single source of truth for the closure list). Added `cooldownTickDiagnostics` derivation in the same event walk: any event carrying `reopenDiagnostics` is captured per-side. Per-side overlays carry the new field.
+- **`src/components/charts/TradingChart.tsx`** —
+  - Extended `ComboOverlayData` with `cooldownTickDiagnostics?: Array<{candleIdx, diagnostics: ReopenDiagnostics}>`.
+  - Added `MouseEventParams` import + `subscribeCrosshairMove` subscription. Handler reads live combo/candles via refs (avoids re-subscribing on every render).
+  - Tooltip state + absolutely-positioned overlay div, rendered as a sibling of the chart container (not a child — avoids React/lightweight-charts contention over the chart's DOM).
+  - On hover over a cooldown candle: shows `COOLDOWN` header with four colored pills (✓ green / ✗ red) for `ATR ratio`, `ATR declining`, `RSI cross`, and `AVWAP reclaim` (last only when `avwapRequired`). For cooldown candles before the first cooldown-tick event, shows `no reopen attempt yet`.
+  - Unsubscribe in chart cleanup.
+- **`src/__tests__/comboDerive.test.ts`** — new test file. 8 tests covering: tier1_reopen closure (the regression), hibernation closure, breakout closure, end-of-run dangling cooldown, per-side filtering, multiple cycles, no-cooldown-open closure events, and out-of-order input.
+
+### Honest scope note
+
+`reopenDiagnostics` is persisted only on cooldown-**exit-tick** events (retry_incremented / tier1_reopen / hibernation_entered) per `supervisor.ts:474`. The supervisor *computes* diagnostics every cooldown tick but discards them when no event fires that tick. The tooltip therefore shows real diagnostics only on exit-tick candles; for other cooldown candles (the majority), it shows "no reopen attempt yet". To get diagnostics on every cooldown candle, we'd need a new `cooldown_tick` event type — out of scope here.
+
+### Verification
+
+- `npx tsc --noEmit` — clean.
+- `npm test` — **195 / 195** passing across 10 files (was 187; +8 from `comboDerive.test.ts`).
+- `npm run build` — green; `/` route 95.8 kB / 183 kB First Load JS (was 95.1 / 182 — +0.7 kB from the tooltip overlay).
+- Manual click-through pending.
+
+### Files touched
+
+- `src/components/combo/derive.ts`
+- `src/components/combo/ComboPane.tsx`
+- `src/components/charts/TradingChart.tsx`
+- `src/__tests__/comboDerive.test.ts` (new)
+
+### Still deferred
+
+- Per-cooldown-candle diagnostics persistence (would require a new event type + larger event volume in the DB).
+- Phase 3 baseline replay (manual UI work).
+- Phase 4 directional confirmation.
+- Optuna optimizer integration.
+
+---
+
+# Combo Bot — Phase 3 Baseline Replay Plan
+
+**Status:** Awaiting verification.
+
+## Context
+
+Phases 1, 2, 2.5, and 2.6 shipped. The engine is truthful (ATR-decline gate fires, `comboGridLevels` round-trips through DB, slippage + funding persisted). The chart and overlays show real run state. The cooldown observability is honest.
+
+Phase 3 establishes a clean baseline against which any future strategy claim must be measured. **No engine or strategy code changes happen in this phase.** The only code I'll write is a small read-only comparison script.
+
+## Scope
+
+Phase 3 is split between you (the simulation runs) and me (the comparison tooling).
+
+- **You:** run two backtests in the UI (15–30 min each) and capture the Simulation IDs.
+- **Me:** write `scripts/compareRuns.ts`, execute it against the two IDs, and document the resulting baseline table in this file.
+
+## Todo
+
+### 3.1 — Run A (gridLevels = 10)
+- [ ] Configure: same as the original `cmovvwc8j07k3ickqjws9jjn4` run — Jan–May 2026 WETH/USDC, 5× leverage, 60/40 allocation, AVWAP enabled, full_v31 reopen mode, default thresholds. Set `gridLevels = 10` explicitly.
+- [ ] Run to completion in the UI.
+- [ ] Capture the Simulation ID and paste it back here.
+
+### 3.2 — Run B (gridLevels = 20)
+- [ ] Same config as 3.1 but `gridLevels = 20`.
+- [ ] Run to completion in the UI.
+- [ ] Capture the Simulation ID and paste it back here.
+
+### 3.3 — Comparison script + baseline table
+- [x] Write `scripts/compareRuns.ts`. CLI: `npx tsx scripts/compareRuns.ts <runA-id> <runB-id>`.
+- [x] Script reads both Simulation rows from Prisma + their AdaptiveEvents + GridOrders.
+- [x] Script prints a markdown-style side-by-side table with these rows, in this order:
+  - `Name`, `gridLevels (engine)`, `Total PnL`, `Long PnL`, `Short PnL`
+  - `Fees (total / long / short)` — summed from `GridOrder.fees`, grouped by side
+  - `Slippage (total / long / short)` — from Simulation cost columns
+  - `Funding (total / long / short)` — from Simulation cost columns + `fundingDataMissing` flag
+  - `Reopen events (long / short)` — count of `tier1_reopen` events grouped by `detailsJson.side`
+  - `SL events (long / short)` — count of `sl_triggered` events grouped by `detailsJson.side`
+  - `Breakout entries (long / short)` — count of `breakout_entered` events (sanity check on entry rate)
+  - `Max drawdown ($ / %)`
+  - `Final equity`
+- [ ] Run the script against the two IDs from 3.1 and 3.2.
+- [ ] Append the resulting table to this file as the **documented baseline**.
+
+## Phase 3 — Implementation Note (2026-05-08)
+
+`scripts/compareRuns.ts` shipped and smoke-tested against two recent combo runs in the local DB. Output renders cleanly with auto-sized columns. Notes from the smoke test, useful when interpreting the real Run A / Run B output:
+
+- `Slippage` and `Funding` columns will show `n/a` for any pre-Phase-1.3 simulation row (cost columns are nullable). New runs after Phase 1.3 persist these. If your fresh Run A / Run B show `n/a`, that is a regression to flag.
+- `Funding (total)` shows the literal string `missing` when `Simulation.fundingDataMissing = true`, distinguishing "no funding rows fetched" from "$0 measured".
+- Event counts come from `AdaptiveEvent` rows whose `detailsJson.side` matches `'long'` or `'short'`. Malformed payloads silently skip rather than crash — counts under-report instead of blowing up.
+- Filled-only `GridOrder.fees` are summed (no double-counting cancellations).
+
+### 3.4 — Decision gate (drives Phase 4)
+- [ ] Compare A vs B and the original loss-bearing run.
+- [ ] Pick one of three branches and document the choice here:
+  - **Both A and B flip to small loss / breakeven →** original loss was diagnostic noise from the bugs. Skip 4.1, go to 4.2 (leverage / allocation tuning).
+  - **Both A and B still show large losses with reopen now firing →** regime mismatch is real. Phase 4.1 (directional filter) is justified.
+  - **One materially better than the other →** tells us whether 10 or 20 levels suits this tape. Inform 4.2 default-allocation recommendation.
+
+## Critical files (Phase 3 only)
+
+- `scripts/compareRuns.ts` — new, ~80 lines, read-only.
+
+## Verification gate
+
+- `npx tsc --noEmit` clean (the script is part of the project's tsconfig surface).
+- Script run against the two IDs prints a complete table with no `undefined` cells.
+- No engine or test code touched. No new DB migrations.
+
+## Out of scope (Phase 3)
+
+- Any changes to `supervisor.ts`, `stateMachine.ts`, or strategy logic.
+- Changes to the UI.
+- Optimizer work (Phase 5).
+- Adding directional confirmation (Phase 4.1, depends on the 3.4 decision).
+
+## Verification this plan is grounded
+
+- Confirmed `Simulation` schema (prisma/schema.prisma:11-77) exposes total/long/short PnL, max drawdown, `comboGridLevels`, `fundingDataMissing`, and the six cost columns persisted in Phase 1.3.
+- Confirmed `GridOrder.fees` (schema:130) is per-row with a `side` discriminator — sum-by-side is straightforward.
+- Confirmed `AdaptiveEvent.detailsJson` is a JSON-stringified `{ side, phase, snapshot, reopenDiagnostics, entryDiagnostics }` blob (`supervisor.ts:933`). Counting events per side requires JSON.parse on each row.
+- Confirmed event types `tier1_reopen` (`stateMachine.ts:225`), `sl_triggered` (`stateMachine.ts:302`), and `breakout_entered` (`stateMachine.ts:170`) are emitted as expected.
+- Confirmed an existing precedent script lives at `scripts/seed-eth.ts` — I'll match its tsx + module conventions.
+
+---
+
+# Combo Bot — Phase 4.1 Directional Filter Plan
+
+**Status:** Awaiting verification.
+
+## Context
+
+You approved starting 4.1 ahead of the Phase 3 baseline because it's behind a default-false flag — existing 195 tests stay intact, baseline runs are unaffected. When you flip the flag on a future run, the directional gate fires; until then, entry behavior is identical.
+
+The forward-compatible scaffolding is already in place:
+- `EntryDiagnostics.directionOk?: boolean` (types.ts:350) — reserved field.
+- `evaluateEntryCondition` (supervisor.ts:147) — comment explicitly says "When that flag lands, this function will populate it."
+- Diagnostics already persisted on `breakout_entered` events (supervisor.ts:607).
+
+## What "directional confirmation" means here
+
+Long entry requires (in addition to the existing regime + AVWAP-tolerance + RSI gate):
+- **AVWAP side check (strict, no tolerance):** `signals.avwap !== null && price > signals.avwap`. The existing `avwapOk` allows a 0.5% band; this is a hard sign-of-trend check.
+- **No-new-low check:** current candle's `low` is **above** the minimum low over the prior `N=12` 5m candles (last hour). This is a defensible weaker form of "higher-low pattern" that uses only the candle slice already available to the supervisor — no new plumbing into `AdaptiveEngine`.
+
+Short entry is symmetric (`price < avwap`, current `high` below the max high over prior N candles).
+
+If `signals.avwap === null` (anchor not yet armed), `directionOk = false` — conservative. Entry waits.
+
+This is deliberately simpler than the spec's literal "4H higher-low pattern" because the supervisor evaluates per-5m and the 4H candles live inside `AdaptiveEngine`'s private cache. Plumbing them out would expand scope. The 5m-window version captures the same intent (no new local low / high) at a tighter cadence.
+
+## Todo
+
+### 4.1.1 — Type + config plumbing
+- [ ] Add `requireDirectionalConfirmation: boolean` to `ComboBotConfig` (types.ts:311).
+- [ ] Default to `false` in `DEFAULT_COMBO_CONFIG` (ComboBotConfig.tsx:30).
+- [ ] Add the field everywhere a `ComboBotConfig` literal is declared in tests so the type stays satisfied (`comboSupervisor.test.ts:42, 61, 635`, `comboAblation.test.ts:21`, `comboAblation.ts:168`, etc. — find via grep).
+
+### 4.1.2 — Implement the directional check
+- [ ] Extend `evaluateEntryCondition` signature to accept `recentCandles: OHLC[]` (the slice `candles[idx-N..idx-1]` from the supervisor) and the current candle's `high` and `low`.
+- [ ] Compute `directionOk` only when the flag is on; otherwise return `undefined` (preserves backward compatibility — `EntryDiagnostics.directionOk` stays optional).
+- [ ] Combine into `allowed`: `allowed = regimeTrending && avwapOk && rsiOk && (!cfg.requireDirectionalConfirmation || directionOk === true)`.
+- [ ] Update the call site in `runSide` (supervisor.ts:471) to pass the lookback slice + high/low.
+
+### 4.1.3 — Persistence
+- [ ] Add `requireDirectionalConfirmation Boolean @default(false)` to `Simulation` model (prisma/schema.prisma).
+- [ ] `npx prisma db push` to apply.
+- [ ] `simulations/route.ts` POST handler writes `requireDirectionalConfirmation: combo?.requireDirectionalConfirmation ?? false`.
+- [ ] `supervisorRunner.ts` reads `sim.requireDirectionalConfirmation` and threads it into the engine's `cfg`.
+- [ ] `page.tsx` carries the flag into local simulation state at the two setSimulation callsites (load-from-storage + post-run polling), mirroring the Phase 2.5 fix for `comboGridLevels`.
+
+### 4.1.4 — UI toggle
+- [ ] Add a single checkbox to `ComboBotConfig.tsx` editor under the Adaptive section: "Require directional confirmation". One-line description: "Block entries unless price is on the trending side of AVWAP and not making new local lows/highs."
+
+### 4.1.5 — Tests
+- [ ] In `comboSupervisor.test.ts`, add a "trending fixture" test that asserts: with flag ON, entries still fire (positive case — the gate doesn't break the happy path).
+- [ ] In `comboSupervisor.test.ts`, add a "chop fixture" test where price oscillates around AVWAP and lows stair-step downward. Assert: with flag OFF, entry rate is `>0`; with flag ON, entry rate drops materially (ideally to 0).
+- [ ] Existing 195 tests must still pass with no changes (the flag defaults to false everywhere).
+
+### 4.1.6 — Verification gate
+- [ ] `npx tsc --noEmit` clean.
+- [ ] `npm test` — all existing 195 tests pass + the 2 new tests = 197 / 197.
+- [ ] `npm run build` clean.
+- [ ] Manual click-through pending: I'll note the chip / config-row to verify, but won't claim "manual UI passed" without you running it.
+
+## Critical files
+
+| File | Purpose |
+|---|---|
+| `src/lib/types.ts` | Add `requireDirectionalConfirmation` to `ComboBotConfig` |
+| `src/components/config/ComboBotConfig.tsx` | Default value + new checkbox |
+| `src/lib/combo/supervisor.ts` | `evaluateEntryCondition` signature + body, call site |
+| `prisma/schema.prisma` | New column |
+| `src/app/api/simulations/route.ts` | POST persistence |
+| `src/lib/combo/supervisorRunner.ts` | Read-back into engine cfg |
+| `src/app/page.tsx` | Carry the field through local state |
+| `src/__tests__/comboSupervisor.test.ts` | Two new tests + flag added to existing CFG literals |
+| `src/__tests__/comboAblation.test.ts` | Flag added to existing CFG literal |
+| `src/lib/optimizer/comboAblation.ts` | Flag added to constructed cfg |
+
+## Out of scope (4.1)
+
+- 4H higher-low pattern via `AdaptiveEngine` plumbing — explicitly using 5m-window approximation.
+- Phase 4.2 leverage / allocation A/B sweep.
+- Phase 4.3 UI-configurable entry conditions (preset selector, ConditionEvaluator wiring).
+- Optimizer support for the new flag (Phase 5).
+
+## Verification this plan is grounded
+
+- Confirmed `EntryDiagnostics.directionOk?` exists at types.ts:350 with the explicit "Phase 4.1 directional-confirmation filter" comment.
+- Confirmed `evaluateEntryCondition` (supervisor.ts:147) returns the diagnostics object and is called once per side per candle from `runSide` (supervisor.ts:471).
+- Confirmed `breakout_entered` is the only event that carries `entryDiagnostics` (supervisor.ts:607); diagnostics riding on other events would lie about when the gate fired.
+- Confirmed `DEFAULT_COMBO_CONFIG` lives at ComboBotConfig.tsx:30 and is the single default users see.
+- Confirmed `signals.avwap` is `number | null` (adaptiveEngine.ts:21) — null-handling required.
+- Confirmed `OHLC` is exported from `lib/types` and is the candle shape passed into the supervisor.
+
+## Phase 4.1 Review — 2026-05-08
+
+**Status:** Complete.
+
+### Changes shipped
+
+- **`src/lib/types.ts`** — `ComboBotConfig.requireDirectionalConfirmation?: boolean` (optional → no churn on existing config literals). Also added the optional field to `SimulationSummary` so the read-back path is type-checked.
+- **`src/lib/combo/supervisor.ts`** — `evaluateEntryCondition` extended with `candleHigh`, `candleLow`, `recentCandles` params. Computes `directionOk` only when the flag is on:
+  - Long: `signals.avwap !== null && price > signals.avwap && candleLow > min(prior 12 lows)`.
+  - Short: symmetric on the high side.
+  - When the flag is off, `directionOk` is `undefined` and `allowed` is unaffected — preserves existing behavior across all 203 prior tests.
+  - Exported the function so the chop-fixture test can call it directly.
+- **`src/lib/combo/supervisor.ts:486`** — call site builds `recentCandles = candles5m.slice(max(0,i-12), i)` and threads it through.
+- **`prisma/schema.prisma`** — `Simulation.requireDirectionalConfirmation Boolean @default(false)`. Pushed via `npx prisma db push`.
+- **`src/app/api/simulations/route.ts`** — POST handler persists `combo?.requireDirectionalConfirmation ?? false`.
+- **`src/lib/combo/supervisorRunner.ts`** — reads `sim.requireDirectionalConfirmation` and threads it into the engine `cfg`.
+- **`src/app/page.tsx`** — both setSimulation callsites now copy `requireDirectionalConfirmation` into local state (mirrors the Phase 2.5 fix for `comboGridLevels`).
+- **`src/components/config/ComboBotConfig.tsx`** — `DEFAULT_COMBO_CONFIG.requireDirectionalConfirmation = false`. New checkbox under the Adaptive section labeled "Require directional confirmation" with subtitle.
+- **`src/__tests__/comboSupervisor.test.ts`** — two new tests:
+  - Trending fixture with flag ON: `breakout_entered` events still fire and each carries `directionOk: true`.
+  - Synthetic chop unit test against `evaluateEntryCondition` directly: with monotonically declining prior lows + a new local-low test candle, flag OFF allows entry, flag ON blocks. Inverse case (no new low) confirms the gate passes when conditions are met.
+
+### Honest design note
+
+The spec says "4H higher-low pattern over last N bars" but `AdaptiveEngine`'s 4H candles are private. I used the 5m approximation (N=12 ≈ 1 hour) you approved — captures the same intent (no new local low / high) without plumbing 4H state out of the engine. If baseline data shows the 5m approximation is too noisy, swap to 4H is a localized change to `evaluateEntryCondition`.
+
+### Verification
+
+- `npx tsc --noEmit` — clean.
+- `npm test` — **205 / 205** passing across 10 files (was 203; +2 new tests).
+- `npm run build` — clean. `/` route 95.9 kB / 183 kB First Load JS (was 95.8 / 183 — +0.1 kB).
+- Manual UI smoke test pending — verify the new checkbox under "Adaptive" in the Combo config drawer toggles and persists across runs.
+
+### Files touched
+
+- `src/lib/types.ts`
+- `src/lib/combo/supervisor.ts`
+- `src/lib/combo/supervisorRunner.ts`
+- `src/app/api/simulations/route.ts`
+- `src/app/page.tsx`
+- `src/components/config/ComboBotConfig.tsx`
+- `prisma/schema.prisma`
+- `src/__tests__/comboSupervisor.test.ts`
+
+### Out of scope (still deferred)
+
+- 4H higher-low pattern via `AdaptiveEngine` plumbing (5m approximation in use).
+- Phase 3 baseline replay (manual UI work — your two runs).
+- Phase 4.2 leverage / allocation A/B sweep.
+- Phase 4.3 UI-configurable entry conditions.
+- Optuna optimizer integration (Phase 5).
+

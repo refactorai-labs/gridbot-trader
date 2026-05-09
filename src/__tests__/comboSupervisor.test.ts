@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { OHLC, ComboBotConfig, ComboBotSideConfig } from '../lib/types';
-import { runComboSimulationCore } from '../lib/combo/supervisor';
+import { runComboSimulationCore, evaluateEntryCondition } from '../lib/combo/supervisor';
 import { aggregate5mTo } from '../lib/data/aggregator';
 import { FundingRateEntry } from '../lib/simulation/funding';
 import * as reopenPolicy from '../lib/combo/reopenPolicy';
@@ -148,6 +148,97 @@ describe('combo/supervisor integration', () => {
     // Snapshots cover the run
     expect(result.snapshots.length).toBeGreaterThan(1);
     expect(result.snapshots[result.snapshots.length - 1].candleIdx).toBe(candles5m.length - 1);
+  });
+
+  it('honors cfg.gridLevels end-to-end: 20-level config produces half-size fills vs 10-level', () => {
+    // Build a minimal trending fixture that triggers a single long market entry, then
+    // run twice with gridLevels=10 and gridLevels=20. Per supervisor.ts seedGrid +
+    // openMarketPosition: marketEntrySize = allocatedCap / gridLevels, then leveraged.
+    // So the 20-level run must produce a market-entry fill exactly half the size of
+    // the 10-level run. Proves the UI value is honored, not silently overridden.
+    const candles5m: OHLC[] = [];
+    let t = 1_700_000_000;
+    let price = 2000;
+    for (let i = 0; i < 480; i++) {
+      const p = 2000 + Math.sin(i * 0.05) * 0.5;
+      candles5m.push(candle(t, p, p + 0.5, p - 0.5, p));
+      t += 300;
+    }
+    price = 2000;
+    for (let i = 0; i < 720; i++) {
+      const prev = price;
+      price = price + 1.5;
+      candles5m.push(candle(t, prev, price + 0.5, prev - 0.5, price));
+      t += 300;
+    }
+
+    const candles1h = aggregate5mTo(candles5m, 60);
+    const candles4h = aggregate5mTo(candles5m, 240);
+
+    const baseInputs = {
+      candles5m,
+      candles1h,
+      candles4h,
+      totalCapital: 10000,
+      fundingRates: [] as FundingRateEntry[],
+      feeRate: 0.001,
+    };
+
+    const result10 = runComboSimulationCore({ ...baseInputs, cfg: { ...CFG, gridLevels: 10 } });
+    const result20 = runComboSimulationCore({ ...baseInputs, cfg: { ...CFG, gridLevels: 20 } });
+
+    const entry10 = result10.fills.find(f => f.orderId.startsWith('entry_long_'));
+    const entry20 = result20.fills.find(f => f.orderId.startsWith('entry_long_'));
+    expect(entry10).toBeDefined();
+    expect(entry20).toBeDefined();
+    // 10-level: 10000 * 0.6 / 10 * 5 = 3000. 20-level: 10000 * 0.6 / 20 * 5 = 1500.
+    expect(entry10!.size).toBeCloseTo(3000, 6);
+    expect(entry20!.size).toBeCloseTo(1500, 6);
+    expect(entry20!.size * 2).toBeCloseTo(entry10!.size, 6);
+  });
+
+  it('clamps invalid gridLevels values: gridLevels=2 runs as 4 (engine floor)', () => {
+    // The canonical clamp is at the API boundary (`clampGridLevels` in sizing.ts),
+    // but the engine applies it again as defense in depth. A user POST with
+    // gridLevels=2 must not produce a 2-level grid here; it must produce a
+    // 4-level grid so DB and engine stay in lockstep.
+    const candles5m: OHLC[] = [];
+    let t = 1_700_000_000;
+    let price = 2000;
+    for (let i = 0; i < 480; i++) {
+      const p = 2000 + Math.sin(i * 0.05) * 0.5;
+      candles5m.push(candle(t, p, p + 0.5, p - 0.5, p));
+      t += 300;
+    }
+    price = 2000;
+    for (let i = 0; i < 720; i++) {
+      const prev = price;
+      price = price + 1.5;
+      candles5m.push(candle(t, prev, price + 0.5, prev - 0.5, price));
+      t += 300;
+    }
+    const candles1h = aggregate5mTo(candles5m, 60);
+    const candles4h = aggregate5mTo(candles5m, 240);
+    const baseInputs = {
+      candles5m,
+      candles1h,
+      candles4h,
+      totalCapital: 10000,
+      fundingRates: [] as FundingRateEntry[],
+      feeRate: 0.001,
+    };
+
+    // gridLevels=2 → engine clamps to 4. marketEntry = 6000 / 4 * 5 = 7500.
+    const result2 = runComboSimulationCore({ ...baseInputs, cfg: { ...CFG, gridLevels: 2 } });
+    const entry2 = result2.fills.find(f => f.orderId.startsWith('entry_long_'));
+    expect(entry2).toBeDefined();
+    expect(entry2!.size).toBeCloseTo(7500, 6);
+
+    // Upper bound: gridLevels=999 → clamps to 50. marketEntry = 6000 / 50 * 5 = 600.
+    const result999 = runComboSimulationCore({ ...baseInputs, cfg: { ...CFG, gridLevels: 999 } });
+    const entry999 = result999.fills.find(f => f.orderId.startsWith('entry_long_'));
+    expect(entry999).toBeDefined();
+    expect(entry999!.size).toBeCloseTo(600, 6);
   });
 
   it('does not seed combo grids with inventory-style reverse orders', () => {
@@ -450,7 +541,10 @@ describe('combo/supervisor integration', () => {
     }
 
     const cooldownTickEvents = result.events.filter(e =>
-      e.type === 'retry_incremented' || e.type === 'tier1_reopen' || e.type === 'hibernation_entered'
+      e.type === 'retry_incremented'
+      || e.type === 'tier1_reopen'
+      || e.type === 'hibernation_entered'
+      || e.type === 'reopen_check_failed'
     );
     for (const e of cooldownTickEvents) {
       const d = JSON.parse(e.detailsJson) as Detail;
@@ -460,6 +554,59 @@ describe('combo/supervisor integration', () => {
       expect(typeof d.reopenDiagnostics!.rsiCrossOk).toBe('boolean');
       expect(typeof d.reopenDiagnostics!.avwapOk).toBe('boolean');
       expect(typeof d.reopenDiagnostics!.avwapRequired).toBe('boolean');
+    }
+
+    // Failed-gate tooltip data: `reopen_check_failed` events should fire on
+    // post-expiry cooldown candles when gates fail. The fixture has a long
+    // recovery, so at least some failed-gate ticks must exist before reopen
+    // succeeds. Phase is COOLDOWN on every such event (the failure branch
+    // never transitions out).
+    const failedChecks = result.events.filter(e => e.type === 'reopen_check_failed');
+    expect(failedChecks.length).toBeGreaterThan(0);
+    type PhaseDetail = { phase?: string };
+    for (const e of failedChecks) {
+      const d = JSON.parse(e.detailsJson) as PhaseDetail;
+      expect(d.phase).toBe('COOLDOWN');
+    }
+
+    // Entry diagnostics ride only on breakout_entered. They must NOT appear on
+    // position_opened / sl_triggered / cooldown_entered / cooldown-tick events.
+    type EntryDetail = {
+      entryDiagnostics?: { regimeTrending: boolean; avwapOk: boolean; rsiOk: boolean; directionOk?: boolean };
+    };
+    for (const e of breakouts) {
+      const d = JSON.parse(e.detailsJson) as EntryDetail;
+      expect(d.entryDiagnostics).toBeDefined();
+      expect(typeof d.entryDiagnostics!.regimeTrending).toBe('boolean');
+      expect(typeof d.entryDiagnostics!.avwapOk).toBe('boolean');
+      expect(typeof d.entryDiagnostics!.rsiOk).toBe('boolean');
+      // breakout_entered fires only when allowed=true, so all three must be true.
+      expect(d.entryDiagnostics!.regimeTrending).toBe(true);
+      expect(d.entryDiagnostics!.avwapOk).toBe(true);
+      expect(d.entryDiagnostics!.rsiOk).toBe(true);
+    }
+    for (const e of [...positionOpens, ...slTriggered, ...cooldownEntered, ...cooldownTickEvents]) {
+      const d = JSON.parse(e.detailsJson) as EntryDetail;
+      expect(d.entryDiagnostics).toBeUndefined();
+    }
+
+    // `position_opened` events must carry the active SL price so observability
+    // paths (the chart SL line) can render without recomputing engine logic.
+    // Per supervisor.ts → stateMachine.ts:174-186, SL is computed via
+    // slPrice(sideCfg, side, position.avgEntry, signals.atr). For the long side,
+    // SL must sit *below* the entry; for short, above.
+    type PosOpenDetail = { snapshot?: { price?: number; slPrice?: number | null } };
+    expect(positionOpens.length).toBeGreaterThan(0);
+    for (const e of positionOpens) {
+      const d = JSON.parse(e.detailsJson) as PosOpenDetail;
+      expect(d.snapshot?.slPrice).toBeDefined();
+      expect(typeof d.snapshot!.slPrice).toBe('number');
+      expect(Number.isFinite(d.snapshot!.slPrice as number)).toBe(true);
+      // entry price is also on snapshot; SL must be on the loss side of entry.
+      const entry = d.snapshot?.price ?? 0;
+      const sl = d.snapshot!.slPrice as number;
+      expect(sl).toBeGreaterThan(0);
+      expect(sl).toBeLessThan(entry); // long-only fixture
     }
   });
 
@@ -770,5 +917,105 @@ describe('combo/supervisor integration', () => {
     const details = JSON.parse(slEvent!.detailsJson) as { snapshot: { slPrice: number } };
     // Long SL exit is a sell; trader-hurting slippage fills strictly below the raw SL price.
     expect(slFill.fillPrice).toBeLessThan(details.snapshot.slPrice);
+  });
+
+  it('directional confirmation flag does not block long entries on a clean uptrend', () => {
+    // Reuses the canonical trending fixture (warmup → strong uptrend). With the
+    // directional filter ON, a clean monotone uptrend must still satisfy
+    // directionOk: price > AVWAP holds once the anchor drops, and each candle's
+    // low sits above the prior 12-candle min low. The flag should not regress
+    // the happy path.
+    const candles5m: OHLC[] = [];
+    let t = 1_700_000_000;
+    for (let i = 0; i < 480; i++) {
+      const p = 2000 + Math.sin(i * 0.05) * 0.5;
+      candles5m.push(candle(t, p, p + 0.5, p - 0.5, p));
+      t += 300;
+    }
+    let price = 2000;
+    for (let i = 0; i < 720; i++) {
+      const prev = price;
+      price = price + 1.5;
+      candles5m.push(candle(t, prev, price + 0.5, prev - 0.5, price));
+      t += 300;
+    }
+
+    const result = runComboSimulationCore({
+      candles5m,
+      candles1h: aggregate5mTo(candles5m, 60),
+      candles4h: aggregate5mTo(candles5m, 240),
+      cfg: { ...CFG, mode: 'long', requireDirectionalConfirmation: true },
+      totalCapital: 10000,
+      fundingRates: [],
+      feeRate: 0.001,
+    });
+
+    const breakouts = result.events.filter(e => e.type === 'breakout_entered');
+    expect(breakouts.length).toBeGreaterThan(0);
+
+    type EntryDetail = { entryDiagnostics?: { directionOk?: boolean } };
+    for (const e of breakouts) {
+      const d = JSON.parse(e.detailsJson) as EntryDetail;
+      // breakout_entered fires only when allowed=true, so directionOk must be true
+      // when the flag is on (it's part of the AND-gate).
+      expect(d.entryDiagnostics?.directionOk).toBe(true);
+    }
+  });
+
+  it('directional confirmation: evaluateEntryCondition gates correctly on synthetic chop', () => {
+    // Pure-function chop fixture for the directional filter. The 12-candle
+    // lookback prints a stair-step *down* (lows decreasing), so on the test
+    // candle the long no-new-low check fails. The existing entry gate (regime
+    // trending + AVWAP-tolerance + relaxed RSI) passes — proves the filter, not
+    // some other gate, is what blocks.
+    const recentCandles: OHLC[] = Array.from({ length: 12 }, (_, i) => ({
+      timestamp: 1_700_000_000 + i * 300,
+      open: 2000 - i * 0.5,
+      high: 2001 - i * 0.5,
+      low: 1999 - i * 0.5,  // lows: 1999, 1998.5, 1998, ..., 1993.5 (monotone down)
+      close: 2000 - i * 0.5,
+      volume: 100,
+    }));
+
+    // Test candle prints a NEW low below all 12 prior candle lows.
+    const testCandleLow = 1990;
+    const testCandleHigh = 1996;
+    const testPrice = 1995;
+
+    const signals = {
+      atr: 5,
+      blendedAtr: 5,
+      erRaw: 0.7,
+      erSmooth: 0.7,
+      rsi: 30,
+      avwap: 1994,        // Long: testPrice (1995) > avwap (1994) — strict-side check passes
+      regime: 'trending' as const,
+      anchorJustArmed: false,
+    };
+
+    const cfgOff: ComboBotConfig = { ...CFG, mode: 'long', requireDirectionalConfirmation: false };
+    const cfgOn: ComboBotConfig = { ...cfgOff, requireDirectionalConfirmation: true };
+
+    const off = evaluateEntryCondition('long', signals, testPrice, testCandleHigh, testCandleLow, recentCandles, cfgOff);
+    const on = evaluateEntryCondition('long', signals, testPrice, testCandleHigh, testCandleLow, recentCandles, cfgOn);
+
+    // Flag OFF: existing AND-gate passes — regime trending, RSI 30 < threshold 100,
+    // AVWAP within tolerance. directionOk stays undefined (not computed).
+    expect(off.allowed).toBe(true);
+    expect(off.diagnostics.directionOk).toBeUndefined();
+
+    // Flag ON: directional check runs. testCandleLow (1990) is below the prior
+    // 12-candle min low (1993.5), so directionOk=false → allowed=false.
+    expect(on.diagnostics.directionOk).toBe(false);
+    expect(on.allowed).toBe(false);
+
+    // And the inverse: a candle that does NOT make a new low but otherwise
+    // matches the same signals must pass the directional gate.
+    const goodLow = 1996;  // above all prior lows
+    const goodHigh = 1999;
+    const goodPrice = 1998; // > avwap (1994)
+    const onGood = evaluateEntryCondition('long', signals, goodPrice, goodHigh, goodLow, recentCandles, cfgOn);
+    expect(onGood.diagnostics.directionOk).toBe(true);
+    expect(onGood.allowed).toBe(true);
   });
 });

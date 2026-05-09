@@ -44,6 +44,7 @@ export const DEFAULT_COMBO_CONFIG: ComboBotConfig = {
   erRegimeThreshold: 0.6,
   rsiLongThreshold: 35,
   rsiShortThreshold: 65,
+  requireDirectionalConfirmation: false,
 };
 
 interface Props {
@@ -398,6 +399,20 @@ export default function ComboBotConfigEditor({ config, onChange }: Props) {
             <input type="number" className="form-input" min={50} max={90}
               value={config.rsiShortThreshold}
               onChange={e => update({ rsiShortThreshold: parseFloat(e.target.value) || 65 })} />
+          </div>
+          <div className="col-span-2 flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="requireDirectionalConfirmation"
+              checked={config.requireDirectionalConfirmation ?? false}
+              onChange={e => update({ requireDirectionalConfirmation: e.target.checked })}
+            />
+            <label htmlFor="requireDirectionalConfirmation" className="form-label" style={{ marginBottom: 0 }}>
+              Require directional confirmation
+            </label>
+            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              (strict-side AVWAP + no new low/high over last 12 candles)
+            </span>
           </div>
         </div>
       </SubSection>

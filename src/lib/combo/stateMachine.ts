@@ -35,7 +35,13 @@ export type ComboEventType =
   | 'cycle_complete'
   | 'hibernation_entered'
   | 'hibernation_exit'
-  | 'retry_incremented';
+  | 'retry_incremented'
+  // Tooltip-only event: emitted on every post-expiry cooldown candle when the
+  // reopen-policy gates fail. Carries the four gate booleans via reopenDiagnostics
+  // so the chart's failed-gate tooltip can show why the side is still in cooldown.
+  // Not surfaced in the event feed/timeline — it's diagnostic data, not a lifecycle
+  // event.
+  | 'reopen_check_failed';
 
 export interface ComboEvent {
   candleIdx: number;
@@ -176,7 +182,12 @@ export class ComboBotStateMachine {
     instr.sizeMultiplier = 1.0;
     if (inp.position.hasPosition) {
       this.state.phase = 'RUNNING';
-      events.push(this.mkEvent('position_opened', inp));
+      // Carry the active SL on position_opened so observability paths (chart SL line,
+      // ComboPane derivation) can render it without recomputing engine logic.
+      const sl = inp.position.avgEntry > 0
+        ? slPrice(this.sideCfg, this.state.side, inp.position.avgEntry, inp.signals.atr)
+        : null;
+      events.push(this.mkEvent('position_opened', inp, sl));
     }
   }
 
@@ -218,6 +229,12 @@ export class ComboBotStateMachine {
       instr.allowNewOrders = true;
       instr.sizeMultiplier = tierSize(1, this.sideCfg);
       events.push(this.mkEvent('tier1_reopen', inp));
+    } else if (this.state.cooldownCandlesRemaining <= 0 && inp.reopenDiagnostics) {
+      // Timer expired but gates failed — emit a diagnostic-only event so the
+      // failed-gate tooltip has per-candle data. mkEvent attaches inp.reopenDiagnostics
+      // automatically (line 354). Pre-expiry candles intentionally stay silent;
+      // the tooltip shows "no reopen attempt yet" for those.
+      events.push(this.mkEvent('reopen_check_failed', inp));
     }
   }
 

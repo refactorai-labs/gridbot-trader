@@ -4,6 +4,7 @@ import { SimulationConfig, DCASimulationConfig, ComboBotConfig } from '@/lib/typ
 import { runSimulation } from '@/lib/simulation/engine';
 import { runDCASimulation } from '@/lib/simulation/dcaEngine';
 import { getOrFetchCandles } from '@/lib/data/candleCache';
+import { clampGridLevels } from '@/lib/combo/sizing';
 
 // POST: Create and run a new simulation
 export async function POST(request: NextRequest) {
@@ -44,6 +45,8 @@ export async function POST(request: NextRequest) {
         comboLeverage: combo?.leverage ?? 5,
         comboAllocationLong: combo?.allocationLong ?? 0.6,
         comboAvwapEnabled: combo?.avwapEnabled ?? true,
+        comboGridLevels: clampGridLevels(combo?.gridLevels),
+        requireDirectionalConfirmation: combo?.requireDirectionalConfirmation ?? false,
         gridConfigs: {
           create: [
             {

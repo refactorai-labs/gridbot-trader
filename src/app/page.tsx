@@ -164,6 +164,15 @@ export default function SimulatorPage() {
           lossCount: sim.lossCount,
           comboBotEnabled: sim.comboBotEnabled,
           comboMode: sim.comboMode,
+          comboGridLevels: sim.comboGridLevels,
+          fundingDataMissing: sim.fundingDataMissing,
+          requireDirectionalConfirmation: sim.requireDirectionalConfirmation,
+          totalSlippageCost: sim.totalSlippageCost,
+          longSlippageCost: sim.longSlippageCost,
+          shortSlippageCost: sim.shortSlippageCost,
+          totalFundingCost: sim.totalFundingCost,
+          longFundingCost: sim.longFundingCost,
+          shortFundingCost: sim.shortFundingCost,
         });
 
         // Sync grid toggles to match loaded simulation type
@@ -380,6 +389,15 @@ export default function SimulatorPage() {
               lossCount: sim.lossCount,
               comboBotEnabled: sim.comboBotEnabled,
               comboMode: sim.comboMode,
+              comboGridLevels: sim.comboGridLevels,
+              fundingDataMissing: sim.fundingDataMissing,
+              requireDirectionalConfirmation: sim.requireDirectionalConfirmation,
+              totalSlippageCost: sim.totalSlippageCost,
+              longSlippageCost: sim.longSlippageCost,
+              shortSlippageCost: sim.shortSlippageCost,
+              totalFundingCost: sim.totalFundingCost,
+              longFundingCost: sim.longFundingCost,
+              shortFundingCost: sim.shortFundingCost,
             });
 
             const replayRes = await fetch(`/api/simulations/${id}/replay`);
@@ -725,6 +743,8 @@ export default function SimulatorPage() {
                     allocationLong: comboConfig.allocationLong,
                     mode: coerceComboMode(simulation.comboMode),
                     playbackSpeed: speed,
+                    gridLevels: simulation.comboGridLevels ?? comboConfig.gridLevels,
+                    fundingDataMissing: simulation.fundingDataMissing ?? false,
                   }}
                   candles={replayData.candles}
                   longLevels={replayData.longLevels}

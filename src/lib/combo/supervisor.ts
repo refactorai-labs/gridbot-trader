@@ -8,11 +8,12 @@ import {
   Fill,
   SnapshotData,
   OrderType,
+  EntryDiagnostics,
 } from '../types';
 import { AdaptiveEngine, AdaptiveSignals, DEFAULT_ADAPTIVE_CONFIG } from './adaptiveEngine';
 import { ComboBotStateMachine, ComboEvent, PositionSnapshot } from './stateMachine';
 import { evaluateReopenPolicy } from './reopenPolicy';
-import { allocateCapital, atrScaledGridStep, slPrice } from './sizing';
+import { allocateCapital, atrScaledGridStep, clampGridLevels, slPrice } from './sizing';
 import {
   PnLState,
   createInitialPnLState,
@@ -134,17 +135,28 @@ function sideCfgOrDefault(cfg: ComboBotSideConfig | undefined, side: GridSide): 
 }
 
 /**
- * Derive entry and reopen booleans from adaptive signals + config.
+ * Derive entry diagnostics + allow boolean from adaptive signals + config.
  *
- * These are the minimum-viable heuristics for Phase 3c. Richer user-configurable
- * conditions come in Phase 6 via the ConditionEvaluator wiring.
+ * Returns the four exact booleans alongside the `allowed` decision so the
+ * supervisor can persist diagnostics on `breakout_entered` events for UI
+ * observability — same pattern as `evaluateReopenPolicy`.
+ *
+ * `directionOk` is computed only when `cfg.requireDirectionalConfirmation` is on
+ * (Phase 4.1). It checks strict-side AVWAP plus a no-new-low/high pattern over
+ * the last DIRECTION_LOOKBACK 5m candles — a 5m approximation of the spec's
+ * 4H higher-low pattern that avoids plumbing 4H candles out of AdaptiveEngine.
  */
-function evaluateEntryCondition(
+const DIRECTION_LOOKBACK = 12;
+
+export function evaluateEntryCondition(
   side: GridSide,
   signals: AdaptiveSignals,
   price: number,
+  candleHigh: number,
+  candleLow: number,
+  recentCandles: OHLC[],
   cfg: ComboBotConfig
-): boolean {
+): { allowed: boolean; diagnostics: EntryDiagnostics } {
   const regimeTrending = signals.regime === 'trending';
 
   const avwapOk = (() => {
@@ -159,10 +171,29 @@ function evaluateEntryCondition(
     return price < signals.avwap * (1 + tolerance);
   })();
 
-  return regimeTrending
-    && avwapOk
-    && !isNaN(signals.rsi)
+  const rsiOk = !isNaN(signals.rsi)
     && (side === 'long' ? signals.rsi < cfg.rsiLongThreshold : signals.rsi > cfg.rsiShortThreshold);
+
+  let directionOk: boolean | undefined;
+  if (cfg.requireDirectionalConfirmation) {
+    if (signals.avwap === null || recentCandles.length < DIRECTION_LOOKBACK) {
+      directionOk = false;
+    } else if (side === 'long') {
+      const minPriorLow = Math.min(...recentCandles.map(c => c.low));
+      directionOk = price > signals.avwap && candleLow > minPriorLow;
+    } else {
+      const maxPriorHigh = Math.max(...recentCandles.map(c => c.high));
+      directionOk = price < signals.avwap && candleHigh < maxPriorHigh;
+    }
+  }
+
+  const allowed = regimeTrending && avwapOk && rsiOk
+    && (!cfg.requireDirectionalConfirmation || directionOk === true);
+
+  return {
+    allowed,
+    diagnostics: { regimeTrending, avwapOk, rsiOk, directionOk },
+  };
 }
 
 function positionSnapshotForSide(
@@ -380,7 +411,11 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
   // Per-side grid state, managed across the cycle (seed on breakout; teardown on SL/cycle).
   const longGrid: SideGridState = emptySideGridState();
   const shortGrid: SideGridState = emptySideGridState();
-  const gridLevels = Math.max(4, cfg.gridLevels ?? 10);
+  // Defense in depth: the canonical clamp lives at the API boundary
+  // (`simulations/route.ts` → `clampGridLevels`) so the persisted DB row equals
+  // what the engine runs. Apply the same helper here in case the engine is
+  // invoked from a non-API path (tests, optimizer, etc.).
+  const gridLevels = clampGridLevels(cfg.gridLevels);
   const atrHistory: number[] = [];
   let previousRsi: number | null = null;
   let previousPrice: number | null = null;
@@ -418,7 +453,11 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
       candles4h, agg4hIdx,
     );
     const effectiveAtr = Number.isFinite(signals.blendedAtr) ? signals.blendedAtr : signals.atr;
-    if (Number.isFinite(effectiveAtr)) {
+    // Dedupe at the source: ATR is recomputed only on 4H bar boundaries, but this
+    // loop runs every 5m candle. Pushing every tick floods atrHistory with duplicates,
+    // and reopenPolicy.strictlyDeclining returns false on equality — so the gate
+    // could never pass. Store unique consecutive values instead.
+    if (Number.isFinite(effectiveAtr) && (atrHistory.length === 0 || atrHistory[atrHistory.length - 1] !== effectiveAtr)) {
       atrHistory.push(effectiveAtr);
       if (atrHistory.length > 100) atrHistory.shift();
     }
@@ -450,7 +489,18 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
       gridState: SideGridState,
     ): void => {
       if (!sm) return;
-      const entryConditionMet = evaluateEntryCondition(side, signals, candle.close, cfg);
+      const lookbackStart = Math.max(0, i - DIRECTION_LOOKBACK);
+      const recentCandles = candles5m.slice(lookbackStart, i);
+      const entryEval = evaluateEntryCondition(
+        side,
+        signals,
+        candle.close,
+        candle.high,
+        candle.low,
+        recentCandles,
+        cfg
+      );
+      const entryConditionMet = entryEval.allowed;
       const smState = sm.getState();
       // Only evaluate the reopen policy during COOLDOWN — that is the only phase
       // where reopenConditionsMet is consumed. Gating here also ensures
@@ -581,7 +631,12 @@ export function runComboSimulationCore(inputs: ComboSimulationInputs): ComboSimu
       const longMult = side === 'long' ? instruction.sizeMultiplier : 0;
       const shortMult = side === 'short' ? instruction.sizeMultiplier : 0;
       for (const e of smEvents) {
-        events.push(supervisorEvent(e, longMult, shortMult));
+        // Entry diagnostics attach only to `breakout_entered` — that is the candle
+        // where evaluateEntryCondition returned `allowed=true` and the supervisor
+        // committed to a market entry. Attaching to other events would lie about
+        // when the gate was evaluated.
+        const entryDiagnostics = e.type === 'breakout_entered' ? entryEval.diagnostics : undefined;
+        events.push(supervisorEvent(e, longMult, shortMult, entryDiagnostics));
       }
     };
 
@@ -896,7 +951,12 @@ function closeMarketPosition(
   else pnlState.shortFillCount += positions.length;
 }
 
-function supervisorEvent(e: ComboEvent, longMult: number, shortMult: number): ComboSupervisorEvent {
+function supervisorEvent(
+  e: ComboEvent,
+  longMult: number,
+  shortMult: number,
+  entryDiagnostics?: EntryDiagnostics,
+): ComboSupervisorEvent {
   return {
     candleIdx: e.candleIdx,
     timestamp: e.timestamp,
@@ -906,6 +966,7 @@ function supervisorEvent(e: ComboEvent, longMult: number, shortMult: number): Co
       phase: e.phase,
       snapshot: e.snapshot,
       reopenDiagnostics: e.reopenDiagnostics,
+      entryDiagnostics,
     }),
     longMultiplier: longMult,
     shortMultiplier: shortMult,

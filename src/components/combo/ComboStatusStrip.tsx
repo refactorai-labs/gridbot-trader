@@ -46,6 +46,10 @@ export default function ComboStatusStrip({ session, onRun, isRunning }: Props) {
           <span className="k">LEV</span><span className="eq">=</span>
           <span className="v tabular-nums" style={{ color: 'var(--supervisor)' }}>{session.leverage.toFixed(1)}×</span>
         </span>
+        <span className="combo-coord" title="Grid level count actually used by the engine (Simulation.comboGridLevels)">
+          <span className="k">GL</span><span className="eq">=</span>
+          <span className="v tabular-nums">{session.gridLevels}</span>
+        </span>
         {session.mode === 'dual' && (
           <span className="combo-coord">
             <span className="k">ALLOC</span><span className="eq">=</span>
@@ -54,6 +58,15 @@ export default function ComboStatusStrip({ session, onRun, isRunning }: Props) {
               <span style={{ color: 'var(--text-muted)' }}> / </span>
               <span style={{ color: 'var(--grid-short)' }}>{allocShort}%</span>
             </span>
+          </span>
+        )}
+        {session.fundingDataMissing && (
+          <span
+            className="combo-coord funding-warn"
+            title="No funding rates were cached for this window. Reported funding cost is $0 because it could not be measured, not because it was zero. Use the Data Manager to backfill funding rates."
+          >
+            <span className="k">FUNDING</span><span className="eq">=</span>
+            <span className="v">missing</span>
           </span>
         )}
       </div>
@@ -150,6 +163,12 @@ export default function ComboStatusStrip({ session, onRun, isRunning }: Props) {
           display: inline-flex; align-items: center; gap: 6px;
         }
         .pill-run:hover:not(:disabled) { background: var(--supervisor-dim); }
+        .funding-warn :global(.k),
+        .funding-warn :global(.v) {
+          color: #f59e0b;
+          font-weight: 600;
+        }
+        .funding-warn { cursor: help; }
       `}</style>
     </header>
   );

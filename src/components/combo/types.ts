@@ -13,6 +13,14 @@ export interface SessionView {
   allocationLong: number;
   mode: ComboMode;
   playbackSpeed: number;
+  // Actual `gridLevels` value the engine ran with (post-Phase 1.2 — sourced from
+  // `Simulation.comboGridLevels`, not the UI input). Distinguishes "toggle exists"
+  // from "value used".
+  gridLevels: number;
+  // Set by the runner when no funding rows existed for the requested window.
+  // The UI surfaces this as a banner so $0 funding never silently looks like
+  // "we measured zero" when it actually means "we couldn't measure".
+  fundingDataMissing: boolean;
 }
 
 export interface ReopenLights {

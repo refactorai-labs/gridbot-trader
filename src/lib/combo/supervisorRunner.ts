@@ -86,7 +86,7 @@ export async function runComboSimulationFromDb(simulationId: string): Promise<vo
       avwapEnabled: sim.comboAvwapEnabled,
       reopenPolicy: 'full_v31',
       totalCapital,
-      gridLevels: 10,
+      gridLevels: sim.comboGridLevels ?? 10,
       longSide: longSideRow ? rowToSideCfg(longSideRow) : undefined,
       shortSide: shortSideRow ? rowToSideCfg(shortSideRow) : undefined,
       atrPeriod: 14,
@@ -95,9 +95,11 @@ export async function runComboSimulationFromDb(simulationId: string): Promise<vo
       erRegimeThreshold: 0.6,
       rsiLongThreshold: 35,
       rsiShortThreshold: 65,
+      requireDirectionalConfirmation: sim.requireDirectionalConfirmation,
     };
 
     const fundingRates = await getCachedFundingRates(binanceSymbol, sim.startTime, sim.endTime);
+    const fundingDataMissing = fundingRates.length === 0;
 
     const resumeAnchor = sim.avwapAnchor
       ? {
@@ -119,7 +121,7 @@ export async function runComboSimulationFromDb(simulationId: string): Promise<vo
       resumeAnchor,
     });
 
-    await persistComboResults(simulationId, result, totalCapital, candles5m);
+    await persistComboResults(simulationId, result, totalCapital, candles5m, fundingDataMissing);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     await prisma.simulation.update({
@@ -134,7 +136,8 @@ async function persistComboResults(
   simulationId: string,
   result: Awaited<ReturnType<typeof runComboSimulationCore>>,
   totalCapital: number,
-  candles5m: OHLC[]
+  candles5m: OHLC[],
+  fundingDataMissing: boolean
 ): Promise<void> {
   const batchSize = 500;
   const { fills, snapshots, events, pnlState, finalAnchor } = result;
@@ -237,6 +240,13 @@ async function persistComboResults(
       maxDrawdownPct: pnlState.maxDrawdownPct,
       finalEquity: totalCapital + pnlState.realizedPnl,
       totalCandles: candles5m.length,
+      totalSlippageCost: result.totalSlippageCost,
+      longSlippageCost: result.longSlippageCost,
+      shortSlippageCost: result.shortSlippageCost,
+      totalFundingCost: result.totalFundingCost,
+      longFundingCost: result.longFundingCost,
+      shortFundingCost: result.shortFundingCost,
+      fundingDataMissing,
     },
   });
 }

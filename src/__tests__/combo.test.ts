@@ -3,7 +3,7 @@ import { slPercent, slPrice, allocateCapital, tierSize, atrScaledGridStep } from
 import { AdaptiveEngine, DEFAULT_ADAPTIVE_CONFIG } from '../lib/combo/adaptiveEngine';
 import { ComboBotStateMachine, PositionSnapshot, TickInputs } from '../lib/combo/stateMachine';
 import { AdaptiveSignals } from '../lib/combo/adaptiveEngine';
-import { ComboBotSideConfig, OHLC } from '../lib/types';
+import { ComboBotSideConfig, OHLC, ReopenDiagnostics } from '../lib/types';
 import { evaluateReopenPolicy, ReopenPolicyInput } from '../lib/combo/reopenPolicy';
 
 const SIDE_CFG: ComboBotSideConfig = {
@@ -49,7 +49,8 @@ function mkTick(
   position: PositionSnapshot,
   entryConditionMet: boolean,
   reopenConditionsMet: boolean,
-  signals: AdaptiveSignals = sig()
+  signals: AdaptiveSignals = sig(),
+  reopenDiagnostics?: ReopenDiagnostics,
 ): TickInputs {
   return {
     candleIdx,
@@ -62,6 +63,17 @@ function mkTick(
     position,
     entryConditionMet,
     reopenConditionsMet,
+    reopenDiagnostics,
+  };
+}
+
+function failedDiag(): ReopenDiagnostics {
+  return {
+    atrRatioOk: false,
+    atrDecliningOk: true,
+    rsiCrossOk: true,
+    avwapOk: true,
+    avwapRequired: false,
   };
 }
 
@@ -154,6 +166,42 @@ describe('combo/reopenPolicy', () => {
     expect(evaluateReopenPolicy(policyInput({ atrHistory: [8, 7, 6] })).diagnostics.atrDecliningOk).toBe(true);
     expect(evaluateReopenPolicy(policyInput({ atrHistory: [8, 7, 7] })).diagnostics.atrDecliningOk).toBe(false);
     expect(evaluateReopenPolicy(policyInput({ atrHistory: [8, 7] })).diagnostics.atrDecliningOk).toBe(false);
+  });
+
+  // Supervisor contract: ATR is recomputed on 4H bar boundaries but the simulation
+  // loop runs every 5m. The supervisor dedupes consecutive equals at push time so
+  // that strictlyDeclining sees unique 4H ATR values, not 5m duplicates. These tests
+  // mirror that dedupe to prove the gate can pass when 4H ATR genuinely declines.
+  it('atrDecliningOk passes after deduping repeated 5m samples of declining 4H ATR', () => {
+    const dedupePush = (history: number[], v: number): number[] => {
+      if (history.length === 0 || history[history.length - 1] !== v) history.push(v);
+      return history;
+    };
+    const samples5m = [100, 100, 100, 95, 95, 90]; // 4H ATR went 100 → 95 → 90 across 6 ticks
+    const history: number[] = [];
+    for (const v of samples5m) dedupePush(history, v);
+    expect(history).toEqual([100, 95, 90]);
+    expect(evaluateReopenPolicy(policyInput({ atrHistory: history })).diagnostics.atrDecliningOk).toBe(true);
+  });
+
+  it('atrDecliningOk stays false after deduping a flat ATR stream', () => {
+    const samples5m = [100, 100, 100, 100, 100];
+    const history: number[] = [];
+    for (const v of samples5m) {
+      if (history.length === 0 || history[history.length - 1] !== v) history.push(v);
+    }
+    expect(history).toEqual([100]);
+    expect(evaluateReopenPolicy(policyInput({ atrHistory: history })).diagnostics.atrDecliningOk).toBe(false);
+  });
+
+  it('atrDecliningOk stays false on an increasing ATR sequence', () => {
+    const samples5m = [90, 90, 95, 95, 100];
+    const history: number[] = [];
+    for (const v of samples5m) {
+      if (history.length === 0 || history[history.length - 1] !== v) history.push(v);
+    }
+    expect(history).toEqual([90, 95, 100]);
+    expect(evaluateReopenPolicy(policyInput({ atrHistory: history })).diagnostics.atrDecliningOk).toBe(false);
   });
 
   it('long reopen requires RSI crossing up through 35', () => {
@@ -477,6 +525,71 @@ describe('combo/stateMachine transitions', () => {
     expect(sm.getState().phase).toBe('REOPENING');
     expect(r.events.map(e => e.type)).toContain('tier1_reopen');
     expect(r.instruction.sizeMultiplier).toBe(SIDE_CFG.tier1Size);
+  });
+
+  it('emits reopen_check_failed every post-expiry cooldown candle when gates fail', () => {
+    // Tooltip-data event: timer expired, gates fail, diagnostics passed in →
+    // mkEvent attaches reopenDiagnostics so the chart's failed-gate tooltip has
+    // per-candle data. Phase stays COOLDOWN; no other events fire.
+    const sm = new ComboBotStateMachine('long', SIDE_CFG);
+    sm.tick(mkTick(0, 100, noPos(100), true, false));
+    sm.tick(mkTick(1, 100, withPos(100, 100), false, false));
+    sm.tick(mkTick(2, 95, withPos(100, 95), false, false)); // → COOLDOWN, remaining=3
+    // Burn through the timer with no diagnostics + reopenConditionsMet=false.
+    sm.tick(mkTick(3, 95, noPos(95), false, false));
+    sm.tick(mkTick(4, 95, noPos(95), false, false));
+    sm.tick(mkTick(5, 95, noPos(95), false, false)); // remaining hits 0, gates not evaluated yet → silent
+
+    // Now post-expiry: gates failing → expect reopen_check_failed, phase still COOLDOWN.
+    const r1 = sm.tick(mkTick(6, 95, noPos(95), false, false, sig(), failedDiag()));
+    expect(sm.getState().phase).toBe('COOLDOWN');
+    expect(r1.events.map(e => e.type)).toEqual(['reopen_check_failed']);
+    expect(r1.events[0].reopenDiagnostics?.atrRatioOk).toBe(false);
+    expect(r1.events[0].phase).toBe('COOLDOWN');
+
+    // Next post-expiry candle still failing → another reopen_check_failed (per-candle coverage).
+    const r2 = sm.tick(mkTick(7, 95, noPos(95), false, false, sig(), failedDiag()));
+    expect(r2.events.map(e => e.type)).toEqual(['reopen_check_failed']);
+  });
+
+  it('does not emit reopen_check_failed during cooldown countdown (pre-expiry silence)', () => {
+    // The supervisor evaluates the policy every COOLDOWN candle including the
+    // countdown, so reopenDiagnostics is present pre-expiry too. The state
+    // machine must stay silent on those candles — emitting on countdown would
+    // spam events with a tooltip diagnostic the user can't act on (timer has
+    // not elapsed; "no reopen attempt yet" is the right message there).
+    const sm = new ComboBotStateMachine('long', SIDE_CFG);
+    sm.tick(mkTick(0, 100, noPos(100), true, false));
+    sm.tick(mkTick(1, 100, withPos(100, 100), false, false));
+    sm.tick(mkTick(2, 95, withPos(100, 95), false, false)); // → COOLDOWN, remaining=3
+
+    // Three countdown ticks with diagnostics present + gates failing.
+    const r3 = sm.tick(mkTick(3, 95, noPos(95), false, false, sig(), failedDiag()));
+    const r4 = sm.tick(mkTick(4, 95, noPos(95), false, false, sig(), failedDiag()));
+    expect(r3.events.map(e => e.type)).not.toContain('reopen_check_failed');
+    expect(r4.events.map(e => e.type)).not.toContain('reopen_check_failed');
+    expect(sm.getState().phase).toBe('COOLDOWN');
+  });
+
+  it('post-expiry success emits retry_incremented + tier1_reopen, NOT reopen_check_failed (mutually exclusive branches)', () => {
+    // The if/else-if shape in tickCooldown means the success path and the
+    // failed-check path can never fire on the same candle. Diagnostics are
+    // passed in both cases (supervisor always populates them in COOLDOWN).
+    const sm = new ComboBotStateMachine('long', SIDE_CFG);
+    sm.tick(mkTick(0, 100, noPos(100), true, false));
+    sm.tick(mkTick(1, 100, withPos(100, 100), false, false));
+    sm.tick(mkTick(2, 95, withPos(100, 95), false, false)); // → COOLDOWN, remaining=3
+    sm.tick(mkTick(3, 95, noPos(95), false, false, sig(), failedDiag()));
+    sm.tick(mkTick(4, 95, noPos(95), false, false, sig(), failedDiag()));
+
+    const passingDiag: ReopenDiagnostics = {
+      atrRatioOk: true, atrDecliningOk: true, rsiCrossOk: true, avwapOk: true, avwapRequired: false,
+    };
+    const r = sm.tick(mkTick(5, 95, noPos(95), false, true, sig(), passingDiag));
+    const types = r.events.map(e => e.type);
+    expect(types).toContain('retry_incremented');
+    expect(types).toContain('tier1_reopen');
+    expect(types).not.toContain('reopen_check_failed');
   });
 
   it('REOPENING does not auto-advance after two candles', () => {
