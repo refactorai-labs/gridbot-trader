@@ -1334,7 +1334,7 @@ Both fixed.
 
 # Combo Bot — Phase 3 Baseline Replay Plan
 
-**Status:** Awaiting verification.
+**Status:** Complete.
 
 ## Context
 
@@ -1344,22 +1344,23 @@ Phase 3 establishes a clean baseline against which any future strategy claim mus
 
 ## Scope
 
-Phase 3 is split between you (the simulation runs) and me (the comparison tooling).
+Phase 3 was completed through a headless DB-backed replay instead of manual UI runs.
 
-- **You:** run two backtests in the UI (15–30 min each) and capture the Simulation IDs.
-- **Me:** write `scripts/compareRuns.ts`, execute it against the two IDs, and document the resulting baseline table in this file.
+- Fresh simulation rows were cloned from `cmovvwc8j07k3ickqjws9jjn4`.
+- The completed source run's AVWAP anchor was **not** cloned, avoiding final-state leakage into the baseline.
+- Both fresh runs used the normal `runSimulation(...)` DB-backed engine path.
 
 ## Todo
 
 ### 3.1 — Run A (gridLevels = 10)
-- [ ] Configure: same as the original `cmovvwc8j07k3ickqjws9jjn4` run — Jan–May 2026 WETH/USDC, 5× leverage, 60/40 allocation, AVWAP enabled, full_v31 reopen mode, default thresholds. Set `gridLevels = 10` explicitly.
-- [ ] Run to completion in the UI.
-- [ ] Capture the Simulation ID and paste it back here.
+- [x] Configure: same as the original `cmovvwc8j07k3ickqjws9jjn4` run — Jan–May 2026 WETH/USDC, 5× leverage, 60/40 allocation, AVWAP enabled, full_v31 reopen mode, default thresholds. Set `gridLevels = 10` explicitly.
+- [x] Run to completion headlessly through `runSimulation(...)`.
+- [x] Simulation ID: `cmoxwj1ku0000ccax8z3cm79a`.
 
 ### 3.2 — Run B (gridLevels = 20)
-- [ ] Same config as 3.1 but `gridLevels = 20`.
-- [ ] Run to completion in the UI.
-- [ ] Capture the Simulation ID and paste it back here.
+- [x] Same config as 3.1 but `gridLevels = 20`.
+- [x] Run to completion headlessly through `runSimulation(...)`.
+- [x] Simulation ID: `cmoxwj2z71ghnccaxbj1a1xyu`.
 
 ### 3.3 — Comparison script + baseline table
 - [x] Write `scripts/compareRuns.ts`. CLI: `npx tsx scripts/compareRuns.ts <runA-id> <runB-id>`.
@@ -1374,8 +1375,8 @@ Phase 3 is split between you (the simulation runs) and me (the comparison toolin
   - `Breakout entries (long / short)` — count of `breakout_entered` events (sanity check on entry rate)
   - `Max drawdown ($ / %)`
   - `Final equity`
-- [ ] Run the script against the two IDs from 3.1 and 3.2.
-- [ ] Append the resulting table to this file as the **documented baseline**.
+- [x] Run the script against the two IDs from 3.1 and 3.2.
+- [x] Append the resulting table to this file as the **documented baseline**.
 
 ## Phase 3 — Implementation Note (2026-05-08)
 
@@ -1387,15 +1388,48 @@ Phase 3 is split between you (the simulation runs) and me (the comparison toolin
 - Filled-only `GridOrder.fees` are summed (no double-counting cancellations).
 
 ### 3.4 — Decision gate (drives Phase 4)
-- [ ] Compare A vs B and the original loss-bearing run.
-- [ ] Pick one of three branches and document the choice here:
+- [x] Compare A vs B and the original loss-bearing run.
+- [x] Pick one of three branches and document the choice here:
   - **Both A and B flip to small loss / breakeven →** original loss was diagnostic noise from the bugs. Skip 4.1, go to 4.2 (leverage / allocation tuning).
   - **Both A and B still show large losses with reopen now firing →** regime mismatch is real. Phase 4.1 (directional filter) is justified.
   - **One materially better than the other →** tells us whether 10 or 20 levels suits this tape. Inform 4.2 default-allocation recommendation.
 
+**Decision:** Run B (`gridLevels = 20`) is materially better than Run A, but both remain loss-making. Reopen events are still `0 / 0`, so this baseline does **not** prove a "reopen now firing but still losing" regime mismatch. The clean conclusion is narrower: 20 levels reduced loss, drawdown, fees, and slippage on this tape; use that as the starting point for Phase 4.2 leverage/allocation tuning.
+
+## Phase 3 Documented Baseline — 2026-05-08
+
+| Metric                   | Run A · cmoxwj1ku0000ccax8z3cm79a | Run B · cmoxwj2z71ghnccaxbj1a1xyu |
+| ------------------------ | --------------------------------- | --------------------------------- |
+| Name                     |         Phase 3 Baseline A - GL10 |         Phase 3 Baseline B - GL20 |
+| gridLevels (engine)      |                                10 |                                20 |
+| Total PnL                |                          -$781.41 |                          -$502.59 |
+| Long PnL                 |                          -$678.10 |                          -$419.39 |
+| Short PnL                |                          -$103.31 |                           -$83.20 |
+| Fees (total)             |                            $73.00 |                            $47.75 |
+| Fees (long / short)      |                   $33.00 / $40.00 |                   $22.95 / $24.80 |
+| Slippage (total)         |                           $225.24 |                           $142.53 |
+| Slippage (long / short)  |                  $168.32 / $56.93 |                  $102.81 / $39.72 |
+| Funding (total)          |                           missing |                           missing |
+| Funding (long / short)   |                     $0.00 / $0.00 |                     $0.00 / $0.00 |
+| Reopens (long / short)   |                             0 / 0 |                             0 / 0 |
+| SLs (long / short)       |                             1 / 1 |                             1 / 1 |
+| Breakouts (long / short) |                             1 / 1 |                             1 / 1 |
+| Max drawdown ($)         |                          $1266.62 |                           $825.76 |
+| Max drawdown (%)         |                            12.59% |                             8.23% |
+| Final equity             |                          $9218.59 |                          $9497.41 |
+
+### Phase 3 Review
+
+- Added `scripts/runPhase3Baseline.ts` to clone the original config into two fresh DB simulations and run them synchronously through `runSimulation(...)`.
+- Verified the exact original range had `36276` cached ETHUSDT 5m candles before running.
+- Verified both baseline simulations completed with the expected engine grid levels (`10` and `20`), non-null slippage cost columns, and `fundingDataMissing = true`.
+- Funding rows for ETHUSDT over the original range were absent from the local cache (`0` rows), so the comparison correctly reports funding as `missing` rather than measured zero.
+- `scripts/compareRuns.ts` produced a complete table with no `undefined` cells.
+
 ## Critical files (Phase 3 only)
 
-- `scripts/compareRuns.ts` — new, ~80 lines, read-only.
+- `scripts/compareRuns.ts` — read-only comparison script.
+- `scripts/runPhase3Baseline.ts` — headless baseline runner used to create Run A and Run B.
 
 ## Verification gate
 
@@ -1561,4 +1595,3 @@ The spec says "4H higher-low pattern over last N bars" but `AdaptiveEngine`'s 4H
 - Phase 4.2 leverage / allocation A/B sweep.
 - Phase 4.3 UI-configurable entry conditions.
 - Optuna optimizer integration (Phase 5).
-
