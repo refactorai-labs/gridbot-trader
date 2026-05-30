@@ -21,6 +21,11 @@ export interface SessionView {
   // The UI surfaces this as a banner so $0 funding never silently looks like
   // "we measured zero" when it actually means "we couldn't measure".
   fundingDataMissing: boolean;
+  // Minutes per chart bucket. When the replay route aggregates 5m → coarser to
+  // keep the chart payload renderable, the badge in ComboStatusStrip shows it
+  // (e.g., "Chart aggregated to 1H"). Equal to the simulation timeframe when
+  // no aggregation happened.
+  chartTimeframeMins?: number;
 }
 
 export interface ReopenLights {

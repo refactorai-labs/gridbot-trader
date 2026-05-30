@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -39,6 +39,30 @@ import {
 import { DCATradeSnapshot } from '@/lib/strategies/dcaTypes';
 import { SUPPORTED_PAIRS } from '@/lib/constants';
 import OptimizerTab from '@/components/OptimizerTab';
+
+// Mirrors the threshold in `src/app/api/simulations/[id]/replay/route.ts`.
+// Used as a defensive guard so the auto-replay on page load can never push a
+// payload large enough to crash Chrome — even if the backend somehow forgets
+// to aggregate or compact.
+const MAX_CHART_CANDLES = 3000;
+// Hint ceiling for adaptive events. Backend compaction normally drops to
+// 2 × chartCandles (≤ 6000); anything larger here means the route returned
+// uncompacted diagnostics and we should refuse to mount rather than crash.
+const MAX_EVENTS_HINT = 5000;
+
+// Return a user-facing reason string when the replay payload is too large to
+// render safely; `null` means safe to mount.
+function checkReplayPayload(replay: ReplayData): string | null {
+  const candleCount = Array.isArray(replay.candles) ? replay.candles.length : 0;
+  const eventCount = Array.isArray(replay.adaptiveEvents) ? replay.adaptiveEvents.length : 0;
+  if (candleCount > MAX_CHART_CANDLES) {
+    return `Replay holds ${candleCount.toLocaleString()} candles (cap ${MAX_CHART_CANDLES.toLocaleString()}). Skipping render to keep the tab responsive.`;
+  }
+  if (eventCount > MAX_EVENTS_HINT) {
+    return `Replay holds ${eventCount.toLocaleString()} adaptive events (cap ${MAX_EVENTS_HINT.toLocaleString()}). Skipping render to keep the tab responsive.`;
+  }
+  return null;
+}
 
 function getDefaultDCAConfig(direction: Direction): DCABreakoutConfig {
   return {
@@ -184,11 +208,18 @@ export default function SimulatorPage() {
         const replayRes = await fetch(`/api/simulations/${savedId}/replay`);
         if (replayRes.ok) {
           const replay = await replayRes.json();
-          setReplayData(replay);
-          setConfigCollapsed(true);
+          const tooLarge = checkReplayPayload(replay);
+          if (tooLarge) {
+            localStorage.removeItem('lastSimulationId');
+            setStatusMessage(`Last simulation skipped — ${tooLarge}`);
+          } else {
+            setReplayData(replay);
+            setConfigCollapsed(true);
+            setStatusMessage('');
+          }
+        } else {
+          setStatusMessage('');
         }
-
-        setStatusMessage('');
       } catch {
         localStorage.removeItem('lastSimulationId');
         setStatusMessage('');
@@ -199,50 +230,59 @@ export default function SimulatorPage() {
   }, []);
 
   // Current snapshot for P&L display
-  const currentSnapshot: SnapshotData | undefined = replayData?.pnlSnapshots.reduce(
-    (closest, s) => {
-      if (s.candleIdx <= currentIdx && (!closest || s.candleIdx > closest.candleIdx)) {
-        return s;
-      }
-      return closest;
-    },
-    undefined as SnapshotData | undefined
-  );
+  const currentSnapshot = useMemo<SnapshotData | undefined>(() => {
+    return replayData?.pnlSnapshots.reduce(
+      (closest, s) => {
+        if (s.candleIdx <= currentIdx && (!closest || s.candleIdx > closest.candleIdx)) {
+          return s;
+        }
+        return closest;
+      },
+      undefined as SnapshotData | undefined
+    );
+  }, [replayData?.pnlSnapshots, currentIdx]);
 
   // Current adaptive state
-  const currentAdaptiveEvents = replayData?.adaptiveEvents.filter(
-    e => e.candleIdx <= currentIdx
-  ) || [];
+  const currentAdaptiveEvents = useMemo(
+    () => replayData?.adaptiveEvents.filter(e => e.candleIdx <= currentIdx) || [],
+    [replayData?.adaptiveEvents, currentIdx],
+  );
   const lastAdaptiveEvent = currentAdaptiveEvents[currentAdaptiveEvents.length - 1];
 
   // Filled level indices up to current playback position
-  const longFilledLevels = new Set<number>();
-  const shortFilledLevels = new Set<number>();
-  if (replayData) {
-    for (const order of replayData.gridOrders) {
-      if (order.fillCandleIdx != null && order.fillCandleIdx <= currentIdx) {
-        if (order.side === 'long') longFilledLevels.add(order.level);
-        else shortFilledLevels.add(order.level);
+  const { longFilledLevels, shortFilledLevels } = useMemo(() => {
+    const longSet = new Set<number>();
+    const shortSet = new Set<number>();
+    if (replayData) {
+      for (const order of replayData.gridOrders) {
+        if (order.fillCandleIdx != null && order.fillCandleIdx <= currentIdx) {
+          if (order.side === 'long') longSet.add(order.level);
+          else shortSet.add(order.level);
+        }
       }
     }
-  }
+    return { longFilledLevels: longSet, shortFilledLevels: shortSet };
+  }, [replayData?.gridOrders, currentIdx]);
 
   // Grid fill markers for trade visualization
-  const longFills: GridFill[] = [];
-  const shortFills: GridFill[] = [];
-  if (replayData) {
-    for (const order of replayData.gridOrders) {
-      if (order.fillCandleIdx != null && order.fillPrice != null) {
-        const fill: GridFill = {
-          candleIdx: order.fillCandleIdx,
-          price: order.fillPrice,
-          type: order.orderType === 'buy' ? 'buy' : 'sell',
-        };
-        if (order.side === 'long') longFills.push(fill);
-        else shortFills.push(fill);
+  const { longFills, shortFills } = useMemo(() => {
+    const longArr: GridFill[] = [];
+    const shortArr: GridFill[] = [];
+    if (replayData) {
+      for (const order of replayData.gridOrders) {
+        if (order.fillCandleIdx != null && order.fillPrice != null) {
+          const fill: GridFill = {
+            candleIdx: order.fillCandleIdx,
+            price: order.fillPrice,
+            type: order.orderType === 'buy' ? 'buy' : 'sell',
+          };
+          if (order.side === 'long') longArr.push(fill);
+          else shortArr.push(fill);
+        }
       }
     }
-  }
+    return { longFills: longArr, shortFills: shortArr };
+  }, [replayData?.gridOrders]);
 
   // DCA P&L for combined display
   const dcaLongCurrentSnapshot = dcaLongSnapshots.reduce<DCATradeSnapshot | undefined>(
@@ -357,7 +397,7 @@ export default function SimulatorPage() {
 
         // Poll for completion
         let attempts = 0;
-        while (attempts < 120) {
+        while (attempts < 180) {
           await new Promise(r => setTimeout(r, 1000));
           attempts++;
 
@@ -403,8 +443,16 @@ export default function SimulatorPage() {
             const replayRes = await fetch(`/api/simulations/${id}/replay`);
             if (replayRes.ok) {
               const replay = await replayRes.json();
-              setReplayData(replay);
-              setConfigCollapsed(true);
+              const tooLarge = checkReplayPayload(replay);
+              if (tooLarge) {
+                // Fresh sim came back with a too-big payload. Don't mount the
+                // chart; surface the reason so the user knows to shorten the
+                // range or switch to a coarser timeframe.
+                setError(tooLarge);
+              } else {
+                setReplayData(replay);
+                setConfigCollapsed(true);
+              }
             }
             break;
           }
@@ -737,7 +785,12 @@ export default function SimulatorPage() {
                     timeframe: simulation.timeframe,
                     startTime: new Date(simulation.startTime),
                     endTime: new Date(simulation.endTime),
-                    totalCandles: simulation.totalCandles ?? replayData.candles.length,
+                    // Chart-space total — matches the candles array the chart axis
+                    // is rendering. Using DB-space (`simulation.totalCandles`) would
+                    // make ComboEventTimeline plot events across a range the chart
+                    // does not span. Summary-only displays (PerformanceSummary etc.)
+                    // can still surface the original DB total.
+                    totalCandles: replayData.candles.length,
                     currentCandleIdx: currentIdx,
                     leverage: comboConfig.leverage,
                     allocationLong: comboConfig.allocationLong,
@@ -745,6 +798,7 @@ export default function SimulatorPage() {
                     playbackSpeed: speed,
                     gridLevels: simulation.comboGridLevels ?? comboConfig.gridLevels,
                     fundingDataMissing: simulation.fundingDataMissing ?? false,
+                    chartTimeframeMins: replayData.chartTimeframeMins,
                   }}
                   candles={replayData.candles}
                   longLevels={replayData.longLevels}

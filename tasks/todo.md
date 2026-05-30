@@ -1,3 +1,29 @@
+# Active Plan — Hotfix v2 Replay Compaction Review
+
+**Status:** Completed review; no implementation changes made beyond this review note.
+
+## Todo
+
+- [x] Read the current working tree status and changed-file list.
+- [x] Inspect the replay route diff, page replay guards, combo status/type changes, and replay compaction tests.
+- [x] Cross-check the submitted findings against the actual code and nearby consumers.
+- [x] Identify any real correctness bugs, overstated concerns, or follow-up cleanup items.
+- [x] Give an honest ship/no-ship opinion.
+- [x] Add a review section here summarizing the assessment.
+
+## Review — Hotfix v2 Replay Compaction
+
+- Verdict: I agree with the supplied review's ship recommendation. The fix is at the right boundary: DB/supervisor keep full-resolution diagnostics, while the replay API serializes a chart-safe view with sliced candle indexes.
+- I found no blocker in the route remapping. `toChartIdx`, `toSlicedIdx`, out-of-range drops, snapshot dedupe, event compaction, AVWAP-anchor remap, and `totalCandles = slicedCandles.length` line up with the current consumers in `ComboPane`, `deriveCooldownRanges`, `TradingChart`, and `ComboEventTimeline`.
+- The tests are meaningful and the focused suite passes: `npm test -- replayCompaction` reports 8/8 passing. `npx tsc --noEmit` is clean.
+- I agree comments are heavier than needed, especially in `route.ts`, but they are not obscuring a bug. This can be cleaned later without changing behavior.
+- The 2h bucket concern is valid only for ranges just above factor 12, roughly >36,000 five-minute candles. The "4000 candles snaps to 4h" example is not correct; 4000 snaps to 15m.
+- `_compactionStats` is a small API smell but low risk. If this endpoint becomes externally consumed, promote it to a named `compactionStats` field or hide it behind debug mode.
+- `MAX_EVENTS_HINT = 5000` is defensive and could theoretically reject a future payload with many legitimate structural events, but today's compacted replay shape should be far below it for the crash case.
+- Small cleanup candidates: trim verbose comments, consider adding factor 24, rename/gate `_compactionStats`, and replace the `gridOrders.flatMap(...return [])` pattern with `filter`/`map` if readability matters.
+
+---
+
 # Active Plan — Strategy Document Feasibility Review
 
 **Status:** Completed.
@@ -1595,3 +1621,219 @@ The spec says "4H higher-low pattern over last N bars" but `AdaptiveEngine`'s 4H
 - Phase 4.2 leverage / allocation A/B sweep.
 - Phase 4.3 UI-configurable entry conditions.
 - Optuna optimizer integration (Phase 5).
+
+---
+
+# Combo Bot — Phase 4/5 Remaining Work Plan — 2026-05-09
+
+**Status:** Drafted, awaiting user approval. Verified against repo state on 2026-05-09. Old unchecked 4.1 boxes at lines 1127-1128 are stale; 4.1 ships as documented in the Phase 4.1 Review (line 1547).
+
+## Scope
+
+Five remaining workstreams, ordered cheapest → most expensive. Each is independently shippable so we can stop after any of them.
+
+### Workstream A — Optuna `requireDirectionalConfirmation` search (≈ 30 min)
+
+The walk-forward route already accepts the full `ComboBotConfig`, so the only missing piece is the optimizer driver suggesting the flag.
+
+- [ ] **A.1** Add `trial.suggest_categorical("require_directional_confirmation", [True, False])` in `optimizer/optuna_driver.py` `build_combo_cfg()` and pass it through as `requireDirectionalConfirmation` on the returned dict.
+- [ ] **A.2** Smoke-test one trial against `/api/walk-forward` to confirm the flag round-trips (response unchanged shape, no schema error).
+- [ ] **A.3** Document the new search dimension in `optimizer/README.md` (one-line addition).
+
+**Out of scope:** Re-running 200-trial studies — those are part of workstream D.
+
+### Workstream B — Phase 4.2 leverage / allocation sweep (≈ 2-3 hrs)
+
+Goal: a single deterministic script that runs the same fixture under {leverage 1, 2, 3, 5} × {50/50, 60/40, long-only, short-only} and writes a markdown comparison table. Reuse `runComboSimulationCore` directly — no new engine code.
+
+- [ ] **B.1** Add `scripts/runPhase42Sweep.ts` modelled on the existing `scripts/runPhase3Baseline.ts`. Inputs: same Jan–May 2026 WETH/USDC window. 16 runs total (4 leverage × 4 allocation modes).
+- [ ] **B.2** Per-run output columns: leverage, allocationMode, finalPnL, maxDrawdownPct, longTrades, shortTrades, fees, slippage, funding, fundingRows.
+- [ ] **B.3** Write the table back into `tasks/todo.md` under a new "Phase 4.2 Review" section + recommend new defaults ("measured defaults" — best fitness with DD ≤ X%, your call on the threshold).
+- [ ] **B.4** Verification: `npx tsc --noEmit` clean; the sweep script runs end-to-end against cached candles.
+
+**Out of scope:** Changing default config values — that's a follow-up PR after we look at the table together.
+
+### Workstream C — Phase 4.3 UI-configurable entry conditions (≈ 4-6 hrs)
+
+Preset selector + raw `IndicatorCondition[]` editor + persistence + tests. Reuse the existing `ConditionEvaluator` so we are not introducing a parallel rule engine.
+
+- [ ] **C.1** Add `EntryPreset` type to `src/lib/types.ts`: union of `"current" | "rsi_trend" | "rsi_avwap" | "custom"`. Add `entryPreset?: EntryPreset` and `entryConditions?: IndicatorCondition[]` to `ComboBotConfig`.
+- [ ] **C.2** Add `entryPreset String @default("current")` and `entryConditionsJson String?` columns on `Simulation` (`prisma/schema.prisma`); `npx prisma db push`.
+- [ ] **C.3** Persist via `simulations/route.ts` POST and read via `supervisorRunner.ts` (mirrors the 4.1 wiring).
+- [ ] **C.4** In `supervisor.ts evaluateEntryCondition`, when preset !== `"current"`, build the boolean from the preset's spec OR (for `custom`) call `ConditionEvaluator.evaluate(entryConditions, indicatorContext)`. Default path is unchanged for `"current"`.
+- [ ] **C.5** Add a preset dropdown + (custom-mode-only) raw conditions editor block to `ComboBotConfig.tsx`.
+- [ ] **C.6** Tests: round-trip persistence per preset, entry behavior per preset on chop and trending fixtures, custom-condition path resolves through `ConditionEvaluator`.
+- [ ] **C.7** Verification: `npx tsc --noEmit`, `npm test`, `npm run build` all green.
+
+**Out of scope:** Designing visual condition-builder UX — start with a JSON-textarea for `custom` to keep this small. We can replace it with a builder later.
+
+### Workstream D — Phase 5 live acceptance run (user-invoked, ≈ 60-120 min wallclock)
+
+This is execution of `PHASE7_RUNBOOK.md`. I drive it; you decide when to start because it occupies a terminal for an hour+.
+
+- [ ] **D.1** Run `npx tsx scripts/seed-eth.ts` to seed full ETH candle + funding history.
+- [ ] **D.2** Single-fold sanity backtest per Step 2 of the runbook.
+- [ ] **D.3** 50-trial Optuna sanity run.
+- [ ] **D.4** 200-trial Optuna acceptance run.
+- [ ] **D.5** Acceptance verification per runbook Step 4 + reopen-policy/AVWAP ablation table per Step 5.
+- [ ] **D.6** Append results + decision to `tasks/todo.md`.
+
+**Dependency:** Workstream A should land first so the directional flag is part of the search space we accept on.
+
+### Workstream E — Phase 5 deeper research rigor (≈ 1-2 days, scope to be agreed)
+
+Two distinct gaps; we should pick one or both explicitly because they are not free.
+
+- [ ] **E.1 Blind-OOS holdout (smaller).** Reserve the last K% of the data range as a holdout window the optimizer never sees. After the 200-trial study converges, evaluate the best params on the holdout and report PnL/DD/PSR. This is closer to "honest OOS" than stitched walk-forward without going full nested.
+- [ ] **E.2 Parameter-perturbation stability test (smaller).** New script: take the best params, perturb each numeric parameter by ±10%, run each perturbed config on the same window, report mean / variance / worst-case fitness. Surfaces overfitting (high variance ≈ knife-edge tuning).
+- [ ] **E.3 Nested per-fold optimization (larger, optional).** True Pardo walk-forward: each fold runs an inner optimization on its train window, applies best params to that fold's OOS, stitches OOS across folds. Requires extending `walkForwardCombo.ts` to accept a search space + sampler, and embedding the inner optimizer (Optuna sub-study). This is the gold standard but it is a ~1-day rewrite of walkForwardCombo. Mark this as "decide later" — E.1 + E.2 may be enough.
+
+**Out of scope (deferred again):** Multi-asset robustness, regime-conditional fitness, transaction-cost sensitivity sweeps.
+
+## Verification gates
+
+After every workstream: `npx tsc --noEmit`, `npm test`, `npm run build`.
+
+## Decision points I need from you before starting
+
+1. **Workstream order.** A → B → C → D → E is my recommendation. Confirm or reorder.
+2. **Workstream E scope.** E.1 + E.2 only, or also E.3? E.3 is real work.
+3. **Workstream B "measured defaults" criterion.** What's the DD/Sharpe/PSR threshold you want me to pick the recommended config under?
+4. **Workstream C custom-conditions UX.** OK to ship a JSON textarea for v1, or do you want a builder UI from the start?
+
+Awaiting approval before starting any of A–E.
+
+---
+
+# Hotfix — Combo Bot 5m long-range Chrome crash — 2026-05-09
+
+**Bug:** Running a Combo Bot simulation on 5m timeframe over Jan 1 → May 9, 2026 (~37k candles) crashes the Chrome tab. The simulation ID is then auto-replayed on page refresh, so subsequent reloads also crash until `localStorage` is cleared.
+
+**Root cause (frontend rendering OOM):** `/api/simulations/[id]/replay` returns all ~37k candles + events / orders / snapshots in one ~5–10 MB JSON. ComboPane allocates two 37k Float64 SL arrays + computes BB/RSI/VWAP/ATR over 37k. TradingChart pushes 37k candles + ~9 line/area series into lightweight-charts (×2 in dual mode). page.tsx rebuilds 6 derived structures every render. V8 / canvas memory exhausts → renderer dies. The simulation engine itself is correct.
+
+**Fix:** Aggregate replay candles server-side when count > 3000 and remap every persisted `candleIdx` to the bucket-index space — frontend stays unchanged, just receives a sane chart payload.
+
+## Plan
+
+- [x] **H.1 Phase 1 — Replay aggregation.** Edit `src/app/api/simulations/[id]/replay/route.ts`:
+  - Add `MAX_CHART_CANDLES = 3000`.
+  - When `candles.length > MAX_CHART_CANDLES`: snap a bucket factor from `[1,3,6,12,48,144,288]` (5m / 15m / 30m / 1h / 4h / 12h / 1d), aggregate via `aggregate5mTo()`.
+  - Remap `gridOrders.fillCandleIdx`, `pnlSnapshots.candleIdx`, `adaptiveEvents.candleIdx`, `avwapAnchor.candleIdx`, and the `from`/`to` URL params by `Math.floor(idx / bucketFactor)`.
+  - Dedupe `pnlSnapshots` per bucket (keep last).
+  - Stable secondary-sort `adaptiveEvents` by original idx before remap.
+  - Add `chartTimeframeMins` to response.
+- [x] **H.2 Phase 2 — Memoize page.tsx derivations.** Wrap `currentSnapshot`, `currentAdaptiveEvents`, `longFilledLevels`, `shortFilledLevels`, `longFills`, `shortFills` (lines 202-245) in `useMemo`.
+- [x] **H.3 Phase 3 — localStorage poison guard.** In `loadSavedSimulation` (lines 124-199): if `replay.totalCandles > 3000 && replay.chartTimeframeMins == null` (legacy huge payload), clear `lastSimulationId`, skip `setReplayData`, banner "Last simulation skipped — too large to render. Run a fresh sim."
+- [x] **H.4 Phase 4 — Chart-timeframe badge.** Surface a small badge in ComboPane when `chartTimeframeMins !== 5`.
+- [x] **H.5 Phase 5 — Polling timeout bump.** `page.tsx:360` `attempts < 120` → `attempts < 180`.
+- [x] **H.6 Build gates.** `npx tsc --noEmit`, `npm test`, `npm run build`.
+- [x] **H.7 Review.** Append review section below.
+
+## Review — 2026-05-09
+
+**Why we touched it:** Combo Bot @ 5m × 4 months produced a ~37k-candle replay payload that crashed the Chrome tab, and the saved-sim auto-replay on page refresh kept re-crashing on every reload until `localStorage` was cleared. The simulation engine itself was correct; the bug was purely a frontend rendering OOM from a single oversized JSON response and from unmemoized derivations + lightweight-charts setData(37k) on every render.
+
+**What changed (5 files, all small):**
+
+1. **`src/app/api/simulations/[id]/replay/route.ts`** — when `candles.length > 3000` and the sim is at 5m, snap a bucket factor from `[1, 3, 6, 12, 48, 144, 288]`, call `aggregate5mTo()` on the 5m candles, and remap every persisted `candleIdx` (gridOrders.fillCandleIdx, pnlSnapshots.candleIdx, adaptiveEvents.candleIdx, avwapAnchor.candleIdx, `from`/`to` URL params) by `Math.floor(idx / bucketFactor)`. Snapshots are deduped per bucket (last-write-wins on DB ASC order). Events are re-sorted post-remap on the stable JS sort so intra-bucket ordering follows original 5m order — keeps the SL forward-fill in `ComboPane.tsx` from flickering. New `chartTimeframeMins` field on the response.
+
+2. **`src/app/page.tsx`** — wrapped `currentSnapshot`, `currentAdaptiveEvents`, `longFilledLevels` / `shortFilledLevels`, `longFills` / `shortFills` in `useMemo` (was rebuilt on every render, including every playback tick). Added a defensive guard in `loadSavedSimulation`: if a response somehow comes back with `totalCandles > 3000` and no `chartTimeframeMins`, clear `lastSimulationId` and skip `setReplayData`. Bumped the polling timeout from 120 → 180 seconds.
+
+3. **`src/lib/types.ts`** — added optional `chartTimeframeMins?: number` to `ReplayData`.
+
+4. **`src/components/combo/types.ts`** — added optional `chartTimeframeMins?: number` to `SessionView`.
+
+5. **`src/components/combo/ComboStatusStrip.tsx`** — appended a small "(chart 1H)" suffix next to the TF coord whenever the chart bucket differs from the simulation timeframe. Tooltip explains the simulation still ran at the original TF.
+
+**Build gates:** `npx tsc --noEmit` clean. `npm test` 205/205 passed (10 files). `npm run build` clean — bundle size unchanged (96.2 kB, 183 kB First Load).
+
+**Known limitations / out of scope (intentional):**
+- The supervisor backend loop in `src/lib/combo/supervisor.ts:424` was not touched. It runs server-side in Node and never crashed Chrome; it is correct as-is.
+- Frontend windowing on lightweight-charts (alternative architecture) was rejected in planning — invasive across multiple `useEffect` hooks; aggregation is simpler, ships in one route, and gives the same end result for the user.
+- `chartTimeframeMins` aggregation only kicks in for combo (5m). Grid simulations at 1h/4h have ≤2920 candles for a 4-month range, well below the 3000 threshold, so they pass through unchanged.
+
+**Verification checklist for the user when running locally:**
+1. Re-run the original failing scenario: Combo Bot, 5m, Jan 1 → May 9 2026 (~37k candles). Tab should complete the run, render the chart with ~3083 1H buckets, and remain responsive.
+2. Refresh the page — saved-sim auto-replay should hydrate without a crash.
+3. ComboStatusStrip should show `TF=5m (chart 1h)` for the long-range run, just `TF=5m` for short-range runs that stay below the threshold.
+4. Spot-check a 1-week 5m combo run (~2k candles) — confirm no aggregation badge appears.
+
+---
+
+# Hotfix v2 — Combo Bot replay still crashes Chrome (event payload bomb) — 2026-05-11
+
+## Why the first hotfix wasn't enough
+
+Re-running the failing scenario on 2026-05-11 confirmed Chrome still crashes. Investigation against the actual persisted sim (`cmoxwxbef1h4czmqo6h2pduet`, Jan 1 → May 11 2026, 5m combo) revealed:
+
+- `BinanceCandle` count: **36,852** → chart aggregation snaps factor=48 → **~768 chart candles**. Hotfix v1 made candles fine.
+- `AdaptiveEvent` count: **66,757** total, of which **66,749 are `reopen_check_failed`** (a diagnostic-only event emitted every post-expiry cooldown candle for failed-gate tooltip coverage; see `stateMachine.ts:237`).
+- `SUM(LENGTH(detailsJson)) = 18,476,299 bytes` — ~18.5 MB of just the JSON detail strings, before object overhead. The wire payload is dominated by this, not candles.
+- The hotfix v1 route remapped event `candleIdx` but never **compacted** the per-candle diagnostic flood. The frontend still receives ~66k objects, walks them in `ComboPane.useMemo`, filters them per-render in `ComboEventFeed` and `ComboEventTimeline`, and stuffs ~66k diagnostics into the cooldown-tooltip data array.
+
+## Additional defects found alongside
+
+- `route.ts:92,211` — sliced-index bug. When `from`/`to` URL params trim the chart, `slicedCandles` starts at `chartFrom`, but returned `candleIdx`s are still absolute chart indexes (not shifted by `chartFrom`). Latent today (no caller passes `from`/`to`) but wrong on its face.
+- `route.ts:217` — `totalCandles: chartCandles.length` returns the full chart length even when the response was sliced to a subrange.
+- `page.tsx` `ComboPane.session.totalCandles` — passes `simulation.totalCandles ?? replayData.candles.length`. Simulation totalCandles is **DB-space** (e.g., 36,852), `candles.length` is **chart-space** (e.g., 768). Mismatch: `ComboEventTimeline` ruler positions events against a 36,852 range while the chart shows 768.
+- `loadSavedSimulation` guard only triggers on **restored** sims and only checks `totalCandles`, not actual returned `candles.length` / `adaptiveEvents.length`. A fresh sim with a too-large adaptiveEvents array slips through.
+
+## Plan
+
+- [x] **V2.1 Refactor remapping helpers in `route.ts`.** `toChartIdx` + `toSlicedIdx` introduced. All emitted `candleIdx` values are now sliced-space. Out-of-range rows dropped for orders, snapshots, events, AVWAP anchor.
+- [x] **V2.2 Compact `reopen_check_failed` events.** Latest-per-`(slicedCandleIdx, side)`-bucket using a Map keyed by `${sliced}|${side}`. Structural events pass through, sorted stably by (sliced, originalIdx). New `_compactionStats` field on the response surfaces drop counts for telemetry/tests.
+- [x] **V2.3 Fix `totalCandles` semantics.** Now equals `slicedCandles.length`.
+- [x] **V2.4 Frontend chart-space consistency in `page.tsx`.** `ComboPane.session.totalCandles = replayData.candles.length`. `ComboEventTimeline` ruler now spans the same range as the chart axis.
+- [x] **V2.5 Oversized-response guard.** `checkReplayPayload(replay)` helper used by both restored (`loadSavedSimulation`) and fresh (`handleRunSimulation`) load paths. Validates `candles.length` and `adaptiveEvents.length` against `MAX_CHART_CANDLES` and `MAX_EVENTS_HINT`.
+- [x] **V2.6 Tests.** `src/__tests__/replayCompaction.test.ts` — 8 cases covering aggregation, compaction (count + latest-wins), structural preservation, from/to slicing, totalCandles semantics, payload-size sanity.
+- [x] **V2.7 Build gates.** `npx tsc --noEmit` clean. `npm test` → 213/213 (8 new). `npm run build` clean (96.3 kB / 184 kB First Load — +0.1 kB from the guard helper).
+- [x] **V2.8 Manual verification.** See instructions in the Review section below — needs to be run by the user against the actual failing sim.
+- [x] **V2.9 Review section.** Appended below.
+
+## Review — Hotfix v2 — 2026-05-11
+
+**Why we touched it:** Hotfix v1 reduced the candlestick payload but missed the real wire-cost driver — 66,749 `reopen_check_failed` diagnostic events (18.5 MB of `detailsJson`) on the failing sim `cmoxwxbef1h4czmqo6h2pduet`. The frontend still walked ~66k objects in `ComboPane.useMemo`, filtered them per-render in `ComboEventFeed` / `ComboEventTimeline`, and stuffed them into the cooldown-tooltip diagnostic array. V8 / DOM OOM → Chrome killed the tab. Three latent index/semantics bugs surfaced alongside: sliced-index not 0-based, `totalCandles` reflecting chart length instead of sliced length, and `ComboPane.session.totalCandles` mixing DB-space and chart-space.
+
+**What changed (3 files, 8 new tests):**
+
+1. **`src/app/api/simulations/[id]/replay/route.ts`** — refactored remap to `toChartIdx` + `toSlicedIdx`. All emitted `candleIdx` values are sliced-space (0-based against the returned candles array). Out-of-range rows (events, snapshots, orders, AVWAP anchor) are dropped. Snapshot dedupe keyed by sliced index. Adaptive events partitioned: structural events pass through, `reopen_check_failed` events are reduced to one row per `(slicedCandleIdx, side)` bucket (last DB row wins on ASC order — i.e. latest diagnostic). Output sorted stably by `(slicedCandleIdx, originalIdx)`. New `_compactionStats` field on the response. `totalCandles` now equals `slicedCandles.length`.
+
+2. **`src/app/page.tsx`** — `ComboPane.session.totalCandles` now reads from `replayData.candles.length` (chart-space). Introduced `checkReplayPayload(replay)` helper plus `MAX_EVENTS_HINT = 5000`. Both restored (`loadSavedSimulation`) and fresh (`handleRunSimulation`) load paths route through the helper and surface the offending counts instead of mounting.
+
+3. **`src/__tests__/replayCompaction.test.ts`** — new file, 8 cases mirroring the `vi.mock('../lib/prisma', …)` pattern from `candleCache.test.ts`. Covers candle aggregation, `reopen_check_failed` compaction count, latest-DB-row-per-bucket wins, structural-event preservation across all 11 types, `from`/`to` returning 0-based sliced indexes, OOR drop behaviour, `totalCandles == slicedCandles.length` semantics, and the failing-sim repro (66k events → ≤ ~1.5k).
+
+**Payload-size delta (estimated, for the failing sim):**
+- Before v2: ~25 MB raw / ~3-4 MB gzipped (dominated by 66,749 events × ~277 B detailsJson).
+- After v2: ~150 KB raw / ~30 KB gzipped. Compaction drops ~99 % of events; the survivors are ≤ 2 × chart buckets ≈ 1,500.
+
+**Residual risks / known tradeoffs:**
+- The cooldown-tooltip diagnostics now show "latest failed gate within this chart bucket per side" instead of "per 5m candle". This matches the chart's actual rendered precision after v1 aggregation. Accepted.
+- The `_compactionStats` field is currently unused by any UI; left in place for telemetry and future debugging. Safe to keep (small, fixed-size object).
+- `MAX_EVENTS_HINT = 5000` is a defensive ceiling; once compaction is reliably under 2×3000=6000 the hint could be raised to 7000 to give headroom. Current value is conservative.
+
+**What we intentionally did NOT change:**
+- `src/lib/combo/stateMachine.ts:237` — supervisor still emits `reopen_check_failed` every post-expiry cooldown candle. The DB remains the source of truth at 5m resolution; replay serialization is the right boundary to downsample for UI rendering (confirmed by external review). `comboSupervisor.test.ts` and future audits depend on the full-resolution event stream.
+- `src/components/combo/ComboPane.tsx`, `ComboEventFeed.tsx`, `ComboEventTimeline.tsx`, `TradingChart.tsx`, `derive.ts` — all consumers see the same `AdaptiveEventView` shape; zero modifications needed.
+- Prisma schema. No migration.
+- Memoization patterns shipped in v1. Still load-bearing for playback responsiveness.
+
+**Manual verification still required from the user:**
+1. **Primary repro fixed.** Run Combo Bot, 5m, Jan 1 → May 11 2026 (sim `cmoxwxbef1h4czmqo6h2pduet` or fresh). Tab must load, status strip shows `TF=5m (chart 4h)`, playback head advances smoothly, no Chrome crash.
+2. **Refresh resilience.** Reload the page after (1). Auto-replay rehydrates without crash.
+3. **Tooltip sanity.** Hover a cooldown bucket — one set of failed-gate diagnostics shown per chart bucket. Acceptable for aggregated view.
+4. **Regression check.** Short-range 5m combo (~1-2k candles): no aggregation badge, full per-5m event resolution preserved.
+5. **Optional: payload size in DevTools network panel.** The `/api/simulations/<id>/replay` response should drop from ~25 MB to ~150 KB for the failing sim.
+
+## Out of scope (intentional)
+
+- Changing supervisor event emission rate (`stateMachine.ts:237`). The per-candle diagnostic events are valuable for the comboSupervisor tests, future audits, and downstream tools. Replay serialization is the right layer to fix this.
+- Prisma migration. Schema unchanged.
+- Frontend windowing on lightweight-charts. The aggregation path already handles candles correctly post-v1.
+- Web Workers / streaming JSON. After compaction the payload should drop from ~25 MB to ~150 KB; no longer worth the complexity.
+
+## Awaiting your approval before I start
+
+Confirm one of:
+1. **Go.** I implement V2.1 → V2.9 in order; one commit at the end (or split if you prefer).
+2. **Adjust scope.** E.g., skip V2.4's broader `totalCandles` audit and just patch the one ComboPane line; or skip the test file; or change the `MAX_EVENTS_HINT` ceiling.
+3. **Different approach.** Push the compaction into the supervisor instead, or use a streaming response, etc.

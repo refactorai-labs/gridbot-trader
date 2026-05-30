@@ -147,6 +147,10 @@ export interface ReplayData {
   longLevels: GridLevel[];
   shortLevels: GridLevel[];
   totalCandles: number;
+  // Effective chart timeframe in minutes. Equals the simulation's timeframe when
+  // the candle count is small; bumped to a coarser bucket by the replay route
+  // when the raw count would crash the renderer (combo @ 5m × multi-month).
+  chartTimeframeMins?: number;
   avwapAnchor?: AVWAPAnchorData | null;
 }
 

@@ -16,6 +16,12 @@ function fmtDate(d: Date): string {
   return d.toISOString().slice(2, 10).replace(/-/g, '-');
 }
 
+function fmtTfMins(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  if (mins < 60 * 24) return `${mins / 60}h`;
+  return `${mins / 60 / 24}d`;
+}
+
 export default function ComboStatusStrip({ session, onRun, isRunning }: Props) {
   const allocLong = Math.round(session.allocationLong * 100);
   const allocShort = 100 - allocLong;
@@ -34,7 +40,18 @@ export default function ComboStatusStrip({ session, onRun, isRunning }: Props) {
 
       <div className="strip-session">
         <span className="combo-coord"><span className="k">PAIR</span><span className="eq">=</span><span className="v">{session.pair.replace('/', '')}</span></span>
-        <span className="combo-coord"><span className="k">TF</span><span className="eq">=</span><span className="v">{session.timeframe}</span></span>
+        <span className="combo-coord">
+          <span className="k">TF</span><span className="eq">=</span>
+          <span className="v">{session.timeframe}</span>
+          {session.chartTimeframeMins != null && fmtTfMins(session.chartTimeframeMins) !== session.timeframe && (
+            <span
+              className="v chart-tf"
+              title="Chart aggregated to keep rendering fast. The simulation still ran at the timeframe shown."
+            >
+              (chart {fmtTfMins(session.chartTimeframeMins)})
+            </span>
+          )}
+        </span>
         <span className="combo-coord"><span className="k">WND</span><span className="eq">=</span><span className="v">{fmtDate(session.startTime)}→{fmtDate(session.endTime)}</span></span>
         <span className="combo-coord">
           <span className="k">CDL</span><span className="eq">=</span>
@@ -169,6 +186,11 @@ export default function ComboStatusStrip({ session, onRun, isRunning }: Props) {
           font-weight: 600;
         }
         .funding-warn { cursor: help; }
+        .chart-tf {
+          margin-left: 6px;
+          color: var(--text-muted);
+          cursor: help;
+        }
       `}</style>
     </header>
   );
