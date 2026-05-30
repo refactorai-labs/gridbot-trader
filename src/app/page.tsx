@@ -38,6 +38,7 @@ import {
 } from '@/lib/types';
 import { DCATradeSnapshot } from '@/lib/strategies/dcaTypes';
 import { SUPPORTED_PAIRS } from '@/lib/constants';
+import { usePersistentState } from '@/lib/usePersistentState';
 import OptimizerTab from '@/components/OptimizerTab';
 
 // Mirrors the threshold in `src/app/api/simulations/[id]/replay/route.ts`.
@@ -100,17 +101,17 @@ export default function SimulatorPage() {
   const [statusMessage, setStatusMessage] = useState<string>('');
 
   // Strategy toggles
-  const [gridLongEnabled, setGridLongEnabled] = useState(true);
-  const [gridShortEnabled, setGridShortEnabled] = useState(true);
-  const [dcaLongEnabled, setDcaLongEnabled] = useState(false);
-  const [dcaShortEnabled, setDcaShortEnabled] = useState(false);
+  const [gridLongEnabled, setGridLongEnabled] = usePersistentState('gridLongEnabled', true);
+  const [gridShortEnabled, setGridShortEnabled] = usePersistentState('gridShortEnabled', true);
+  const [dcaLongEnabled, setDcaLongEnabled] = usePersistentState('dcaLongEnabled', false);
+  const [dcaShortEnabled, setDcaShortEnabled] = usePersistentState('dcaShortEnabled', false);
 
   // DCA config
-  const [dcaLongConfig, setDcaLongConfig] = useState<DCABreakoutConfig>(getDefaultDCAConfig('LONG'));
-  const [dcaShortConfig, setDcaShortConfig] = useState<DCABreakoutConfig>(getDefaultDCAConfig('SHORT'));
+  const [dcaLongConfig, setDcaLongConfig] = usePersistentState<DCABreakoutConfig>('dcaLongConfig', () => getDefaultDCAConfig('LONG'));
+  const [dcaShortConfig, setDcaShortConfig] = usePersistentState<DCABreakoutConfig>('dcaShortConfig', () => getDefaultDCAConfig('SHORT'));
 
   // Combo Bot (v3.1) config
-  const [comboConfig, setComboConfig] = useState<ComboBotConfig>(DEFAULT_COMBO_CONFIG);
+  const [comboConfig, setComboConfig] = usePersistentState<ComboBotConfig>('comboConfig', DEFAULT_COMBO_CONFIG);
 
   // When Combo Bot is enabled, Grid Long/Short must be off (different engine, would be misleading)
   useEffect(() => {

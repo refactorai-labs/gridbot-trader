@@ -1,3 +1,32 @@
+# Active Plan — Persist Grid Bot Configuration Inputs
+
+**Status:** Completed.
+
+## Todo
+
+- [x] Create `src/lib/usePersistentState.ts` — a `useState`-compatible hook that persists to localStorage (`gridbot.config.v1.*`), plus `clearPersistentConfig()`.
+- [x] `ConfigPanel.tsx`: convert the 11 config `useState` calls to `usePersistentState`.
+- [x] `page.tsx`: convert the 7 strategy/config `useState` calls (toggles, DCA configs, combo config).
+- [x] Add a "Reset to defaults" button to the ConfigPanel header (clear namespace + reload).
+- [x] Typecheck (`npx tsc --noEmit`) — clean.
+
+## Review — Persist Grid Bot Configuration Inputs
+
+- Problem: all config inputs (pair, timeframe, dates, grid levels/bounds, fee, toggles, combo/DCA config) lived in ephemeral `useState`, so any page reload reset the form to defaults — tweaking one value meant re-entering everything.
+- Fix: a single small hook `usePersistentState(key, default)` that mirrors `useState` but transparently persists to localStorage. SSR-safe — initialises to the default on server+client (no hydration mismatch), loads the stored value in a mount effect, and writes on change. A `loaded` ref guards the first write so the default never clobbers stored data.
+- Each affected `useState` became a one-line swap with an identical signature, so the change touched only the state declarations — no changes to the run/simulation flow, types, API, or DB. The same `SimulationConfig` is still assembled in `handleRun`.
+- Keys are namespaced under `gridbot.config.v1.*`. The header now has a RotateCcw "Reset to defaults" button that confirms, calls `clearPersistentConfig()` (removes every key with that prefix), and reloads to re-init defaults cleanly.
+- Reused the existing localStorage convention from `ComboOverlayPanel.tsx` (versioned key, try/catch, `typeof window` guard).
+- Verification: `npx tsc --noEmit` clean. Manual check pending: change settings → hard refresh restores them; Reset clears them.
+
+### Follow-up fix — inputs were still clearing on every load
+
+- Symptom: settings reset to defaults on every page load, not persisting at all.
+- Root cause (real bug in `usePersistentState.ts`): the save-gate was a `useRef` (`loaded`). On mount the load and save effects run in the same commit; the load effect set `loaded.current = true` synchronously, so the save effect — running right after — read it live as `true` while `value` was still the default, and wrote the default to localStorage, clobbering the stored value. With `reactStrictMode: true` (next.config.js) effects double-invoke, so the second load then read the clobbered default and it won permanently.
+- Fix: changed the gate from `useRef(false)` to `useState(false)` (`hydrated`), set it via `setHydrated(true)` in the load effect, and gated the save effect on `if (!hydrated) return;` with `hydrated` in its deps. As state, the save effect's mount-run closure captures `false` and skips the first write, so storage is never clobbered — correct under StrictMode too. One-file change; `npx tsc --noEmit` clean.
+
+---
+
 # Active Plan — Hotfix v2 Replay Compaction Review
 
 **Status:** Completed review; no implementation changes made beyond this review note.

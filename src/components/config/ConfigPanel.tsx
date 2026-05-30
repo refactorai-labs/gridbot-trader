@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Settings, Play, Loader2, ChevronDown, ChevronUp, ChevronRight, Download, Database } from 'lucide-react';
+import { Settings, Play, Loader2, ChevronDown, ChevronUp, ChevronRight, Download, Database, RotateCcw } from 'lucide-react';
+import { usePersistentState, clearPersistentConfig } from '@/lib/usePersistentState';
 import GridSideConfig from './GridSideConfig';
 import { ConditionEditor } from '@/components/simulation/DCAConfig';
 import ComboBotConfigEditor, { DEFAULT_COMBO_CONFIG } from './ComboBotConfig';
@@ -376,23 +377,23 @@ export default function ConfigPanel({
   dcaLongConfig, dcaShortConfig, onDcaLongConfigChange, onDcaShortConfigChange,
   comboConfig, onComboConfigChange,
 }: ConfigPanelProps) {
-  const [selectedPairIdx, setSelectedPairIdx] = useState(0);
-  const [timeframe, setTimeframe] = useState('1h');
-  const [startDate, setStartDate] = useState(() => {
+  const [selectedPairIdx, setSelectedPairIdx] = usePersistentState('selectedPairIdx', 0);
+  const [timeframe, setTimeframe] = usePersistentState('timeframe', '1h');
+  const [startDate, setStartDate] = usePersistentState('startDate', () => {
     const d = new Date(); d.setMonth(d.getMonth() - 1);
     return d.toISOString().slice(0, 16);
   });
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 16));
-  const [simName, setSimName] = useState('');
-  const [feeRate, setFeeRate] = useState(DEFAULT_SIMULATION.feeRate * 100);
-  const [adaptiveEnabled, setAdaptiveEnabled] = useState(DEFAULT_SIMULATION.adaptiveEnabled);
-  const [emaPeriod, setEmaPeriod] = useState(DEFAULT_SIMULATION.emaPeriod);
-  const [volumeMultiplier, setVolumeMultiplier] = useState(DEFAULT_SIMULATION.volumeMultiplier);
+  const [endDate, setEndDate] = usePersistentState('endDate', () => new Date().toISOString().slice(0, 16));
+  const [simName, setSimName] = usePersistentState('simName', '');
+  const [feeRate, setFeeRate] = usePersistentState('feeRate', DEFAULT_SIMULATION.feeRate * 100);
+  const [adaptiveEnabled, setAdaptiveEnabled] = usePersistentState('adaptiveEnabled', DEFAULT_SIMULATION.adaptiveEnabled);
+  const [emaPeriod, setEmaPeriod] = usePersistentState('emaPeriod', DEFAULT_SIMULATION.emaPeriod);
+  const [volumeMultiplier, setVolumeMultiplier] = usePersistentState('volumeMultiplier', DEFAULT_SIMULATION.volumeMultiplier);
 
-  const [longConfig, setLongConfig] = useState<GridSideConfigType>({
+  const [longConfig, setLongConfig] = usePersistentState<GridSideConfigType>('longConfig', {
     side: 'long', ...DEFAULT_GRID_CONFIG, lowerBound: 0, upperBound: 0,
   });
-  const [shortConfig, setShortConfig] = useState<GridSideConfigType>({
+  const [shortConfig, setShortConfig] = usePersistentState<GridSideConfigType>('shortConfig', {
     side: 'short', ...DEFAULT_GRID_CONFIG, lowerBound: 0, upperBound: 0,
   });
 
@@ -458,9 +459,24 @@ export default function ConfigPanel({
           <Settings size={14} style={{ color: 'var(--grid-neutral)' }} />
           <span className="card-header text-xs">Configuration</span>
         </div>
-        <button className="playback-btn p-1.5" onClick={onToggleCollapse} style={{ color: 'var(--text-muted)' }}>
-          <ChevronUp size={14} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            className="playback-btn p-1.5"
+            onClick={() => {
+              if (confirm('Reset all configuration to defaults? Your saved settings will be cleared.')) {
+                clearPersistentConfig();
+                window.location.reload();
+              }
+            }}
+            style={{ color: 'var(--text-muted)' }}
+            title="Reset to defaults"
+          >
+            <RotateCcw size={14} />
+          </button>
+          <button className="playback-btn p-1.5" onClick={onToggleCollapse} style={{ color: 'var(--text-muted)' }}>
+            <ChevronUp size={14} />
+          </button>
+        </div>
       </div>
 
       {/* ── General Settings ── */}
