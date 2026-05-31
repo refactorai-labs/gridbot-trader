@@ -1,4 +1,30 @@
-# Active Plan — Persist Grid Bot Configuration Inputs
+# Active Plan — Fetch Latest 5m Candles Up To "Now"
+
+**Status:** Implemented (pending manual verification)
+
+## Todo
+
+- [x] Clamp `endMs` to `Date.now()` in `getOrFetchCandles` so a "today/future" end reaches the latest candle.
+- [x] Persist only *closed* candles in `storeCandlesInCache` (drop `openTime + tfMs > now`) — cache stays immutable, no UPSERT, tail re-fetched naturally each run.
+- [x] Coverage check in `getOrFetchCandles` measured to last closed bucket (`min(endMs, floor(now/tfMs)*tfMs)`) so the forming bucket isn't flagged as a gap.
+- [x] `ConfigPanel.tsx`: date-only end → local end-of-day; `datetime-local`/`date` defaults seeded in local time (not UTC).
+- [x] Tests (16/16) + `npx tsc --noEmit` clean.
+
+## Review — Fetch Latest 5m Candles
+
+- Problem: setting end date = today on 5m charts returned data hours/days old, not the latest candle.
+- Root causes: (1) date-only end parsed to midnight UTC = start of day; (2) `datetime-local` defaults seeded with UTC `toISOString()` but read as local → tz offset; (3) the in-progress candle was stored once via `INSERT OR IGNORE` and never refreshed → frozen stale tail; (4) nothing clamped the end to "now".
+- Fix (only `candleCache.ts` + `ConfigPanel.tsx`, no schema/API change):
+  - `getOrFetchCandles` clamps `endMs = min(end, now)`, queries/coverage use a clamped end, and the final coverage check measures only up to the last *closed* bucket.
+  - `storeCandlesInCache` filters out the still-forming candle, so the cache holds only finalized rows. Because the open candle is never persisted, the normal gap-fill re-pulls the small tail each run — that *is* "refetch only what's needed", with no UPSERT.
+  - `ConfigPanel` gets local-time helpers; date-only end is treated as local end-of-day (`T23:59:59.999`), start as local start-of-day; `datetime-local` defaults seeded in local time so `new Date(value)` round-trips correctly.
+- Result: backtests run up to the most recent *closed* 5m candle (≤5 min old); historical data fetched once and reused; the live tail is the only thing re-pulled. Newest bar is reproducible (no mutating partial bar).
+- Existing tests use 2024 dates (past), so the clamp/closed-filter are no-ops there — all 16 pass. `tsc --noEmit` clean.
+- Manual check pending: set end = today on a 5m run, confirm the last candle timestamp is within ~5 min of real time.
+
+---
+
+# Archived Plan — Persist Grid Bot Configuration Inputs
 
 **Status:** Completed.
 

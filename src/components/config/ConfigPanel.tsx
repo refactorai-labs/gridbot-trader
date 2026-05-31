@@ -9,6 +9,13 @@ import ComboBotConfigEditor, { DEFAULT_COMBO_CONFIG } from './ComboBotConfig';
 import { SimulationConfig, GridSideConfig as GridSideConfigType, DCABreakoutConfig, Direction, ComboBotConfig } from '@/lib/types';
 import { SUPPORTED_PAIRS, DEFAULT_GRID_CONFIG, DEFAULT_SIMULATION, TIMEFRAMES } from '@/lib/constants';
 
+// ── Local-time input helpers ─────────────────────────────────
+// `<input type="date|datetime-local">` values are local wall-clock; toISOString() is UTC.
+// These keep the seeded defaults in local time so "now" round-trips through new Date(value).
+const localOffset = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+const toLocalDateInput = (d: Date) => localOffset(d).toISOString().slice(0, 10);
+const toLocalDatetimeInput = (d: Date) => localOffset(d).toISOString().slice(0, 16);
+
 // ── Reusable sub-components ──────────────────────────────────
 
 function ToggleSwitch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
@@ -248,9 +255,9 @@ function DataManagerInline() {
   const [selectedPairIdx, setSelectedPairIdx] = useState(0);
   const [startDate, setStartDate] = useState(() => {
     const d = new Date(); d.setMonth(d.getMonth() - 3);
-    return d.toISOString().slice(0, 10);
+    return toLocalDateInput(d);
   });
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(() => toLocalDateInput(new Date()));
   const [isDownloading, setIsDownloading] = useState(false);
   const [status, setStatus] = useState('');
   const [cachedCount, setCachedCount] = useState<number | null>(null);
@@ -265,7 +272,8 @@ function DataManagerInline() {
       const res = await fetch('/api/candles', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pair: binanceSymbol, timeframe: '5m',
-          startTime: new Date(startDate).toISOString(), endTime: new Date(endDate).toISOString() }),
+          startTime: new Date(startDate + 'T00:00:00').toISOString(),
+          endTime: new Date(endDate + 'T23:59:59.999').toISOString() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Download failed');
@@ -280,7 +288,8 @@ function DataManagerInline() {
     if (!binanceSymbol) return;
     try {
       const params = new URLSearchParams({ pair: binanceSymbol, timeframe: '5m',
-        start: new Date(startDate).toISOString(), end: new Date(endDate).toISOString() });
+        start: new Date(startDate + 'T00:00:00').toISOString(),
+        end: new Date(endDate + 'T23:59:59.999').toISOString() });
       const res = await fetch(`/api/candles?${params}`);
       const data = await res.json();
       setCachedCount(data.count ?? 0);
@@ -381,9 +390,9 @@ export default function ConfigPanel({
   const [timeframe, setTimeframe] = usePersistentState('timeframe', '1h');
   const [startDate, setStartDate] = usePersistentState('startDate', () => {
     const d = new Date(); d.setMonth(d.getMonth() - 1);
-    return d.toISOString().slice(0, 16);
+    return toLocalDatetimeInput(d);
   });
-  const [endDate, setEndDate] = usePersistentState('endDate', () => new Date().toISOString().slice(0, 16));
+  const [endDate, setEndDate] = usePersistentState('endDate', () => toLocalDatetimeInput(new Date()));
   const [simName, setSimName] = usePersistentState('simName', '');
   const [feeRate, setFeeRate] = usePersistentState('feeRate', DEFAULT_SIMULATION.feeRate * 100);
   const [adaptiveEnabled, setAdaptiveEnabled] = usePersistentState('adaptiveEnabled', DEFAULT_SIMULATION.adaptiveEnabled);

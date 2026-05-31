@@ -49,6 +49,12 @@ export async function storeCandlesInCache(
     throw new Error(`Invalid pair "${pair}" or interval "${interval}"`);
   }
 
+  // Only persist fully-closed candles. The still-forming candle (openTime + tfMs > now)
+  // is excluded so the cache holds only finalized, immutable rows and never serves a
+  // stale partial bar. It is naturally re-fetched on the next run once it has closed.
+  const tfMs = getTimeframeMinutes(interval) * 60_000;
+  const now = Date.now();
+
   // Batch in chunks of 500 to avoid SQLite variable limits
   const BATCH_SIZE = 500;
   let totalStored = 0;
@@ -57,6 +63,7 @@ export async function storeCandlesInCache(
     const batch = candles.slice(i, i + BATCH_SIZE);
     const values = batch
       .filter(c => isFinite(c.open) && isFinite(c.high) && isFinite(c.low) && isFinite(c.close) && isFinite(c.volume))
+      .filter(c => c.timestamp * 1000 + tfMs <= now)
       .map(c => {
         const openTimeMs = BigInt(c.timestamp * 1000);
         return `('${pair}', ${openTimeMs}, ${c.open}, ${c.high}, ${c.low}, ${c.close}, ${c.volume}, '${interval}')`;
@@ -118,11 +125,14 @@ export async function getOrFetchCandles(
   endTime: Date,
   onProgress?: (fetched: number) => void
 ): Promise<OHLC[]> {
+  const now = Date.now();
   const startMs = startTime.getTime();
-  const endMs = endTime.getTime();
+  // Clamp the end to now so a "today/future" end reaches the latest available candle.
+  const endMs = Math.min(endTime.getTime(), now);
+  const clampedEnd = new Date(endMs);
   const tfMs = getTimeframeMinutes(timeframe) * 60_000;
 
-  const cached = await getCachedCandles(pair, timeframe, startTime, endTime);
+  const cached = await getCachedCandles(pair, timeframe, startTime, clampedEnd);
   const gaps = computeMissingGaps(cached, startMs, endMs, tfMs);
 
   if (gaps.length === 0) return cached;
@@ -135,10 +145,12 @@ export async function getOrFetchCandles(
   }
 
   // Re-query so the returned array reflects exactly what's now persisted.
-  const finalCandles = await getCachedCandles(pair, timeframe, startTime, endTime);
+  const finalCandles = await getCachedCandles(pair, timeframe, startTime, clampedEnd);
 
-  // Final coverage check: callers must get a complete range or an explicit error.
-  const remaining = computeMissingGaps(finalCandles, startMs, endMs, tfMs);
+  // Coverage is only required up to the last fully-closed bucket; the still-forming
+  // bucket is intentionally never persisted, so don't flag it as a missing gap.
+  const coverageEndMs = Math.min(endMs, Math.floor(now / tfMs) * tfMs);
+  const remaining = computeMissingGaps(finalCandles, startMs, coverageEndMs, tfMs);
   if (remaining.length > 0) {
     const ranges = remaining
       .map(g => `[${new Date(g.startMs).toISOString()}, ${new Date(g.endMs).toISOString()})`)
