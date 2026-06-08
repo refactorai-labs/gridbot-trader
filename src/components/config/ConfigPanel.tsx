@@ -251,8 +251,7 @@ function DCAConfigInline({ config, onChange, direction }: { config: DCABreakoutC
 
 // ── Inline Data Manager ──────────────────────────────────────
 
-function DataManagerInline() {
-  const [selectedPairIdx, setSelectedPairIdx] = useState(0);
+function DataManagerInline({ selectedPairIdx, onPairChange }: { selectedPairIdx: number; onPairChange: (idx: number) => void }) {
   const [startDate, setStartDate] = useState(() => {
     const d = new Date(); d.setMonth(d.getMonth() - 3);
     return toLocalDateInput(d);
@@ -302,7 +301,7 @@ function DataManagerInline() {
       <div>
         <label className="form-label">Trading Pair</label>
         <select className="form-select" value={selectedPairIdx}
-          onChange={(e) => { setSelectedPairIdx(parseInt(e.target.value)); setCachedCount(null); }}>
+          onChange={(e) => { onPairChange(parseInt(e.target.value)); setCachedCount(null); }}>
           {SUPPORTED_PAIRS.map((pair, idx) => (
             <option key={pair.pair} value={idx}>{pair.label}</option>
           ))}
@@ -353,6 +352,8 @@ function DataManagerInline() {
 // ── Main ConfigPanel ─────────────────────────────────────────
 
 interface ConfigPanelProps {
+  selectedPairIdx: number;
+  onPairChange: (idx: number) => void;
   onRunSimulation: (config: SimulationConfig) => void;
   isRunning: boolean;
   isCollapsed: boolean;
@@ -377,6 +378,8 @@ interface ConfigPanelProps {
 }
 
 export default function ConfigPanel({
+  selectedPairIdx,
+  onPairChange,
   onRunSimulation,
   isRunning,
   isCollapsed,
@@ -386,7 +389,6 @@ export default function ConfigPanel({
   dcaLongConfig, dcaShortConfig, onDcaLongConfigChange, onDcaShortConfigChange,
   comboConfig, onComboConfigChange,
 }: ConfigPanelProps) {
-  const [selectedPairIdx, setSelectedPairIdx] = usePersistentState('selectedPairIdx', 0);
   const [timeframe, setTimeframe] = usePersistentState('timeframe', '1h');
   const [startDate, setStartDate] = usePersistentState('startDate', () => {
     const d = new Date(); d.setMonth(d.getMonth() - 1);
@@ -499,7 +501,7 @@ export default function ConfigPanel({
           <div>
             <label className="form-label">Trading Pair</label>
             <select className="form-select" value={selectedPairIdx}
-              onChange={(e) => setSelectedPairIdx(parseInt(e.target.value))}>
+              onChange={(e) => onPairChange(parseInt(e.target.value))}>
               {SUPPORTED_PAIRS.map((pair, idx) => (
                 <option key={pair.pair} value={idx}>{pair.label}</option>
               ))}
@@ -621,7 +623,7 @@ export default function ConfigPanel({
 
       {/* ── Data Manager ── */}
       <AccordionSection title="Data Manager" defaultOpen={false} id="cfg-data">
-        <DataManagerInline />
+        <DataManagerInline selectedPairIdx={selectedPairIdx} onPairChange={onPairChange} />
       </AccordionSection>
 
       {/* ── Run Button ── */}

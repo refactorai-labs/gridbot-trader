@@ -16,6 +16,13 @@ export const SUPPORTED_PAIRS: PairConfig[] = [
     chain: 'eth',
     binanceSymbol: 'BTCUSDT',
   },
+  {
+    label: 'EUR/USD',
+    pair: 'EUR/USD',
+    poolAddress: 'forex-eurusd', // synthetic but UNIQUE — used only as a lookup key (no Uniswap pool for forex)
+    chain: 'forex',
+    binanceSymbol: 'EURUSDT', // Binance spot EUR/USDT (EUR ≈ USD)
+  },
 ];
 
 // Timeframe configurations

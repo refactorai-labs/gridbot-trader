@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { GridSideConfig as GridSideConfigType, GridSide } from '@/lib/types';
 
 interface GridSideConfigProps {
@@ -19,6 +20,23 @@ export default function GridSideConfig({ side, config, onChange }: GridSideConfi
     }
     onChange(updated);
   };
+
+  // Keep the raw typed string for the price bounds so decimals like "1.15" survive while
+  // typing. Storing the parsed number directly (value={config.lowerBound}) would re-render
+  // "1." back to "1" and strip the decimal point. Sync from props only when the external
+  // numeric value actually differs from what's typed, so it never wipes an in-progress entry.
+  const [lowerRaw, setLowerRaw] = useState(config.lowerBound ? String(config.lowerBound) : '');
+  const [upperRaw, setUpperRaw] = useState(config.upperBound ? String(config.upperBound) : '');
+  useEffect(() => {
+    if ((parseFloat(lowerRaw) || 0) !== (config.lowerBound || 0))
+      setLowerRaw(config.lowerBound ? String(config.lowerBound) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.lowerBound]);
+  useEffect(() => {
+    if ((parseFloat(upperRaw) || 0) !== (config.upperBound || 0))
+      setUpperRaw(config.upperBound ? String(config.upperBound) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.upperBound]);
 
   const calculatedCapital = config.orderSize * config.gridLevels;
 
@@ -60,8 +78,8 @@ export default function GridSideConfig({ side, config, onChange }: GridSideConfi
             type="text"
             inputMode="decimal"
             className="form-input"
-            value={config.lowerBound || ''}
-            onChange={(e) => update('lowerBound', parseFloat(e.target.value) || 0)}
+            value={lowerRaw}
+            onChange={(e) => { setLowerRaw(e.target.value); update('lowerBound', parseFloat(e.target.value) || 0); }}
             placeholder="Min price"
           />
         </div>
@@ -71,8 +89,8 @@ export default function GridSideConfig({ side, config, onChange }: GridSideConfi
             type="text"
             inputMode="decimal"
             className="form-input"
-            value={config.upperBound || ''}
-            onChange={(e) => update('upperBound', parseFloat(e.target.value) || 0)}
+            value={upperRaw}
+            onChange={(e) => { setUpperRaw(e.target.value); update('upperBound', parseFloat(e.target.value) || 0); }}
             placeholder="Max price"
           />
         </div>

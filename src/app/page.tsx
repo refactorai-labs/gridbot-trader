@@ -143,8 +143,8 @@ export default function SimulatorPage() {
   // Active tab
   const [activeTab, setActiveTab] = useState<'trades' | 'performance' | 'optimizer'>('performance');
 
-  // Track selected pair index for DCA candle fetching
-  const [selectedPairIdx, setSelectedPairIdx] = useState(0);
+  // Single source of truth for the selected pair (shared with ConfigPanel + Data Manager)
+  const [selectedPairIdx, setSelectedPairIdx] = usePersistentState('selectedPairIdx', 0);
 
   // Reload last simulation on mount
   useEffect(() => {
@@ -738,6 +738,8 @@ export default function SimulatorPage() {
         {!configCollapsed && (
           <aside className="config-drawer">
             <ConfigPanel
+              selectedPairIdx={selectedPairIdx}
+              onPairChange={setSelectedPairIdx}
               onRunSimulation={handleRunSimulation}
               isRunning={isRunning}
               isCollapsed={false}
