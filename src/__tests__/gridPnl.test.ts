@@ -249,3 +249,109 @@ describe('Grid P&L: Long vs Short', () => {
     expect(result.openPositions).toBe(0);
   });
 });
+
+// Direct unit tests for processFill round-trip P&L accounting.
+// These pin down two properties that are easy to silently regress:
+//   1. Quantity comes from the ENTRY fill, not the closing fill (matters when the
+//      size multiplier changes between entry and exit so entry size != exit size).
+//   2. BOTH the entry fee and the exit fee are deducted from the round-trip P&L.
+describe('processFill: round-trip P&L accounting', () => {
+  let fillSeq = 0;
+  function makeFill(over: Partial<Fill>): Fill {
+    return {
+      orderId: `f_${++fillSeq}`,
+      side: 'long',
+      type: 'buy',
+      levelIndex: 0,
+      fillPrice: 2000,
+      candleIdx: 0,
+      timestamp: 1700000000,
+      size: 100,
+      fees: 0.1,
+      ...over,
+    };
+  }
+
+  it('opening fill returns zero P&L and records an open position', () => {
+    const state = createInitialPnLState();
+    const { pnl } = processFill(state, makeFill({ type: 'buy', levelIndex: 0 }), 5000);
+
+    expect(pnl).toBe(0);
+    expect(state.realizedPnl).toBe(0);
+    expect(state.openPositions).toHaveLength(1);
+    expect(state.totalFees).toBeCloseTo(0.1, 10);
+  });
+
+  it('long round-trip deducts BOTH entry and exit fees', () => {
+    // Buy $100 @ 2000 = 0.05 ETH (entry fee 0.10), sell @ 2050 (exit fee 0.10).
+    // Gross = (2050 - 2000) * 0.05 = 2.50; net = 2.50 - 0.10 - 0.10 = 2.30.
+    const state = createInitialPnLState();
+    processFill(state, makeFill({ type: 'buy', levelIndex: 0, fillPrice: 2000, size: 100, fees: 0.1 }), 5000);
+    const { pnl } = processFill(state, makeFill({ type: 'sell', levelIndex: 1, fillPrice: 2050, size: 100, fees: 0.1 }), 5000);
+
+    expect(pnl).toBeCloseTo(2.3, 10); // NOT 2.40 (that would mean only one fee was deducted)
+    expect(state.realizedPnl).toBeCloseTo(2.3, 10);
+    expect(state.longRealizedPnl).toBeCloseTo(2.3, 10);
+    expect(state.totalFees).toBeCloseTo(0.2, 10);
+    expect(state.winCount).toBe(1);
+    expect(state.openPositions).toHaveLength(0);
+  });
+
+  it('uses ENTRY-fill quantity when the size multiplier changes mid-trade', () => {
+    // Entry: buy $100 @ 2000 -> 0.05 ETH (entry fee 0.10).
+    // Exit:  sell with a DOUBLED multiplier so the closing order is $200 (exit fee 0.20).
+    // Correct qty is the 0.05 ETH actually bought, NOT 200/2050.
+    //   gross = (2050 - 2000) * 0.05 = 2.50; net = 2.50 - 0.10 - 0.20 = 2.20.
+    // The buggy "qty from closing fill" path would give (2050-2000)*(200/2050) ~= 4.88.
+    const state = createInitialPnLState();
+    processFill(state, makeFill({ type: 'buy', levelIndex: 0, fillPrice: 2000, size: 100, fees: 0.1 }), 5000);
+    const { pnl } = processFill(state, makeFill({ type: 'sell', levelIndex: 1, fillPrice: 2050, size: 200, fees: 0.2 }), 5000);
+
+    expect(pnl).toBeCloseTo(2.2, 10);
+    expect(state.openPositions).toHaveLength(0);
+  });
+
+  it('short round-trip: sell high, buy back low (entry-fill quantity)', () => {
+    // Short entry: sell $100 @ 2100 -> 100/2100 ETH (entry fee 0.10).
+    // Short exit:  buy back @ 2000 (exit fee 0.10).
+    //   qty = 100/2100; gross = (2100 - 2000) * qty = 100 * (100/2100) = 4.7619.
+    //   net = 4.7619 - 0.10 - 0.10 = 4.5619.
+    const state = createInitialPnLState();
+    processFill(state, makeFill({ side: 'short', type: 'sell', levelIndex: 2, fillPrice: 2100, size: 100, fees: 0.1 }), 5000);
+    const { pnl } = processFill(state, makeFill({ side: 'short', type: 'buy', levelIndex: 1, fillPrice: 2000, size: 100, fees: 0.1 }), 5000);
+
+    const expected = 100 * (100 / 2100) - 0.1 - 0.1;
+    expect(pnl).toBeCloseTo(expected, 10);
+    expect(state.shortRealizedPnl).toBeCloseTo(expected, 10);
+    expect(state.openPositions).toHaveLength(0);
+  });
+
+  it('counts a losing round-trip and accumulates realized P&L across trades', () => {
+    // Long buy @ 2000, forced to sell lower @ 1980 -> loss.
+    //   gross = (1980 - 2000) * 0.05 = -1.00; net = -1.00 - 0.10 - 0.099 = -1.199.
+    const state = createInitialPnLState();
+    processFill(state, makeFill({ type: 'buy', levelIndex: 0, fillPrice: 2000, size: 100, fees: 0.1 }), 5000);
+    const { pnl } = processFill(state, makeFill({ type: 'sell', levelIndex: 1, fillPrice: 1980, size: 99, fees: 0.099 }), 5000);
+
+    expect(pnl).toBeCloseTo(-1.199, 10);
+    expect(state.lossCount).toBe(1);
+    expect(state.winCount).toBe(0);
+    expect(state.realizedPnl).toBeCloseTo(-1.199, 10);
+  });
+
+  it('matches by positionId when present, ignoring level adjacency', () => {
+    // Two open longs; the closing sell carries a positionId that targets the
+    // SECOND one even though its level is not adjacent to the sell's level.
+    const state = createInitialPnLState();
+    processFill(state, makeFill({ type: 'buy', levelIndex: 0, fillPrice: 2000, size: 100, fees: 0.1, positionId: 'A' }), 5000);
+    processFill(state, makeFill({ type: 'buy', levelIndex: 3, fillPrice: 1900, size: 100, fees: 0.1, positionId: 'B' }), 5000);
+
+    const { pnl } = processFill(state, makeFill({ type: 'sell', levelIndex: 99, fillPrice: 1950, size: 100, fees: 0.1, positionId: 'B' }), 5000);
+
+    // Closed B (entry 1900): gross = (1950-1900)*(100/1900); net minus both fees.
+    const expected = (1950 - 1900) * (100 / 1900) - 0.1 - 0.1;
+    expect(pnl).toBeCloseTo(expected, 10);
+    expect(state.openPositions).toHaveLength(1);
+    expect(state.openPositions[0].positionId).toBe('A');
+  });
+});

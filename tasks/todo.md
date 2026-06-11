@@ -1,3 +1,16 @@
+# Active Plan — Profit Tracking Claim Verification
+
+**Status:** Waiting for plan approval.
+
+## Todo
+
+- [ ] Compare the pasted profit-tracking claim against the current `pnlTracker.ts` implementation.
+- [ ] Verify fill size, fee, and open-position matching behavior through `orderMatcher.ts`, `engine.ts`, and `gridGenerator.ts`.
+- [ ] Check existing P&L tests for coverage of entry quantity, entry fee, and adaptive multiplier cases.
+- [ ] Run the focused P&L test suite if verification needs executable confirmation.
+- [ ] Report which parts of the pasted claim are true, already fixed, false, or still untested.
+- [ ] Add a review section here with the verification result and any recommended minimal next step.
+
 # Active Plan — Fetch Latest 5m Candles Up To "Now"
 
 **Status:** Implemented (pending manual verification)
