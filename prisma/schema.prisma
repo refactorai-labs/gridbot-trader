@@ -296,3 +296,24 @@ model SavedConfiguration {
 
   @@index([pair])
 }
+
+// Pionex long futures grid backtester run (plan §5). JSON payloads are stored as
+// String (Prisma 5.22 / SQLite); every JSON field holds { A, B } per price path.
+model PionexRun {
+  id            String   @id @default(cuid())
+  name          String
+  symbol        String
+  startTs       DateTime
+  endTs         DateTime
+  configJson    String
+  metricsJson   String
+  equityJson    String   // display samples thinned to 5m (bucket minima kept)
+  liqSeriesJson String   // per-bot P_liq, 5m bucket maximum from the full sample stream
+  eventsJson    String   // full event stream, original times
+  verdict       String
+  dataGapsJson  String
+  createdAt     DateTime @default(now())
+
+  @@index([symbol])
+  @@index([createdAt])
+}

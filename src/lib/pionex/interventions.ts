@@ -11,9 +11,9 @@
 import { OHLC } from '../types';
 import { newBotState } from './gridLevels';
 import { PionexLedger } from './ledger';
-import { currentLiqPrice } from './liquidation';
+import { currentLiqPrice, fullGridLiqPrice } from './liquidation';
 import { StepContext } from './segments';
-import { PionexBotConfig, PionexRunConfig } from './types';
+import { LiqLevels, PionexBotConfig, PionexRunConfig } from './types';
 
 const FIVE_MIN_MS = 300_000;
 
@@ -24,6 +24,7 @@ export interface BotRun {
   startPrice: number | null; // first start
   cycles: number;
   liquidatedAtMs: number | null;
+  startLiq: LiqLevels | null; // right after the first start (plan §3.4.4)
 }
 
 export interface Pending {
@@ -52,6 +53,12 @@ export function settleCycle(investment: number, eStart: number, cycleTopUps: num
   const eNext = eStart + cycleTopUps + (profit > 0 ? reinvestPct * profit : profit);
   return { profit, eNext, withdraw, canRestart: eNext >= 0 }; // I + E_next ≥ I
 }
+
+// Current position and full-grid P_liq of a bot (plan §3.4.4).
+export const liqLevels = (l: PionexLedger, config: PionexRunConfig): LiqLevels => ({
+  current: currentLiqPrice(l.bot, config.costs.mmr),
+  fullGrid: fullGridLiqPrice(l.bot, config.costs.mmr, config.costs.makerFee),
+});
 
 // Plan §3.3: buy levels at/above the price at market (taker) — the bot's wallet is
 // already funded. Emits `start` (or `restart`).
@@ -205,9 +212,10 @@ export function executePending(
       return null;
     }
     ctx.ledgers.push(l);
-    const run: BotRun = { ledger: l, cfg: cfg2, cycleTopUps: 0, startPrice: price, cycles: 0, liquidatedAtMs: null };
+    const run: BotRun = { ledger: l, cfg: cfg2, cycleTopUps: 0, startPrice: price, cycles: 0, liquidatedAtMs: null, startLiq: null };
     runs.push(run);
     startBot(ctx, l, price, takerFee, 'start');
+    run.startLiq = liqLevels(l, config);
     check();
     return run;
   }

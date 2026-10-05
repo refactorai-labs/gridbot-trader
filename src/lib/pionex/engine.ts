@@ -20,9 +20,9 @@ import { OHLC } from '../types';
 import { Capital } from './capital';
 import { bucketFunding, fundingBucket, FundingRecord } from './funding';
 import { newBotState } from './gridLevels';
-import { BotRun, closesFiveMinute, describePending, emptyPending, evaluateRules, executePending, Pending, startBot } from './interventions';
+import { BotRun, closesFiveMinute, describePending, emptyPending, evaluateRules, executePending, liqLevels, Pending, startBot } from './interventions';
 import { PionexLedger } from './ledger';
-import { currentLiqPrice, fullGridLiqPrice, liqDistancePct } from './liquidation';
+import { currentLiqPrice, liqDistancePct } from './liquidation';
 import { checkLiquidation, markLastOffset, runSegment, StepContext } from './segments';
 import { LedgerEvent, PathId, PionexRunConfig, RunResult, Sample } from './types';
 
@@ -49,6 +49,7 @@ export function runPionex(
     startPrice: null,
     cycles: 0,
     liquidatedAtMs: null,
+    startLiq: null,
   };
   const runs: BotRun[] = [bot1];
   const markByTs = new Map(mark1m.map(c => [c.timestamp, c]));
@@ -76,14 +77,17 @@ export function runPionex(
       let wealth = capital.freeCash + capital.withdrawn;
       let liqDistPct: number | null = null;
       let qty = 0;
+      const liqPrices: (number | null)[] = [];
       for (const r of runs) {
         const b = r.ledger.bot;
         wealth += r.ledger.equity(mark);
         qty += b.qty;
-        const dist = liqDistancePct(mark, currentLiqPrice(b, costs.mmr));
+        const pLiq = currentLiqPrice(b, costs.mmr);
+        liqPrices.push(pLiq);
+        const dist = liqDistancePct(mark, pLiq);
         if (dist !== null && (liqDistPct === null || dist < liqDistPct)) liqDistPct = dist;
       }
-      samples.push({ timeMs: now, wealth, liqDistPct, qty });
+      samples.push({ timeMs: now, wealth, liqDistPct, qty, liqPrices });
     },
   };
   const anyActive = () => runs.some(r => r.ledger.bot.status === 'active');
@@ -147,10 +151,7 @@ export function runPionex(
       }
       startBot(ctx, bot1.ledger, last.open, costs.takerFee, 'start');
       initialQty = bot1.ledger.bot.qty;
-      startLiq = {
-        current: currentLiqPrice(bot1.ledger.bot, costs.mmr),
-        fullGrid: fullGridLiqPrice(bot1.ledger.bot, costs.mmr, costs.makerFee),
-      };
+      startLiq = bot1.startLiq = liqLevels(bot1.ledger, config);
       checkAndSample(last.open, modelOpen);
     }
     // Plan §3.4/§3.8: interventions run on the 1m open right after the 5m close. If that
@@ -193,7 +194,7 @@ export function runPionex(
   if (lastBar) {
     now = lastBar.timestamp * 1000 + MINUTE_MS;
     if (!anyActive() || lastModelClose === null) {
-      samples.push({ timeMs: now, wealth: capital.freeCash + capital.withdrawn + sumWallets(), liqDistPct: null, qty: 0 });
+      samples.push({ timeMs: now, wealth: capital.freeCash + capital.withdrawn + sumWallets(), liqDistPct: null, qty: 0, liqPrices: runs.map(() => null) });
     } else {
       ctx.sample(lastModelClose);
     }
@@ -225,6 +226,8 @@ export function runPionex(
       gridProfit: r.ledger.bot.gridProfit,
       cycles: r.cycles,
       wallet: r.ledger.bot.wallet,
+      startLiq: r.startLiq,
+      endLiq: r.ledger.bot.status === 'active' ? liqLevels(r.ledger, config) : null,
     })),
     totals: { ...capital.totals },
     events,

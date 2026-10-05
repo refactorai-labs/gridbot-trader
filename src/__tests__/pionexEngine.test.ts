@@ -316,7 +316,7 @@ describe('pionex engine — Phase 1 review regressions', () => {
   });
 
   it('P2: thinning keeps the bucket minimum of the liquidation distance too', () => {
-    const s = (t: number, wealth: number, liqDistPct: number) => ({ timeMs: T0 + t, wealth, liqDistPct, qty: 1 });
+    const s = (t: number, wealth: number, liqDistPct: number) => ({ timeMs: T0 + t, wealth, liqDistPct, qty: 1, liqPrices: [] });
     const samples = [s(0, 100, 0.05), s(1000, 99, 0.01), s(2000, 90, 0.05), s(3000, 95, 0.06)];
     const thin = thinSamples(samples);
     expect(thin.map(x => x.timeMs - T0)).toEqual([1000, 2000, 3000]);

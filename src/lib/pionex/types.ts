@@ -48,7 +48,7 @@ export interface PionexRunConfig {
   cycle?: CycleRule | null;       // bot 1 only (plan §3.6)
   topUp?: TopUpRule | null;       // every open bot (plan §3.7)
   bot2?: Bot2Rule | null;         // staggered second bot (plan §3.8)
-  bot1ClosePrice?: number | null; // permanent stop of bot 1 (plan §3.8)
+  bot1ClosePrice?: number;        // permanent stop of bot 1 (plan §3.8); absent = off
   // Test hook: hard-coded top-ups on bot 1, executed with the due top-ups (plan §4.3).
   scheduledTopUps?: ScheduledTopUp[];
 }
@@ -117,7 +117,10 @@ export interface Sample {
   wealth: number;       // freeCash + withdrawn + Σ equity(mark)
   liqDistPct: number | null; // min over bots of (mark − P_liq) / mark; null when all flat
   qty: number;          // total over bots
+  liqPrices: (number | null)[]; // current P_liq per bot (null when flat), chart lines
 }
+
+export interface LiqLevels { current: number | null; fullGrid: number | null } // plan §3.4.4
 
 export interface BotSummary {
   status: BotStatus;
@@ -129,6 +132,8 @@ export interface BotSummary {
   gridProfit: number;
   cycles: number;
   wallet: number;
+  startLiq: LiqLevels | null; // right after the bot's first start
+  endLiq: LiqLevels | null;   // at the end of the window; null unless still active
 }
 
 // Top-level fields describe the run: status/liquidatedAtMs = the first liquidation of

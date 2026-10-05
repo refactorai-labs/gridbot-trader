@@ -669,6 +669,22 @@ export interface ComboOverlayData {
   visibility?: Partial<ComboOverlayVisibility>;
 }
 
+// Optional overlays (Pionex page): time-based line series, series markers and
+// vertical ticks. Without them the chart behaves exactly as before. Overlay lines
+// never drive the price autoscale — the candles do (a far liquidation line would
+// otherwise squash them).
+export interface ChartLineSeries {
+  id: string;
+  color: string;
+  dashed?: boolean;
+  data: { time: Time; value?: number }[]; // no value = whitespace (line break)
+}
+
+export interface ChartVerticalMarker {
+  time: Time;
+  color: string;
+}
+
 interface TradingChartProps {
   candles: OHLC[];
   gridLevels: GridLevel[];
@@ -688,6 +704,11 @@ interface TradingChartProps {
     rsi?: number;
     macdSign?: 'up' | 'down';
   };
+  lineSeries?: ChartLineSeries[];
+  markers?: SeriesMarker<Time>[];
+  verticalMarkers?: ChartVerticalMarker[];
+  minBarSpacing?: number; // lets fitContent show long windows (library default 0.5 px)
+  hoverLines?: (time: number) => string[] | null; // tooltip text for the hovered candle time
 }
 
 export default function TradingChart({
@@ -703,6 +724,11 @@ export default function TradingChart({
   combo,
   leverage,
   indicators,
+  lineSeries,
+  markers: markerProps,
+  verticalMarkers,
+  minBarSpacing,
+  hoverLines,
 }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -739,6 +765,10 @@ export default function TradingChart({
   } | null>(null);
 
   const rsiVisible = combo?.visibility?.rsiPane === true;
+
+  // `hoverLines` prop: its own crosshair subscription and tooltip, independent of the
+  // combo cooldown tooltip (which stays untouched).
+  const [hoverTooltip, setHoverTooltip] = useState<{ x: number; y: number; flip: boolean; lines: string[] } | null>(null);
 
   // Track theme changes
   const [theme, setTheme] = useState('dark');
@@ -780,6 +810,7 @@ export default function TradingChart({
         borderColor: colors.scaleBorder,
         timeVisible: true,
         secondsVisible: false,
+        ...(minBarSpacing !== undefined ? { minBarSpacing } : {}),
       },
       width: containerRef.current.clientWidth,
       height,
@@ -968,7 +999,7 @@ export default function TradingChart({
       atrUpperSeriesRef.current = null;
       atrLowerSeriesRef.current = null;
     };
-  }, [height, theme, side]);
+  }, [height, theme, side, minBarSpacing]);
 
   // Update candle data
   const updateCandles = useCallback(() => {
@@ -1244,97 +1275,77 @@ export default function TradingChart({
   }, [combo, candles, currentCandleIdx]);
 
   useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !hoverLines) return;
+    const handler = (param: MouseEventParams<Time>) => {
+      const lines = param.point && param.time !== undefined ? hoverLines(param.time as number) : null;
+      const width = containerRef.current?.clientWidth ?? 0;
+      setHoverTooltip(lines && lines.length > 0 && param.point
+        ? { x: param.point.x, y: param.point.y, flip: param.point.x > width / 2, lines }
+        : null);
+    };
+    chart.subscribeCrosshairMove(handler);
+    return () => {
+      if (chartRef.current === chart) chart.unsubscribeCrosshairMove(handler);
+      setHoverTooltip(null);
+    };
+  }, [hoverLines, height, theme, side, minBarSpacing]);
+
+  // `lineSeries` prop: one line series per entry, rebuilt on change. The chart is
+  // recreated on height/theme/side, so the series follow it; a cleanup after the
+  // chart was already removed must not touch it.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !lineSeries || lineSeries.length === 0) return;
+    const created = lineSeries.map(l => {
+      const series = chart.addLineSeries({
+        color: l.color,
+        lineWidth: 1,
+        lineStyle: l.dashed ? LineStyle.Dashed : LineStyle.Solid,
+        crosshairMarkerVisible: false,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        autoscaleInfoProvider: () => null,
+      });
+      series.setData(l.data);
+      return series;
+    });
+    return () => {
+      if (chartRef.current === chart) created.forEach(series => chart.removeSeries(series));
+    };
+  }, [lineSeries, height, theme, side]);
+
+  // Single merge point for series markers and event ticks: combo markers (when
+  // `combo` is set) + the `markers` / `verticalMarkers` props, time-sorted, one
+  // setMarkers call (lightweight-charts 4.x requires ascending time).
+  useEffect(() => {
     if (!seriesRef.current) return;
-    if (!combo) {
-      seriesRef.current.setMarkers([]);
-      eventTickPrimitiveRef.current?.updateConfig({ ticks: [] });
-      return;
-    }
-    const endIdx = currentCandleIdx !== undefined
-      ? Math.min(currentCandleIdx, candles.length - 1)
-      : candles.length - 1;
+    const markers: SeriesMarker<Time>[] = [...(markerProps ?? [])];
+    const ticks: ComboEventTick[] = [...(verticalMarkers ?? [])];
+    if (combo) {
+      const endIdx = currentCandleIdx !== undefined
+        ? Math.min(currentCandleIdx, candles.length - 1)
+        : candles.length - 1;
 
-    const visibility: ComboOverlayVisibility = {
-      avwap: true,
-      phaseMarkers: true,
-      slMarkers: true,
-      reopenMarkers: true,
-      slLines: true,
-      pauseShading: true,
-      bollingerBands: false,
-      vwap: false,
-      atrBands: false,
-      rsiPane: false,
-      ...(combo.visibility ?? {}),
-    };
-
-    const markers: SeriesMarker<Time>[] = [];
-    const pushIfVisible = (candleIdx: number, m: SeriesMarker<Time>) => {
-      if (candleIdx > endIdx || candleIdx < 0 || candleIdx >= candles.length) return;
-      markers.push({ ...m, time: candles[candleIdx].timestamp as Time });
-    };
-
-    if (visibility.phaseMarkers && combo.phaseMarkers) {
-      for (const p of combo.phaseMarkers) {
-        const color = p.type === 'breakout_entered'  ? '#f59e0b'
-                    : p.type === 'cooldown_entered'  ? '#64748b'
-                    : p.type === 'hibernation_entered' ? '#4a5563'
-                    : p.type === 'hibernation_exit'  ? '#8a94a6'
-                    : '#10b981'; // cycle_complete
-        const text = p.type === 'breakout_entered' ? 'BRK'
-                   : p.type === 'cooldown_entered' ? 'CD'
-                   : p.type === 'hibernation_entered' ? 'HIB'
-                   : p.type === 'hibernation_exit' ? 'HE'
-                   : 'OK';
-        pushIfVisible(p.candleIdx, {
-          time: 0 as Time,
-          position: p.side === 'long' ? 'belowBar' : 'aboveBar',
-          color,
-          shape: 'circle',
-          text,
-          size: 0.8,
-        });
-      }
-    }
-
-    if (visibility.slMarkers && combo.slMarkers) {
-      for (const s of combo.slMarkers) {
-        pushIfVisible(s.candleIdx, {
-          time: 0 as Time,
-          position: s.side === 'long' ? 'belowBar' : 'aboveBar',
-          color: '#ef4444',
-          shape: s.side === 'long' ? 'arrowDown' : 'arrowUp',
-          text: 'SL',
-          size: 1,
-        });
-      }
-    }
-
-    if (visibility.reopenMarkers && combo.tierMarkers) {
-      for (const t of combo.tierMarkers) {
-        const color = t.tier === 1 ? '#f59e0b' : t.tier === 2 ? '#d946ef' : '#22d3ee';
-        pushIfVisible(t.candleIdx, {
-          time: 0 as Time,
-          position: t.side === 'long' ? 'belowBar' : 'aboveBar',
-          color,
-          shape: 'square',
-          text: `T${t.tier}`,
-          size: 0.8,
-        });
-      }
-    }
-
-    // lightweight-charts requires markers in ascending-time order.
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
-    seriesRef.current.setMarkers(markers);
-
-    // Push event-tick comb (per-event vertical mark anchored to the time axis).
-    if (eventTickPrimitiveRef.current) {
-      const ticks: ComboEventTick[] = [];
-      const pushTickIfVisible = (candleIdx: number, color: string) => {
-        if (candleIdx > endIdx || candleIdx < 0 || candleIdx >= candles.length) return;
-        ticks.push({ time: candles[candleIdx].timestamp as Time, color });
+      const visibility: ComboOverlayVisibility = {
+        avwap: true,
+        phaseMarkers: true,
+        slMarkers: true,
+        reopenMarkers: true,
+        slLines: true,
+        pauseShading: true,
+        bollingerBands: false,
+        vwap: false,
+        atrBands: false,
+        rsiPane: false,
+        ...(combo.visibility ?? {}),
       };
+
+      const pushIfVisible = (candleIdx: number, m: SeriesMarker<Time>) => {
+        if (candleIdx > endIdx || candleIdx < 0 || candleIdx >= candles.length) return;
+        markers.push({ ...m, time: candles[candleIdx].timestamp as Time });
+      };
+
       if (visibility.phaseMarkers && combo.phaseMarkers) {
         for (const p of combo.phaseMarkers) {
           const color = p.type === 'breakout_entered'  ? '#f59e0b'
@@ -1342,22 +1353,81 @@ export default function TradingChart({
                       : p.type === 'hibernation_entered' ? '#4a5563'
                       : p.type === 'hibernation_exit'  ? '#8a94a6'
                       : '#10b981'; // cycle_complete
-          pushTickIfVisible(p.candleIdx, color);
+          const text = p.type === 'breakout_entered' ? 'BRK'
+                     : p.type === 'cooldown_entered' ? 'CD'
+                     : p.type === 'hibernation_entered' ? 'HIB'
+                     : p.type === 'hibernation_exit' ? 'HE'
+                     : 'OK';
+          pushIfVisible(p.candleIdx, {
+            time: 0 as Time,
+            position: p.side === 'long' ? 'belowBar' : 'aboveBar',
+            color,
+            shape: 'circle',
+            text,
+            size: 0.8,
+          });
         }
       }
+
       if (visibility.slMarkers && combo.slMarkers) {
-        for (const s of combo.slMarkers) pushTickIfVisible(s.candleIdx, '#ef4444');
+        for (const s of combo.slMarkers) {
+          pushIfVisible(s.candleIdx, {
+            time: 0 as Time,
+            position: s.side === 'long' ? 'belowBar' : 'aboveBar',
+            color: '#ef4444',
+            shape: s.side === 'long' ? 'arrowDown' : 'arrowUp',
+            text: 'SL',
+            size: 1,
+          });
+        }
       }
+
       if (visibility.reopenMarkers && combo.tierMarkers) {
         for (const t of combo.tierMarkers) {
           const color = t.tier === 1 ? '#f59e0b' : t.tier === 2 ? '#d946ef' : '#22d3ee';
-          pushTickIfVisible(t.candleIdx, color);
+          pushIfVisible(t.candleIdx, {
+            time: 0 as Time,
+            position: t.side === 'long' ? 'belowBar' : 'aboveBar',
+            color,
+            shape: 'square',
+            text: `T${t.tier}`,
+            size: 0.8,
+          });
         }
       }
-      ticks.sort((a, b) => (a.time as number) - (b.time as number));
-      eventTickPrimitiveRef.current.updateConfig({ ticks });
+
+      // Event-tick comb (per-event vertical mark anchored to the time axis).
+      {
+        const pushTickIfVisible = (candleIdx: number, color: string) => {
+          if (candleIdx > endIdx || candleIdx < 0 || candleIdx >= candles.length) return;
+          ticks.push({ time: candles[candleIdx].timestamp as Time, color });
+        };
+        if (visibility.phaseMarkers && combo.phaseMarkers) {
+          for (const p of combo.phaseMarkers) {
+            const color = p.type === 'breakout_entered'  ? '#f59e0b'
+                        : p.type === 'cooldown_entered'  ? '#64748b'
+                        : p.type === 'hibernation_entered' ? '#4a5563'
+                        : p.type === 'hibernation_exit'  ? '#8a94a6'
+                        : '#10b981'; // cycle_complete
+            pushTickIfVisible(p.candleIdx, color);
+          }
+        }
+        if (visibility.slMarkers && combo.slMarkers) {
+          for (const s of combo.slMarkers) pushTickIfVisible(s.candleIdx, '#ef4444');
+        }
+        if (visibility.reopenMarkers && combo.tierMarkers) {
+          for (const t of combo.tierMarkers) {
+            const color = t.tier === 1 ? '#f59e0b' : t.tier === 2 ? '#d946ef' : '#22d3ee';
+            pushTickIfVisible(t.candleIdx, color);
+          }
+        }
+      }
     }
-  }, [combo, candles, currentCandleIdx, theme]);
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    seriesRef.current.setMarkers(markers);
+    ticks.sort((a, b) => (a.time as number) - (b.time as number));
+    eventTickPrimitiveRef.current?.updateConfig({ ticks });
+  }, [combo, candles, currentCandleIdx, theme, markerProps, verticalMarkers]);
 
   const filledPct = gridLevels.length > 0 ? (filledLevelIndices.size / gridLevels.length) * 100 : 0;
   const leverageLabel = leverage !== undefined
@@ -1419,6 +1489,29 @@ export default function TradingChart({
           (avoids React/lightweight-charts contention over the chart's DOM children). */}
       <div style={{ position: 'relative', width: '100%' }}>
         <div ref={containerRef} style={{ width: '100%', height: `${height}px` }} />
+        {hoverTooltip && (
+          <div
+            style={{
+              position: 'absolute',
+              left: hoverTooltip.flip ? hoverTooltip.x - 12 : hoverTooltip.x + 12,
+              top: Math.max(4, hoverTooltip.y + 12),
+              transform: hoverTooltip.flip ? 'translateX(-100%)' : undefined,
+              pointerEvents: 'none',
+              background: 'rgba(15, 23, 42, 0.92)',
+              border: '1px solid rgba(100, 116, 139, 0.5)',
+              borderRadius: 4,
+              padding: '6px 8px',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10.5,
+              color: '#e2e8f0',
+              zIndex: 10,
+              whiteSpace: 'nowrap',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+            }}
+          >
+            {hoverTooltip.lines.map((l, i) => <div key={i}>{l}</div>)}
+          </div>
+        )}
         {cooldownTooltip && (() => {
           const offsetX = 12;
           const offsetY = 12;

@@ -216,7 +216,7 @@ describe('pionex engine — two bots, one ledger (plan §3.7, §3.8)', () => {
     const ctx: StepContext = {
       ledgers: [a, b], costs: { makerFee: 0, takerFee: 0, mmr: 0 }, leverage: 10, marginCheck: false, timeMs: 0,
       emit: e => events.push(e),
-      sample: mark => samples.push({ timeMs: 0, wealth: capital.freeCash + a.equity(mark) + b.equity(mark), liqDistPct: null, qty: a.bot.qty + b.bot.qty }),
+      sample: mark => samples.push({ timeMs: 0, wealth: capital.freeCash + a.equity(mark) + b.equity(mark), liqDistPct: null, qty: a.bot.qty + b.bot.qty, liqPrices: [] }),
     };
     runSegment(ctx, 100, 90, 0);
     expect(events.map(e => [e.price, e.bot])).toEqual([

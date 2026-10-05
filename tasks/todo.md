@@ -1,6 +1,6 @@
 # Aktív terv — Pionex Long Futures Grid Backteszter (terv v3, fázisonként)
 
-**Státusz:** Fázis 0 kész (kapu teljesítve). Fázis 1 kész + review‑javítások (2 P1, 3 P2, 1 validációs pont). **Fázis 2 kész (kapu teljesítve, 2026‑10‑05)** — Fázis 3 (UI és mentés) jóváhagyásra vár.
+**Státusz:** Fázis 0 kész (kapu teljesítve). Fázis 1 kész + review‑javítások (2 P1, 3 P2, 1 validációs pont). **Fázis 2 kész (kapu teljesítve, 2026‑10‑05).** **Fázis 3 kész (kapu teljesítve, 2026‑10‑06)** + review‑javítások (2 P1, 4 P2) — a v1 terv minden fázisa kész.
 **Forrás:** `tasks/pionex-backtester-plan.md` (v3) — a 9. pont indító promptja szerint. (A fájl a `tasks/` mappában van, nem a `docs/`‑ban.)
 **Dátum:** 2026‑10‑05
 
@@ -61,7 +61,7 @@
 - [x] `src/lib/pionex/ledger.ts` (3.2): wallet / qty / avgEntry / lots; vétel, eladás, funding, feltöltés, zárás, likvidáció; `equity(P)`, grid profit (kijelzés), ciklusprofit; **invariáns‑ellenőrző**.
 - [x] `src/lib/pionex/liquidation.ts` (3.4.4): aktuális pozíció `P_liq`, teljes grid `P_liq`, távolság.
 - [x] `src/lib/pionex/segments.ts` (3.4.1): `d` mark–last eltolás, `T = P_liq − d`, lefelé szegmens (szint vs. küszöb sorrend, likvidáció megszakít), felfelé szegmens, szegmensvégi ellenőrzés tényleges mark szélsőértékkel; 3.5 fedezetellenőrzés csak a nyitott pozícióra (kapcsolható); 3.4.5 sávon kívül.
-- [ ] ~~`src/lib/pionex/aggregate.ts`~~ → **Fázis 3‑ba tolva.** Fázis 1‑ben nincs 5m szabály; a Fázis 2 szabályai csak az 5m‑et záró 1m close‑t használják (`(t+60s) % 300s == 0`), aggregálás csak a chart‑megjelenítéshez kell. A meglévő `aggregate5mTo` index‑alapú (lyukas 1m adatra nem jó), ezért nem újrahasznosítható.
+- [x] ~~`src/lib/pionex/aggregate.ts`~~ → **Fázis 3‑ba tolva (ott elkészült, időbélyeg‑vödrös).** Fázis 1‑ben nincs 5m szabály; a Fázis 2 szabályai csak az 5m‑et záró 1m close‑t használják (`(t+60s) % 300s == 0`), aggregálás csak a chart‑megjelenítéshez kell. A meglévő `aggregate5mTo` index‑alapú (lyukas 1m adatra nem jó), ezért nem újrahasznosítható.
 - [x] `src/lib/pionex/engine.ts` (3.3 + 3.4): tiszta függvény `(last1m, mark1m, funding, config, path) → RunResult`; rögzített percenkénti sorrend: nyitási rés → funding → függő beavatkozások (Fázis 1‑ben csak a beégetett feltöltés‑horog a teszthez) → gyertyán belüli szegmensek (A/B út) → 5m záráskor szabály‑kiértékelés (Fázis 1: üres). Minden lépés után likvidációs ellenőrzés mark árral. Minden feltételezés kommentben a terv pontjára hivatkozva.
 - [x] `src/lib/pionex/metrics.ts` + verdikt (6.1): A/B futtatás, „árútfüggő” összevetés (verdikt, likvidációs időpont ±1h, ciklusszám), min. liq. távolság és MTM DD a teljes eseményfolyamból, víz alatt töltött idő, visszatérés; ritkítás 5m‑re csak megjelenítéshez (vödrönkénti minimum megőrzésével).
 - [x] Tesztek: `pionexLedger.test.ts`, `pionexEngine.test.ts`, `pionexFunding.test.ts`, `pionexFixtures.test.ts` — a 4.3 Fázis 1 lista minden pontja (visszapattanás; küszöb alatti szint nem töltődik fedezet nélkül is; nyitáskori likvidáció + `topup_cancelled`; nyitási rés; funding 1–4 ms eltolás / előjel / nyitott pozíció / azonnali ellenőrzés; kihagyott funding‑rekord → adathiányos; díj nincs duplán; `d` és `T`; A≠B → árútfüggő; fedezet csak nyitott pozícióra, Bot A `E=0` kihagyott vételek; invariáns).
@@ -106,12 +106,44 @@ bot1ClosePrice?: number                                   // 3.8, végleges leá
 5. **Feltöltés** minden lezárt 5m gyertyán újra kiértékelődik, amíg a feltétel áll (a terv nem ad felső korlátot; a `freeCash` a korlát).
 
 ### Fázis 3 — UI és mentés (kapu: terv 7. táblázat, 3. sor)
-- [ ] `prisma/schema.prisma`: `PionexRun` (`String` JSON mezők) + `db push`.
-- [ ] `src/app/api/pionex/run/route.ts` (adat → 2 út → metrikák → mentés; idők külön: betöltés / számítás / mentés) és `runs/route.ts` (lista, egy futás, törlés).
-- [ ] `TradingChart.tsx`: `lineSeries`, `markers`, `verticalMarkers` opcionális propok; **marker‑összefésülés egy helyen** (combo markerek + `markers`, idő szerint rendezve, egy `setMarkers`); propok nélkül változatlan viselkedés.
-- [ ] `src/components/pionex/`: `ParamPanel` (accordion: Bot, Közös tőke, Költségek, Ciklus, Feltöltés, 2. bot, Fix záróár), `PionexCard` (verdikt + kártya botonként), `ExposurePanel`, `SubCharts` (vagyon, liq. táv %, pozíció, funding), `EventList`, `DrawdownPicker` (Top N + „utólag kiválasztott” címke), `Assumptions`, `RunHistory` (kitűzés 2 futás, trió).
-- [ ] `src/app/pionex/page.tsx`: a 6. fejezet három zónája; trió futtatás (6.3).
-- [ ] **Kapu:** a három ablak egy kattintással fut; trió és két kitűzött futás egymás mellett; feltételezések és adathiány látszik; a főoldali chart markerei változatlanok; minden teszt zöld.
+
+**Felmérés (Fázis 0–2 kód, 2026‑10‑05):**
+- A `/pionex` oldal váza kész (ablak, Top N `DrawdownPicker`, adat‑lefedettség); a többi zóna `Placeholder`. A `DrawdownPicker` kész, csak újrahasznosítom.
+- A `RunResult` tartalmazza a teljes esemény‑ és mintafolyamot; a `Sample` csak a botok **minimális** liq. távolságát tárolja, botonkénti `P_liq`‑t nem → a chart botonkénti likvidációs vonalához a mintába kell egy `liqPrices` mező (a motor egy sorral bővül, a logika nem változik).
+- A sáv %‑offsetje a start‑árhoz képest (terv 2/7) csak a szerveren ismert (az ablak első 1m nyitója, amelyhez mark is van) → a route oldja fel `bandFromOffsets`‑szel.
+- `TradingChart`: a marker‑effekt `!combo` esetén `setMarkers([])` + üres tick‑fésű (1246–1251. sor) — megerősítve. Van már `fills` prop (üres körös töltésjelölő primitive, `candleIdx` alapú, nagy elemszámra is olcsó) → a vételek/eladások ezen mennek, a `markers` prop csak a **beavatkozásokra** (start, zárás, ciklus, újraindítás, feltöltés, 2. bot, likvidáció, elutasítások) — így nincs több ezer `setMarkers` elem (a 2026‑05 „event payload bomb” hotfix tanulsága).
+- A meglévő `aggregate5mTo` index‑alapú, lyukas 1m adatra nem jó → új, időbélyeg‑vödrös `pionex/aggregate.ts` (Fázis 1‑ből ide tolva).
+- Mentett futás megnyitásakor a gyertyák nincsenek a `PionexRun`‑ban (terv 5: a séma nem tartalmaz gyertyát) → a `runs/[id]` a cache‑ből olvassa vissza az 1m last‑ot és 5m‑re aggregál.
+- Sub‑chart minta: `WalkForwardView.tsx` (lightweight‑charts line series); a téma a `TradingChart` `getChartColors()`‑át követi.
+
+**Todo:**
+- [x] **Séma:** `prisma/schema.prisma` → `PionexRun` (`id, name, symbol, startTs, endTs, configJson, metricsJson, equityJson, liqSeriesJson, eventsJson, verdict, dataGapsJson, createdAt`, mind `String` JSON) + `prisma db push`.
+- [x] **Motor (minimális):** `Sample.liqPrices: (number|null)[]` botonként (`types.ts` + `engine.ts` mintavétel); a `thinSamples` változatlanul viszi.
+- [x] **`pionex/aggregate.ts`:** 1m → 5m időbélyeg‑vödrökkel (`floor(ts/300)`), lyukas adatra is helyes; csak megjelenítés.
+- [x] **`pionex/report.ts`** (tiszta függvény, tesztelhető): `(A, B, dataReport, config) → { verdict, metrics: {A,B} (computeMetrics + RunResult összefoglaló esemény/minta nélkül), equity: {A,B} (ritkított minta), liqSeries: {A,B}, events: {A,B} (teljes) }` — ezt menti a route, és ezt kapja a UI.
+- [x] **`api/pionex/run/route.ts` (POST):** validáció → `loadWindow` → sáv feloldása (%‑offset vagy abszolút) → `runPionex` A és B → `report` → `PionexRun` mentés → válasz `{ run, candles5m, timingMs: { load, compute, save } }`.
+- [x] **`api/pionex/runs/route.ts`** (GET lista: könnyű mezők — id, név, szimbólum, ablak, verdikt, fő metrikák; DELETE `?id=`) és **`runs/[id]/route.ts`** (GET teljes futás + `candles5m` a cache‑ből).
+- [x] **`TradingChart.tsx`:** három opcionális prop — `lineSeries?: { id; color; dashed?; data: {time, value}[] }[]` (dinamikus line series, effektben létrehozva/eltávolítva), `markers?: SeriesMarker<Time>[]`, `verticalMarkers?: { time; color }[]` (a meglévő tick‑fésű primitive). **Marker‑javítás:** egyetlen effekt: combo markerek (ha van combo) + `markers` prop → idő szerint rendezve → egy `setMarkers`; tickek ugyanígy. Propok nélkül a viselkedés bitre azonos (üres tömbök).
+- [x] **`src/components/pionex/`** (egyszerű, a meglévő `.card` / `.stat-card` / `.badge` tokenekkel):
+  - `ParamPanel` — accordion: Bot (sáv %‑offset vagy abszolút, n, mód, I, E, lev), Közös tőke, Költségek (maker, taker, mmr, funding felülírás, fedezetellenőrzés), Ciklus, Feltöltés, 2. bot, Fix záróár; mindegyik szekció ki/be kapcsolható; értékek `usePersistentState`‑tel. Preset: Bot A.
+  - `PionexCard` — verdikt‑címke (6.1) + botonként: Est. Liq (teljes grid) · induló `P_liq` · MTM max DD · min. liq. táv · ciklusok · körök / grid profit · víz alatt · visszatért? · kivett · kihagyott vételek · elutasított események; árútfüggőnél A és B egymás mellett.
+  - `ExposurePanel` — bot1 · bot2 · összesen · szabad pénz · kivett (allokált `I+E`, notional `I·lev`, végső wallet, státusz).
+  - `SubCharts` — fülek: Vagyon · Liq. táv % · Pozíció · Funding (kumulált, eseményekből) · Események; A és B út két vonalként.
+  - `EventList` — időrendi lista eredeti időponttal, út‑ és típusszűrő, lapozás (500/oldal).
+  - `Assumptions` — a 3.9 eltérések, mark–last szabály (3.4.1), A/B út, fedezet‑közelítés (3.5), verdikt‑címkék jelentése; adathiánynál a lyukak listája.
+  - `RunHistory` — futások listája (betöltés, törlés), **kitűzés max. 2** (localStorage), két kitűzött futás `PionexCard`‑ja egymás mellett.
+- [x] **`app/pionex/page.tsx`:** a 6. fejezet elrendezése (bal: ablak + `ParamPanel` + Run; jobb: verdikt/kártya → kitettség → fő chart (5m gyertyák, bot1 gridek, töltések `fills`‑ként, botonkénti liq. vonal + 2. bot sáv `lineSeries`‑ként, beavatkozás‑markerek 5m‑re illesztve, ciklushatárok `verticalMarkers`) → sub‑chartok → futások). **Kapu‑ablak gombok** (2022‑05, 2022‑11, a szimbólum 2025‑ös ablaka a Fázis 0 táblából): egy kattintás = ablak beállítása + futtatás. **Trió** gomb (6.3).
+- [x] **Tesztek:** `pionexReport.test.ts` (aggregate lyukas adaton; report kerekítés nélkül megőrzi a verdiktet/metrikákat; JSON round‑trip; `liqPrices` két bottal), a meglévő 346 zöld, `tsc --noEmit`, `next build` (vagy `next lint`) tiszta. *(ESLint nincs konfigurálva a repóban, `next build` nem futott — a futó dev szervered `.next` mappáját írta volna felül; helyette `tsc` + izolált dev szerveres böngészőteszt.)*
+- [x] **Kapu (kézi, dev szerveren):** a három ablak egy kattintással fut (idők: betöltés / számítás / mentés); trió és két kitűzött futás egymás mellett; feltételezések és adathiány látszik; a főoldali chart markerei változatlanok (grid replay + combo nézet megnyitva).
+- [x] Review szakasz.
+
+**Döntések — jóváhagyva (2026‑10‑05):**
+1. **Trió (6.3)** a panel `capitalTotal`‑jából és bot1 paramétereiből: (1) egy bot, `E = capitalTotal − I`, feltöltés és 2. bot nélkül; (2) egy bot a panel `E`‑jével + a panel feltöltés‑szabályával (ha ki van kapcsolva: alapértelmezett 5 % küszöb, 50 USDT); (3) a panel `E`‑jével + 2. bot (ha ki van kapcsolva: 1 % offset, ×1). A ciklus‑ és fix záróár‑beállítás mindháromban azonos. Három külön `PionexRun`, közös névelőtaggal (`trio:`), háromoszlopos kártya + aggregált kitettség.
+2. **„Három ablak egy kattintással”** = három kapu‑ablak gomb, mindegyik egy kattintással beállítja az ablakot és fut (nem egy gomb, ami mindhármat egyszerre futtatja).
+3. **Kitűzés** csak kliensoldali (localStorage), nincs `pinned` mező a sémában (a terv mezőlistája nem tartalmazza).
+4. **Események a chartra:** töltések a meglévő `fills` primitive‑vel (nem `setMarkers`), a `markers` prop csak a beavatkozásokra (teljesítmény, lásd felmérés). Az eseménylista teljes.
+5. **Feliratok angolul** (Fázis 0 5. döntés), a verdikt‑címkék magyar magyarázata a Feltételezések panelben.
+6. **Fő chart** az 1. bot **induló** sávjának gridjeit mutatja; újraindításkor (új sáv) a ciklushatár függőleges jelölő látszik, a gridvonalak nem frissülnek (egyszerűség). A 2. bot sávja két szaggatott vonal az indulásától.
 
 ## Kritikus fájlok
 - Olvasott/érintett meglévő: `src/lib/data/binanceApi.ts`, `candleCache.ts`, `fundingCache.ts`, `src/lib/constants.ts`, `src/components/charts/TradingChart.tsx`, `src/app/page.tsx`, `prisma/schema.prisma`.
@@ -274,6 +306,84 @@ Mindhárom finding jogos volt; mind javítva, regressziós teszttel. Az 1. és a
 - [x] **P3 üres `intervention_missed`** (`interventions.ts`): az `evaluateRules` minden 5m záráskor beállította a `dueMs`‑t, így egy 5m zárás utáni hiányzó perc üres eseményt adott. Javítás: `dueMs` csak ténylegesen függő beavatkozásnál. Teszt: hiányzó perc, semmi sem esedékes → nincs esemény (a javítás előtt bukott).
 
 **Ellenőrzés:** 21 fájl, **346 zöld**, `tsc` tiszta. A 9 kapuablak Fázis 1 számai továbbra is bitre azonosak a commitolt kóddal.
+
+### Fázis 3 — 2026‑10‑06 (kész, kapu teljesítve)
+
+**Új fájlok:**
+- `pionex/aggregate.ts` — 1m → 5m időbélyeg‑vödrökkel (lyukas adatra is helyes), csak megjelenítés; `fiveMinuteBucketSec` az események 5m gyertyára illesztéséhez.
+- `pionex/report.ts` — tiszta függvény: két út → verdikt, metrikák a teljes mintafolyamból, 5m‑re ritkított vagyon‑ és `P_liq`‑sorok, teljes eseményfolyam.
+- `pionex/runStore.ts` — futtatás (ablak → sáv feloldása a start‑árból → A + B → report → `PionexRun`), visszatöltés (5m gyertyák a cache‑ből), lista, törlés, bemeneti validáció.
+- `pionex/params.ts` — UI paraméterek (%‑ban) → kérés, Bot A preset, trió (6.3), kapu‑ablakok.
+- `api/pionex/run` (POST), `api/pionex/runs` (GET, DELETE), `api/pionex/runs/[id]` (GET).
+- `components/pionex/`: `ParamPanel`, `PionexCard`, `ExposurePanel`, `SubCharts` (+ `EventList` fül), `Assumptions`, `RunHistory`, `chartData.ts`, `format.ts`.
+- `__tests__/pionexReport.test.ts` — 8 teszt (aggregálás lyukakkal, botonkénti `liqPrices`, report = teljes folyam metrikái + minimumok megőrzése, adathiány elsőbbsége, JSON round‑trip, chart‑overlayek, paraméter‑átalakítás, trió).
+
+**Módosított fájlok (minimálisan):**
+- `prisma/schema.prisma` — `PionexRun` (a terv mezőlistája, `String` JSON‑ok `{A, B}` alakban) + `db push`.
+- `types.ts` / `engine.ts` — `Sample.liqPrices` (botonkénti aktuális `P_liq`); a számítás nem változott. Két meglévő teszt fixture‑je kapott egy `liqPrices: []` mezőt.
+- `TradingChart.tsx` — opcionális `lineSeries`, `markers`, `verticalMarkers` és **`minBarSpacing`** prop; a marker‑effekt egyetlen összefésülési pont (combo + prop markerek → rendezés → egy `setMarkers`; tickek ugyanígy). Propok nélkül bitre azonos hívások (üres tömbök combo nélkül, ugyanaz a tartalom comboval).
+- `app/pionex/page.tsx` — a placeholderek helyén a 6. fejezet zónái; kapu‑ablak gombok, Run, Trio, futás‑idők, kitűzés.
+
+**A böngészőteszt által talált és javított hibák:**
+1. **A fő chart nem tudta a teljes ablakot mutatni:** a lightweight‑charts alapértelmezett `minBarSpacing` (0,5 px) 4600–10 600 gyertyánál a `fitContent`‑et és a kicsinyítést is korlátozta, így a likvidáció pillanata képen kívül esett. Javítás: új opcionális `minBarSpacing` prop (csak a `/pionex` adja meg: 0,01); megadása nélkül a könyvtári alapérték marad. *Eltérés a tervtől: negyedik opcionális prop.*
+2. **Negatív / nagyon távoli `P_liq` szétnyomta az árskálát** (kis pozíciónál a `P_liq` negatív, a vonal −8000‑ig zuhant). Javítás: `P_liq ≤ 0` vonaltörés (nincs pozitív likvidációs ár), és az overlay‑vonalak nem vesznek részt az árskála automatikus méretezésében (`autoscaleInfoProvider: () => null`) — a skálát a gyertyák adják. A kártya és a metrikák értékei érintetlenek.
+3. **Kitettség‑táblázat kilógott** a trió keskeny oszlopaiból → vízszintesen görgethető konténer.
+
+**Ellenőrzés:**
+- **22 fájl, 354 zöld** (346 + 8), `tsc --noEmit` tiszta.
+- **API, cache‑ből (ETH, Bot A alak, 2 út):** 2022‑05 likvidáció 05‑09 10:46, 818 kör; 2022‑11 11‑08 18:06; 2025 01‑13 11:32 — **azonos a Fázis 1 számaival**. Idők: betöltés 0,6–1,1 s, számítás (A+B) 27–134 ms, mentés 13–66 ms. Válaszméret 1,4–3,3 MB.
+- **Trió** (BTC 2022‑11, tőke 600): túlélt / határeset / likvidált — **azonos a Fázis 2 tájékoztató eredményével**.
+- **Böngésző (headless Chrome, izolált dev szerver):** kapu‑ablak egy kattintással fut; A/B váltás; Események fül; két futás kitűzve egymás mellett (localStorage); trió három oszlopban; Feltételezések + adathiány‑lista látszik; a főoldal hibamentesen tölt. JS‑hiba nincs.
+- **A főoldali markerek változatlansága:** kódszinten igazolva (propok nélkül azonos `setMarkers` / tick tartalom és sorrend); a combo nézetet böngészőben nem kattintottam végig.
+
+**Tudnivalók:**
+- **A futó `:3000` dev szerveredet újra kell indítani:** a memóriában a régi Prisma kliens van (`PionexRun` nélkül), ezért ott az `/api/pionex/runs` 500‑at ad.
+- Két `next dev` ugyanabból a mappából közös `.next`‑et ír, és egymás route‑manifestjeit felülírják (átmeneti API 404‑ek). A végső ellenőrzés ezért egy scratchpad‑másolatból futott.
+- A teszt‑futtatásaim `PionexRun` sorokat hagytak a `prisma/dev.db`‑ben (nem verziókezelt) — a Runs listából törölhetők (aktuális szám: lásd a review‑javítások Review‑ját).
+- A konzolban maradó egyetlen 404 a böngésző saját kérése (az app nem tartalmaz favicont), a szerver logban nincs 404.
+
+### Fázis 3 review‑javítások — 2026‑10‑06
+
+Mind a 6 finding jogos (kódban ellenőrizve); mindet javítom, regressziós teszttel. A `findMany of undefined` a futó dev szerver régi Prisma kliense (a `db push` után újraindítás kell) — nem kódhiba.
+
+- [x] **P1/1 validáció** (`runStore.validateRunRequest`): minden szám véges; `gridCount` egész 1..500; `I, lev > 0`, `E ≥ 0`; díjak 0 ≤ x < 1, `mmr` 0 ≤ x < 1; funding felülírás véges vagy null; sáv (offset vagy abszolút) véges; `capitalTotal > 0`; ciklus: `TP > 0`, `reinvest ∈ [0, 1]`; feltöltés: `trigger ∈ (0, 1)`, `amount > 0`; 2. bot: `offset ∈ [0, 1)`, `szorzó > 0`; fix záróár `> 0`. 400 a letöltés előtt (a route már így hívja). Teszt minden szabályra.
+- [x] **P1/2 likvidációs sor** (`report.ts`): a `liqSeries` a **teljes** mintafolyamból készül, 5m vödrönként **botonkénti maximum** `P_liq`‑vel (nem a vagyon‑/távolság‑ritkított mintákból). Teszt: botonkénti vödörmaximum = a teljes folyam maximuma.
+- [x] **P2/3 pozíció‑chart** (`SubCharts`): azonos időpontnál a **utolsó** állapot (nem a maximum).
+- [x] **P2/4 teljes adathiány** (`runStore`, run route, page): közös perc nélkül nincs kivétel → 422 `{ error, report, timingMs, counts }` (a data route alakja); a felület a meglévő „Data coverage” kártyán a hiánylistát mutatja, verdikt nélkül.
+- [x] **P2/5 botonkénti likvidációs értékek** (`types`, `engine`, `interventions`, `PionexCard`): `BotSummary.startLiq` (a bot első indulásakor: pozíció + teljes grid) és `endLiq` (az ablak végén, aktív botnál); a kártya bot‑táblája mutatja; a felső sorok „bot 1 start” felirattal.
+- [x] **P2/6 chart‑tooltip** (`TradingChart`, `chartData`, page): opcionális `hoverLines(time)` prop → saját crosshair‑feliratkozás és tooltip (a combo‑kezelő érintetlen); a page az 5m gyertyára eső események listáját adja **eredeti perccel és botazonosítóval** (max. 12 sor + „még N”).
+- [x] Integrációs teszt a `runStore`‑ra (mockolt `loadWindow` / Prisma): teljes adathiány → strukturált hiba; mentés → visszatöltés ugyanazt a payloadot adja.
+- [x] `vitest`, `tsc`, böngésző‑ellenőrzés izolált dev szerveren; Review.
+
+
+**Review — Fázis 3 review‑javítások (kész, 2026‑10‑06):**
+- **P1/1:** `validateRunRequest` minden mezőt ellenőriz (véges számok, tartományok: díjak és `mmr` [0, 100 %), reinvest [0, 100 %], feltöltés `trigger ∈ (0, 100 %)` és `amount > 0`, 2. bot szorzó `> 0`, offset [0, 100 %), fix záróár `> 0`; a `scheduledTopUps` tesztkampó nem futtatási input). A route a letöltés előtt hívja → 400. A review mind a négy példája (szorzó −1, feltöltés −50, reinvest 2, mmr 1) és a kiürített mező (JSON `null`) 400‑at ad.
+- **P1/2:** `liqSeriesByBucket` a **teljes** mintafolyamból, 5m vödrönként botonkénti maximum `P_liq` (a vagyon‑ritkítás független). Valós adaton a review esete: ETH 2022‑05, kétbotos futás, 05‑08 13:45, 2. bot: **719,44** (A) / **718,23** (B) — korábban 513,11 / 511,76; a régi ritkítással 178 (A) / 187 (B) vödörben tért el a 2. bot értéke.
+- **P2/3:** a pozíció és a kumulált funding azonos időpontnál az utolsó állapotot tartja (a vagyon és a távolság továbbra is a legrosszabbat).
+- **P2/4:** közös perc nélkül `executeRun` → `{ ok: false, error, report, timingMs, counts }`, a route 422‑t ad, nem ment; a felület a „Data coverage” kártyán mutatja a hiánylistát és az okokat, verdikt nélkül (SOL 2019‑01‑01 ablakon ellenőrizve).
+- **P2/5:** `BotSummary.startLiq` (a bot első indulása után) és `endLiq` (ablak vége, csak aktív botnál); a kártya bot‑táblájában „Liq start / Liq end: full · pos”. A nem pozitív `P_liq` „none (≤ 0)” (nincs pozitív likvidációs ár — pl. a 2. bot induló pozíciója −1070,81 volt).
+- **P2/6:** `TradingChart.hoverLines` opcionális prop saját crosshair‑feliratkozással és tooltippel (a combo‑kezelő érintetlen); a gyertya eseményei eredeti perccel és botazonosítóval, max. 12 sor + „… N more (Events tab)”.
+- **Tesztek:** 23 fájl, **379 zöld** (+25): validáció (21 eset), botonkénti vödörmaximum a teljes folyamból (+ szintetikus eset, amit a ritkítás eldobna), pozíció utolsó állapot, botonkénti start/end likvidáció, tooltip‑sorok és ‑korlát, **`runStore` integráció** (mockolt ablak/cache/Prisma): teljes adathiány → strukturált eredmény, semmi sem mentődik; mentés → visszatöltés ugyanazt a payloadot adja. `tsc` tiszta.
+- **Böngésző (izolált dev szerver):** kártya, tooltip, adathiány‑kártya rendben; csak a várt 422 és a böngésző favicon‑kérése jelent meg.
+- **Nem kódhiba:** a `findMany of undefined` a futó dev szerver régi Prisma kliense — újraindítás kell a `db push` után.
+- **Javítás egy korábbi állításomhoz:** a scratchpad‑másolat a szimlinkelt Prisma kliens miatt **a repó `prisma/dev.db`‑jébe** írt, nem saját DB‑be. A teszt‑futtatások összesen **32 `PionexRun` sort** hagytak ott (a Runs listából törölhetők).
+
+### Fázis 3 — második review, 2 maradék finding (2026‑10‑06)
+
+Mindkettő jogos. A fenti P1/1 Review állítása („a kiürített mező 400‑at ad”) a `capitalTotal` és a `bot1ClosePrice` mezőre **nem volt igaz**: a `NaN` a JSON‑ban `null` lesz, és a szerver a `null`‑t „kikapcsolt”‑nak olvasta.
+
+- [x] **1. Üres mező bekapcsolt opciónál** — JSON‑biztos szerződés: kikapcsolt opciónál a kulcs hiányzik, jelen lévő kulcsnál érvényes szám kell. `params.toRunRequest`: `bot1ClosePrice` kikapcsolva `undefined`. `types.ts`: `bot1ClosePrice?: number`. `validateRunRequest`: `capitalTotal` és `bot1ClosePrice` esetén `!== undefined` → a `null` 400‑at kap.
+- [x] **2. Régi mentett futások** — `REPORT_VERSION = 2` a `metricsJson`‑ban (séma változatlan); `PionexRunPayload.stale`; `params.rerunRequest(run)` (a régi `bot1ClosePrice: null` → `undefined`); figyelmeztetés a `PionexCard`‑on; „Re-run” gomb a fő kártya mellett.
+- [x] **Tesztek:** panel → kérés → JSON → validáció teljes út; régi sor → `stale`; új mentés → nem `stale`; régi config újrafuttatási kérése érvényes.
+- [x] `vitest`, `tsc`; Review.
+
+**Review (kész, 2026‑10‑06):**
+- **1. gyökérok:** a `null` két jelentést hordozott („kikapcsolva” és „bekapcsolva, de üres → NaN → JSON null”). Most a kikapcsolt opció kulcsa hiányzik, így a `null` mindig érvénytelen → 400 a letöltés előtt. A `cycle / topUp / bot2` már eddig is jó volt (bekapcsolva objektum, a belső `null` elbukik); a funding felülírás üresen szándékosan `null` = Binance ráta. A motor `!= null` ellenőrzése változatlan.
+- **2.:** `REPORT_VERSION = 2` a `metricsJson`‑ban, séma‑ és adatmódosítás nélkül. Visszatöltéskor `stale = reportVersion !== 2` → piros figyelmeztetés a kártyán (kompakt/kitűzött is) és „Re-run (saves a fresh run)” gomb a fő kártya alatt; az új futás külön sor, a régi a listából törölhető. A `rerunRequest` a régi `bot1ClosePrice: null`‑t `undefined`‑ra fordítja. Automatikus újraszámolás tudatosan nincs (nem írja át csendben a mentett eredményt).
+- **Érintett fájlok:** `types.ts`, `params.ts`, `runStore.ts`, `PionexCard.tsx`, `app/pionex/page.tsx`, két tesztfájl.
+- **Tesztek:** 23 fájl, **386 zöld** (+7: 5 elutasítás és 1 elfogadási eset a valódi JSON‑úton; régi sor → `stale` + érvényes újrafuttatási kérés; új mentés → nem `stale`). `tsc` tiszta.
+- **DB (csak olvasva):** a 32 meglévő `PionexRun` sor egyike sem verziózott → mind „stale”‑ként jelenik meg.
+- **Kézi ellenőrzés még hátra (dev szerver újraindítása után):** Common capital be + üres mező → Run → 400 üzenet; régi futás megnyitása → figyelmeztetés + Re-run → a 2. bot liq vonala 05‑08 13:45‑nél ~719,44 (A).
 
 ---
 
@@ -2300,3 +2410,54 @@ Confirm one of:
 1. **Go.** I implement V2.1 → V2.9 in order; one commit at the end (or split if you prefer).
 2. **Adjust scope.** E.g., skip V2.4's broader `totalCandles` audit and just patch the one ComboPane line; or skip the test file; or change the `MAX_EVENTS_HINT` ceiling.
 3. **Different approach.** Push the compaction into the supervisor instead, or use a streaming response, etc.
+
+---
+
+# Fix: `Cannot read properties of undefined (reading 'findMany')` on /pionex
+
+## Root cause (verified)
+
+- `listRuns()` in `src/lib/pionex/runStore.ts:150` calls `prisma.pionexRun.findMany`.
+- The generated client in `node_modules/.prisma/client` DOES contain `pionexRun` (regenerated Oct 5 23:45), and the `PionexRun` table exists in `prisma/dev.db` (32 rows). A fresh Node process resolves `prisma.pionexRun` fine.
+- The running `next dev` server (PID 44897) was started Oct 5 23:11:50 — BEFORE the client was regenerated. Next externalizes `@prisma/client` on the server, so Node's require cache plus the `globalThis.prisma` singleton in `src/lib/prisma.ts` keep the OLD client alive for the life of the process. That client has no `pionexRun` delegate → `undefined.findMany`.
+- Nothing in code can hot-swap a Prisma client inside a running process; only a restart picks up the regenerated client.
+
+## Plan
+
+- [x] Restart the dev server on :3000 (kill PID 44897, run `npm run dev` again).
+- [x] Prevent recurrence: change `"dev": "next dev"` → `"dev": "prisma generate && next dev"` in `package.json`, mirroring what `build` already does, so every restart regenerates the client from `schema.prisma`.
+- [x] Verify: `curl localhost:3000/api/pionex/runs` returns the run list.
+
+## Review
+
+- Only code change: `package.json` dev script is now `prisma generate && next dev` (one line). No source files touched; `runStore.ts` and `prisma.ts` were already correct.
+- Killed stale `next dev` (PID 44897, started before the client regeneration) and restarted it via `npm run dev`; `prisma generate` ran on startup, server ready on :3000.
+- Verified `GET /api/pionex/runs` → HTTP 200 with the saved run list.
+- Lesson: after any `prisma db push` / `prisma generate`, the dev server must be restarted. The new dev script makes the restart self-sufficient.
+
+---
+
+# Pionex review — audit of reported findings — 2026-10-06
+
+## Todo
+
+- [ ] Trace the input-validation path from `ParamPanel` through request construction, JSON serialization, API validation, and regression tests.
+- [ ] Check saved-report versioning, stale-run reload behavior, the warning and re-run UI, and its coverage for legacy rows.
+- [ ] Recheck the six original findings against current implementation and tests; classify each as fixed, partial, or unverified.
+- [ ] Inspect the reported Prisma `findMany` refresh failure and determine whether the repository contains a code-side prevention; do not alter the database or restart the server.
+- [ ] Record evidence, remaining gaps, and a concise review in this section.
+
+## Review
+
+(pending plan approval)
+
+# Pionex — alapértelmezett ablak 2022 → aktuális — 2026-10-06
+
+**Probléma:** a `/pionex` Window kártya From/To mezője fixen 2022‑05‑04 → 2022‑05‑20 (`src/app/pionex/page.tsx:80-81`).
+
+## Todo
+- [ ] Alapablak relatív legyen: vége = mai UTC éjfél, kezdete = 16 nappal előtte (ugyanaz a 16 napos hossz) → soha nem avul el újra.
+- [ ] A `GATE_WINDOWS` (2022‑05 Terra, 2022‑11 FTX, 2025 esés) gombok **változatlanok** — szándékos stressz‑teszt ablakok a Fázis 0 kapuból.
+- [ ] Ellenőrzés: `tsc` + vitest.
+
+## Review
