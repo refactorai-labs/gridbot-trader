@@ -1,6 +1,6 @@
 # Aktív terv — Pionex Long Futures Grid Backteszter (terv v3, fázisonként)
 
-**Státusz:** Fázis 0 kész (kapu teljesítve). Fázis 1 jóváhagyásra vár.
+**Státusz:** Fázis 0 kész (kapu teljesítve). Fázis 1 kész + review‑javítások (2 P1, 3 P2, 1 validációs pont) — **Fázis 2 jóváhagyásra vár.**
 **Forrás:** `tasks/pionex-backtester-plan.md` (v3) — a 9. pont indító promptja szerint. (A fájl a `tasks/` mappában van, nem a `docs/`‑ban.)
 **Dátum:** 2026‑10‑05
 
@@ -56,17 +56,17 @@
 - [x] `vitest`, `tsc --noEmit`, majd a 9 kapuablak újraellenőrzése (cache + funding API‑egyeztetés).
 
 ### Fázis 1 — főkönyv és egy bot eseménymotorja (kapu: terv 4.3 Fázis 1)
-- [ ] `src/lib/pionex/types.ts`: `PionexConfig`, `BotState`, `LedgerEvent` (minden okkal), `RunResult`, `Verdict`, `PathId ('A'|'B')`.
-- [ ] `src/lib/pionex/gridLevels.ts`: aritmetikus/geometrikus szintek, %‑offset → abszolút sáv, `Q = I·lev/n`.
-- [ ] `src/lib/pionex/ledger.ts` (3.2): wallet / qty / avgEntry / lots; vétel, eladás, funding, feltöltés, zárás, likvidáció; `equity(P)`, grid profit (kijelzés), ciklusprofit; **invariáns‑ellenőrző**.
-- [ ] `src/lib/pionex/liquidation.ts` (3.4.4): aktuális pozíció `P_liq`, teljes grid `P_liq`, távolság.
-- [ ] `src/lib/pionex/segments.ts` (3.4.1): `d` mark–last eltolás, `T = P_liq − d`, lefelé szegmens (szint vs. küszöb sorrend, likvidáció megszakít), felfelé szegmens, szegmensvégi ellenőrzés tényleges mark szélsőértékkel; 3.5 fedezetellenőrzés csak a nyitott pozícióra (kapcsolható); 3.4.5 sávon kívül.
-- [ ] `src/lib/pionex/aggregate.ts`: 1m → 5m (döntés + megjelenítés), 1m esemény → 5m gyertya illesztés.
-- [ ] `src/lib/pionex/engine.ts` (3.3 + 3.4): tiszta függvény `(last1m, mark1m, funding, config, path) → RunResult`; rögzített percenkénti sorrend: nyitási rés → funding → függő beavatkozások (Fázis 1‑ben csak a beégetett feltöltés‑horog a teszthez) → gyertyán belüli szegmensek (A/B út) → 5m záráskor szabály‑kiértékelés (Fázis 1: üres). Minden lépés után likvidációs ellenőrzés mark árral. Minden feltételezés kommentben a terv pontjára hivatkozva.
-- [ ] `src/lib/pionex/metrics.ts` + verdikt (6.1): A/B futtatás, „árútfüggő” összevetés (verdikt, likvidációs időpont ±1h, ciklusszám), min. liq. távolság és MTM DD a teljes eseményfolyamból, víz alatt töltött idő, visszatérés; ritkítás 5m‑re csak megjelenítéshez (vödrönkénti minimum megőrzésével).
-- [ ] Tesztek: `pionexLedger.test.ts`, `pionexEngine.test.ts`, `pionexFunding.test.ts`, `pionexFixtures.test.ts` — a 4.3 Fázis 1 lista minden pontja (visszapattanás; küszöb alatti szint nem töltődik fedezet nélkül is; nyitáskori likvidáció + `topup_cancelled`; nyitási rés; funding 1–4 ms eltolás / előjel / nyitott pozíció / azonnali ellenőrzés; kihagyott funding‑rekord → adathiányos; díj nincs duplán; `d` és `T`; A≠B → árútfüggő; fedezet csak nyitott pozícióra, Bot A `E=0` kihagyott vételek; invariáns).
-- [ ] Fixture‑tesztek (4.1): Bot A és Bot B profit/kör ±3 %, induló mennyiség ±2 %; teljes grid `P_liq` **csak riportálva** (nem kapu, 4.2‑ig).
-- [ ] **MEGÁLLÁS + check‑in:** mért számok (profit/kör, induló qty, `P_liq` induló és teljes grid, Bot A visszajátszás ha az időpontok adottak), bias‑vizsgálat eredménye, nyitott kérdések.
+- [x] `src/lib/pionex/types.ts`: `PionexConfig`, `BotState`, `LedgerEvent` (minden okkal), `RunResult`, `Verdict`, `PathId ('A'|'B')`.
+- [x] `src/lib/pionex/gridLevels.ts`: aritmetikus/geometrikus szintek, %‑offset → abszolút sáv, `Q = I·lev/n`.
+- [x] `src/lib/pionex/ledger.ts` (3.2): wallet / qty / avgEntry / lots; vétel, eladás, funding, feltöltés, zárás, likvidáció; `equity(P)`, grid profit (kijelzés), ciklusprofit; **invariáns‑ellenőrző**.
+- [x] `src/lib/pionex/liquidation.ts` (3.4.4): aktuális pozíció `P_liq`, teljes grid `P_liq`, távolság.
+- [x] `src/lib/pionex/segments.ts` (3.4.1): `d` mark–last eltolás, `T = P_liq − d`, lefelé szegmens (szint vs. küszöb sorrend, likvidáció megszakít), felfelé szegmens, szegmensvégi ellenőrzés tényleges mark szélsőértékkel; 3.5 fedezetellenőrzés csak a nyitott pozícióra (kapcsolható); 3.4.5 sávon kívül.
+- [ ] ~~`src/lib/pionex/aggregate.ts`~~ → **Fázis 3‑ba tolva.** Fázis 1‑ben nincs 5m szabály; a Fázis 2 szabályai csak az 5m‑et záró 1m close‑t használják (`(t+60s) % 300s == 0`), aggregálás csak a chart‑megjelenítéshez kell. A meglévő `aggregate5mTo` index‑alapú (lyukas 1m adatra nem jó), ezért nem újrahasznosítható.
+- [x] `src/lib/pionex/engine.ts` (3.3 + 3.4): tiszta függvény `(last1m, mark1m, funding, config, path) → RunResult`; rögzített percenkénti sorrend: nyitási rés → funding → függő beavatkozások (Fázis 1‑ben csak a beégetett feltöltés‑horog a teszthez) → gyertyán belüli szegmensek (A/B út) → 5m záráskor szabály‑kiértékelés (Fázis 1: üres). Minden lépés után likvidációs ellenőrzés mark árral. Minden feltételezés kommentben a terv pontjára hivatkozva.
+- [x] `src/lib/pionex/metrics.ts` + verdikt (6.1): A/B futtatás, „árútfüggő” összevetés (verdikt, likvidációs időpont ±1h, ciklusszám), min. liq. távolság és MTM DD a teljes eseményfolyamból, víz alatt töltött idő, visszatérés; ritkítás 5m‑re csak megjelenítéshez (vödrönkénti minimum megőrzésével).
+- [x] Tesztek: `pionexLedger.test.ts`, `pionexEngine.test.ts`, `pionexFunding.test.ts`, `pionexFixtures.test.ts` — a 4.3 Fázis 1 lista minden pontja (visszapattanás; küszöb alatti szint nem töltődik fedezet nélkül is; nyitáskori likvidáció + `topup_cancelled`; nyitási rés; funding 1–4 ms eltolás / előjel / nyitott pozíció / azonnali ellenőrzés; kihagyott funding‑rekord → adathiányos; díj nincs duplán; `d` és `T`; A≠B → árútfüggő; fedezet csak nyitott pozícióra, Bot A `E=0` kihagyott vételek; invariáns).
+- [x] Fixture‑tesztek (4.1): Bot A és Bot B profit/kör ±3 %, induló mennyiség ±2 %; teljes grid `P_liq` **csak riportálva** (nem kapu, 4.2‑ig).
+- [x] **MEGÁLLÁS + check‑in:** mért számok (profit/kör, induló qty, `P_liq` induló és teljes grid, Bot A visszajátszás ha az időpontok adottak), bias‑vizsgálat eredménye, nyitott kérdések.
 
 ### Fázis 2 — közös keret és beavatkozások (kapu: terv 4.3 Fázis 2)
 - [ ] `src/lib/pionex/capital.ts` (3.7): `capitalTotal`, `freeCash`, `kivett`; `allocate / release / reject` okkal; invariáns két botra.
@@ -136,6 +136,73 @@
 **Kapu újraellenőrzés (élő Binance funding‑egyeztetéssel):** mind a 9 ablak `complete=true`, a percszámok és funding rekordszámok **azonosak** a fenti táblázattal; az API‑egyeztetés egyik ablakban sem talált eltérést. Ablakonként cache‑ből ~0,5–1 s (a funding API‑hívás ~0,26 s). 1h történet: 0 gap, 0 hiba, ~1 s (korábban a listing előtti üres szakaszt minden alkalommal újra lekérte és csendben elnyelte a hibát). Dev‑szerver smoke: `/pionex` 200, drawdowns `complete:true`, 1 órás settlement nélküli ablak API‑val egyeztetve `complete:true, records:0`.
 
 **Tudatos döntés:** minden ablakbetöltés egy funding API‑kérés (kis költség), mert a cache önmagában nem bizonyíthatja a teljességet.
+
+### Fázis 1 — 2026‑10‑05 (kész, check‑in)
+
+**Új fájlok (`src/lib/pionex/`, meglévő kód nem változott):**
+- `types.ts` — config, `BotState`, `LedgerEvent`, `RunResult` (+ `startLiq`: induló és teljes grid `P_liq`), `Verdict`.
+- `gridLevels.ts` — aritmetikus/geometrikus szintek, `Q = I·lev/n`, %‑offset sáv.
+- `ledger.ts` — 3.2 főkönyv átlagáras elszámolással (vétel, eladás, funding, feltöltés, likvidáció), grid profit csak kijelzés, `invariantError()` (3.7).
+- `liquidation.ts` — aktuális és teljes grid `P_liq`, távolság.
+- `segments.ts` — `d` mark–last eltolás, lefelé szegmens: szint vs. `T = P_liq − d` sorrend, likvidáció megszakít; felfelé szegmens eladásokkal; 3.5 fedezetellenőrzés csak a nyitott pozícióra; ellenőrzés tényleges mark árral.
+- `engine.ts` — `runPionex(last1m, mark1m, funding, config, path)`: rögzített percenkénti sorrend (rés → funding → beavatkozások [indulás, beégetett feltöltés‑horog] → A/B út), hiányzó perc kihagyva, invariáns minden eseménynél mérve (`maxInvariantError`).
+- `metrics.ts` — min. liq. távolság, MTM DD, víz alatti idő, visszatérés a teljes eseményfolyamból; `decideVerdict` (6.1 prioritás, ±1h szabály); 5m ritkítás a vödörminimum megőrzésével.
+
+**Konvenciók (kommentben is):** lefelé szegmens `[Y, X)`, felfelé `(X, Y]` töltés; start‑ár ≥ szint → piaci vétel; a start az 1. perc 3. lépése, ezért a start‑percbe eső settlementet nem fizeti; kihagyott (fedezethiányos) szint a következő lefelé kereszteződésnél újra próbálkozik.
+
+**Tesztek:** 20 fájl, **322 zöld** (+41 új: ledger 8, engine 20, funding +5, fixture 8). `tsc --noEmit` tiszta. Minden 4.3 Fázis 1 pont lefedve.
+
+**Mért számok — fixture‑ök (maker 0,02 %, taker 0,05 %, mmr 0,5 %):**
+
+| | Bot A | Bot B |
+|---|---|---|
+| Nyitott gridek induláskor | 22 ✓ | 29 ✓ |
+| Induló qty (csak belső konzisztencia, **nem** külső validáció — a Pionex qty a 4.2‑ből hiányzik) | 0,271456 (= k·Q/start) | 0,029951 |
+| Profit/kör (átlag, maker–maker) | 0,047504 vs Pionex 0,046510 → **+2,1 %** ✓ | 0,005076 vs 0,005087 → **−0,2 %** ✓ |
+| `P_liq` induló pozíció | 1861,69 | 1678,95 |
+| `P_liq` teljes grid | 2367,05 (Pionex 2334,74, +1,38 %) | 2168,86 (Pionex 2135,67, +1,55 %) |
+| Fedezetellenőrzés a sávon belül (valós starttól L‑ig) | nem köt | nem köt |
+| Ugyanez `E = 0`‑val | köt, első kihagyás 2629,66‑nál | köt, első 2605,11‑nél |
+
+Megfigyelés: ha a **teljes** grid a saját szintjein telik (start U‑nál), Bot A‑nál az **alsó szint** (L) fedezethiány miatt kimarad — a teljes gridhez `equity(L) ≥ I + díj` kell, a 103,59‑es E épp nem elég. A valós startnál (22 lot olcsóbban, piaci áron) nem köt.
+
+**Bias‑vizsgálat (teljes grid `P_liq` vs Pionex Est. Liq.):**
+- `mmr` **nem** magyarázza: `mmr = 0` mellett is A 2355,21 / B 2158,02, mindkettő a Pionex érték fölött.
+- Egyezéshez szükséges többlet‑wallet: A +24,33 USDT, B +2,08 USDT → mindkettő **~18 % × I** (A 18,1 %, B 18,8 %). Egyenértékű tőkeáttét: A 13,61x, B 14,04x.
+- Következtetés (nem igazolt): a két bot közel azonos, `I`‑vel arányos eltérése arra utal, hogy a Pionex vagy kisebb pozícióval, vagy több fedezettel számol, mint a modell. A 4.2 rögzítés (pozíció qty és margin a Pionex nézetből) dönt. Korrekció nincs (terv 3.9).
+
+**Valós adat — Bot A alakú bot a 9 kapuablakon** (sáv −6,67 % / +4,04 % a starthoz, 60 grid, I 134,68, E 103,59, 15x): mind a 9 ablak **likvidált** mindkét úton, azonos időpontban (pl. ETH 2022‑05‑09 10:46, SOL 2025‑02‑02 03:18, BTC 2025‑11‑14 23:06) → verdikt „likvidált”, nem árútfüggő. Kihagyott vétel 0; invariáns hiba ≤ 1·10⁻¹¹. A/B körszám‑eltérés 0–16 kör.
+
+**Teljesítmény:** betöltés cache‑ből 0,5–2,2 s; számítás **két úttal 17–92 ms** (122 ezer minta a 34 napos BTC ablakon).
+
+**Bot A visszajátszás (tájékoztató, nem kapu):** a 2026‑09‑29 első 2728,77‑et érintő perctől (08:22 UTC, open 2727,37) 2026‑10‑05 17:00‑ig: 415 kör, grid profit 22,17, mindkét út aktív. Kumulált körök napi bontásban: 67, 168, 271, 346, 355, 393. A Pionex 192 köre (8,93) a 2. és 3. nap közé esne — **a screenshot időpontja nélkül nem összevethető** (4.2).
+
+**Hiba, amit a mérés talált és javítottam:** likvidált futásnál a min. liq. távolság a likvidáció előtti utolsó mintát mutatta (pl. 1,4 %), mert a likvidációs pont mintája már üres pozícióval készült. Javítás: a likvidáció előtt is készül minta (távolság ≤ 0); regressziós assert az engine tesztben.
+
+**Nyitott kérdések a Fázis 2 előtt:**
+1. Bot A screenshot pontos időpontja (UTC) + a 4.2 lista → visszajátszás‑kapu és bias‑döntés.
+2. Bot B `E` megerősítése.
+3. A fedezetellenőrzés alapból bekapcsolva marad (3.5) — a fenti „teljes grid, alsó szint kimarad” viselkedés elfogadható?
+
+### Fázis 1 review‑javítások — 2026‑10‑05 (kész)
+
+Mind a 6 finding jogos volt; mindegyik javítva, célzott regressziós teszttel (a P1 tesztek a review pontos reprodukcióit rögzítik).
+
+- [x] **P1/1 likvidáció a szegmens elején** (`segments.ts`): a felfelé ág és a nulla hosszú szegmens ellenőrzés nélkül futott; a nyitási rés kezdete az új gyertya `d`‑jével már a küszöb alatt lehet. Javítás: minden szegmens elején `from + d ≤ P_liq` → likvidáció az első töltés előtt. Teszt: 100 → 91, majd 94 (mark L 92, `d = −2`) → likvidáció 91‑en, mark 89, eladás nincs.
+- [x] **P1/2 modell‑szegmensvég a mintákban** (`segments.ts`, `engine.ts`): a minták a tényleges markot használták, a `last + d` modellpont kimaradt. Javítás: minden minta a modell‑markkal (`last + d`) készül: szegmensvég, nyitási rés kezdete, funding/beavatkozás utáni pont, záró minta. A tényleges markos kiegészítő ellenőrzések megmaradtak. Teszt: min. távolság 1,26 %, MTM DD 85,94 %, verdikt „határeset” (korábban 2,33 % / 73,75 % / „túlélt”).
+- [x] **P2/3 el nem indult bot** (`metrics.ts`, `types.ts`): új `not_started` verdikt a prioritás elején (nincs `start` esemény: `start_rejected` vagy üres adat).
+- [x] **P2/4 ritkítás** (`thinSamples`): vödrönként a vagyon‑minimum, a likvidációs távolság minimuma és az utolsó minta, időrendben.
+- [x] **P2/5 induló alapminta** (`engine.ts`): a start előtt minta a teljes tőkéről, így az induló díj benne van a DD‑ben (változatlan áron 100 → 99,5 = 0,5 % DD).
+- [x] **6. validáció**: a fixture‑teszt címe és kommentje, valamint a fenti táblázat jelzi, hogy az induló qty teszt belső konzisztencia, nem Pionex‑egyezés.
+
+**Ellenőrzés:** 20 fájl, **327 zöld** (+5; a második kör után 328), `tsc` tiszta. A 9 kapuablak újraszámolva: likvidációs percek, körök, grid profit, funding **azonosak** a fenti táblázattal; a min. liq. távolság most mindenhol 0 % (a likvidációs pont benne van). Mintaszám kb. +25 % (a BTC 34 napos ablak: 152 ezer), számítás két úttal 10–79 ms.
+
+**Második review‑kör (2026‑10‑05):**
+- [x] **Funding/beavatkozás utáni ellenőrzés vs. minta** (`engine.ts`): az ellenőrzés a tényleges `mark.open`‑nel, a minta a `last.open + d`‑vel készült, így a metrika olyan küszöbátlépést mutathatott, amit a motor nem likvidált. Javítás: a nyitóponti ellenőrzés (funding, start, feltöltés után) a modell‑mark openhez (`modelOpen = last.open + d`) mér. Mivel `d ≤ markO − lastO`, ez a terv szerinti tényleges mark open ellenőrzést is lefedi. A funding összege továbbra is a tényleges mark openből számolódik (3.4.3). Teszt: 0,8 %‑os funding a P_liq‑t a modell‑ és a tényleges open közé emeli → likvidáció a funding után, a feltöltés `topup_cancelled`, egyetlen ≤ 0 távolságú minta a likvidációs pont.
+- [x] **Verdikt‑sorrend** (`metrics.ts`): az „adathiányos” megelőzi a `not_started`‑et (terv 6.1: az adathiány az elsődleges címke).
+- Ellenőrzés: **328 zöld**, `tsc` tiszta; a 9 kapuablak eredménye változatlan.
+
+**Nyitott, nem reprodukálható megfigyelés:** a teljes 9 ablakos mérőszkript ~30 futásából 4‑szer az ETH 2022‑11 A út grid profitja 23,20‑nak (= a B út értéke) látszott, miközben a körszám (476) és a mintaszám (20 833) az A úté volt. Minden más futás 23,55 (= a javítások előtti érték). Kizárva: a motor nemdeterminizmusa (ugyanazon adaton 24 ismételt futás azonos), az adat eltérése (az ujjlenyomatok 14 műszerezett futásban azonosak), a lekérdezési sorrend (`orderBy` asc). Gyanú (nem igazolt): az adatbázison vagy a repón párhuzamosan futó más folyamat (a hibás futások időben csoportosultak, a kód módosítása utáni első futásoknál). Ha újra előjön, az A út teljes eseményfolyamát le kell menteni és összevetni.
 
 ---
 
