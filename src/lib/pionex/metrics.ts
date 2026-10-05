@@ -64,13 +64,20 @@ export function computeMetrics(samples: Sample[]): RunMetrics {
 }
 
 // Plan §3.4.2: the run is path-dependent when survival, the liquidation time
-// (± 1 hour) or the cycle count differs between path A and path B.
-export function pathsDiffer(a: RunResult, b: RunResult): boolean {
+// (± 1 hour) or the cycle count differs between path A and path B — for the run
+// and for every bot (a bot that survives on one path only is path-dependent too).
+type Outcome = Pick<RunResult, 'status' | 'liquidatedAtMs'>;
+function outcomesDiffer(a: Outcome, b: Outcome): boolean {
   const liqA = a.status === 'liquidated';
   const liqB = b.status === 'liquidated';
   if (liqA !== liqB) return true;
-  if (liqA && liqB && Math.abs((a.liquidatedAtMs ?? 0) - (b.liquidatedAtMs ?? 0)) > HOUR_MS) return true;
-  return a.cycles !== b.cycles;
+  return liqA && liqB && Math.abs((a.liquidatedAtMs ?? 0) - (b.liquidatedAtMs ?? 0)) > HOUR_MS;
+}
+
+export function pathsDiffer(a: RunResult, b: RunResult): boolean {
+  if (outcomesDiffer(a, b) || a.cycles !== b.cycles) return true;
+  if (a.bots.length !== b.bots.length) return true;
+  return a.bots.some((bot, i) => outcomesDiffer(bot, b.bots[i]));
 }
 
 // Plan §6.1 priority: data-incomplete → path-dependent → liquidated → borderline → survived.

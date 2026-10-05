@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PionexLedger } from '../lib/pionex/ledger';
+import { Capital } from '../lib/pionex/capital';
 import { liqPrice, fullGridLiqPrice } from '../lib/pionex/liquidation';
 import { gridLevels } from '../lib/pionex/gridLevels';
 import { BotState } from '../lib/pionex/types';
@@ -28,7 +29,7 @@ describe('pionex grid levels (plan §3.1)', () => {
 
 describe('pionex ledger (plan §3.2)', () => {
   it('a round trip deducts each fee exactly once', () => {
-    const l = new PionexLedger(1000, emptyBot());
+    const l = new PionexLedger(new Capital(1000), emptyBot());
     l.fund(100);
     const buyFee = l.buy(4, 1, 98, 0.001);
     expect(buyFee).toBeCloseTo(0.098, 12);
@@ -43,7 +44,7 @@ describe('pionex ledger (plan §3.2)', () => {
   });
 
   it('average-price accounting: a sell realizes against avgEntry, the display pairs by lot', () => {
-    const l = new PionexLedger(1000, emptyBot());
+    const l = new PionexLedger(new Capital(1000), emptyBot());
     l.fund(100);
     l.buy(5, 1, 100, 0);
     l.buy(4, 1, 98, 0);
@@ -56,7 +57,7 @@ describe('pionex ledger (plan §3.2)', () => {
   });
 
   it('funding: long pays on a positive rate, receives on a negative one', () => {
-    const l = new PionexLedger(1000, emptyBot());
+    const l = new PionexLedger(new Capital(1000), emptyBot());
     l.fund(100);
     l.buy(5, 2, 100, 0);
     expect(l.funding(0.001, 110)).toBeCloseTo(0.22, 12);
@@ -66,7 +67,7 @@ describe('pionex ledger (plan §3.2)', () => {
   });
 
   it('top-up is a cash move capped at freeCash; liquidation loses the wallet; invariant holds', () => {
-    const l = new PionexLedger(150, emptyBot());
+    const l = new PionexLedger(new Capital(150), emptyBot());
     l.fund(100);
     l.buy(5, 1, 100, 0.001);
     expect(l.topUp(80)).toBe(50);
@@ -81,7 +82,7 @@ describe('pionex ledger (plan §3.2)', () => {
   });
 
   it('start is rejected when the common capital does not cover I + E', () => {
-    const l = new PionexLedger(50, emptyBot());
+    const l = new PionexLedger(new Capital(50), emptyBot());
     expect(l.fund(100)).toBe(false);
     expect(l.freeCash).toBe(50);
   });
@@ -96,7 +97,7 @@ describe('pionex liquidation prices (plan §3.4.4)', () => {
 
   it('full-grid P_liq assumes every open buy fills at its level', () => {
     const bot = emptyBot();
-    const l = new PionexLedger(1000, bot);
+    const l = new PionexLedger(new Capital(1000), bot);
     l.fund(200);
     for (let i = 5; i < 10; i++) l.buy(i, 1, 100, 0); // 5 lots at 100
     let qty = 5, cost = 500;

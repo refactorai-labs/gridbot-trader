@@ -1,6 +1,6 @@
 // Pionex backtester — grid levels and sizing (plan §3.1, §2/7).
 
-import { GridMode, PionexBotConfig } from './types';
+import { BotState, GridMode, PionexBotConfig } from './types';
 
 // n+1 ascending prices. Arithmetic: L + i·(U−L)/n; geometric: L·r^i, r = (U/L)^(1/n).
 export function gridLevels(lower: number, upper: number, n: number, mode: GridMode): number[] {
@@ -17,4 +17,19 @@ export const slotNotional = (bot: PionexBotConfig): number => (bot.investment * 
 // Band as % offsets from the start price (plan §2/7), e.g. (2728.77, -0.0667, 0.0404).
 export function bandFromOffsets(startPrice: number, lowerPct: number, upperPct: number): { lower: number; upper: number } {
   return { lower: startPrice * (1 + lowerPct), upper: startPrice * (1 + upperPct) };
+}
+
+// Fresh grid state for a bot (or a new cycle): every slot waits as a limit buy.
+export function newBotState(bot: PionexBotConfig): BotState {
+  return {
+    levels: gridLevels(bot.lower, bot.upper, bot.gridCount, bot.mode),
+    slotQty: slotNotional(bot),
+    held: Array(bot.gridCount).fill(null),
+    wallet: 0,
+    qty: 0,
+    avgEntry: 0,
+    status: 'active',
+    rounds: 0,
+    gridProfit: 0,
+  };
 }

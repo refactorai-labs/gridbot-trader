@@ -1,6 +1,6 @@
 # Aktív terv — Pionex Long Futures Grid Backteszter (terv v3, fázisonként)
 
-**Státusz:** Fázis 0 kész (kapu teljesítve). Fázis 1 kész + review‑javítások (2 P1, 3 P2, 1 validációs pont) — **Fázis 2 jóváhagyásra vár.**
+**Státusz:** Fázis 0 kész (kapu teljesítve). Fázis 1 kész + review‑javítások (2 P1, 3 P2, 1 validációs pont). **Fázis 2 kész (kapu teljesítve, 2026‑10‑05)** — Fázis 3 (UI és mentés) jóváhagyásra vár.
 **Forrás:** `tasks/pionex-backtester-plan.md` (v3) — a 9. pont indító promptja szerint. (A fájl a `tasks/` mappában van, nem a `docs/`‑ban.)
 **Dátum:** 2026‑10‑05
 
@@ -69,10 +69,41 @@
 - [x] **MEGÁLLÁS + check‑in:** mért számok (profit/kör, induló qty, `P_liq` induló és teljes grid, Bot A visszajátszás ha az időpontok adottak), bias‑vizsgálat eredménye, nyitott kérdések.
 
 ### Fázis 2 — közös keret és beavatkozások (kapu: terv 4.3 Fázis 2)
-- [ ] `src/lib/pionex/capital.ts` (3.7): `capitalTotal`, `freeCash`, `kivett`; `allocate / release / reject` okkal; invariáns két botra.
-- [ ] `src/lib/pionex/interventions.ts` (3.6–3.8): ciklus‑szabály (`netIfClosed`, `E_next`, kivét, újraindítás saját pénzből, `restart_rejected`), feltöltés (`topUpTriggerPct`, `topup_rejected`), 2. bot trigger (`bot2_rejected`, egyszer), `bot1ClosePrice` végleges leállítás, **rögzített végrehajtási sorrend** (zárások → feltöltések → újraindítás → 2. bot), minden lépés után likvidációs ellenőrzés.
-- [ ] `engine.ts`: a függő beavatkozások lépés bekötése.
-- [ ] `src/__tests__/pionexCycles.test.ts`: 3.6 példa (`E_next = 1970`, kivett 80); nem pozitív ciklusprofit; `bot1ClosePrice`; egyidejű beavatkozások sorrendje, záruló botra feltöltés törlés; elutasítások okkal; invariáns két bottal minden eseménynél.
+**Felmérés (Fázis 1 kód):** a `PionexLedger` egy botot és a `freeCash`‑t együtt kezeli; a `segments.runSegment` egy botra fut; az `engine` likvidációkor kilép; a mintában `wealth = freeCash + equity`. Két botnál a minták akkor helyesek, ha **egy szegmensen belül a két bot eseményei ár szerint összefésülve** futnak (különben a bot1 töltésénél vett minta a bot2 szegmens előtti állapotát látná). Ezért a szegmens‑ciklus botlistára általánosodik — a logika (szint vs. `T`, döntetlennél likvidáció) változatlan.
+
+**Konfig (`types.ts`, mind opcionális, hiányukban a Fázis 1 viselkedés változatlan):**
+```ts
+cycle?:  { takeProfitPct: number; reinvestPct: number }   // 3.6, csak az 1. botra
+topUp?:  { triggerPct: number; amount: number }           // 3.7
+bot2?:   { triggerOffsetPct: number; capitalMultiplier: number } // 3.8
+bot1ClosePrice?: number                                   // 3.8, végleges leállítás
+```
+
+- [x] **`capital.ts` (3.7):** `Capital` osztály: `capitalTotal`, `freeCash`, `withdrawn` (kivett), közös `totals`; `allocate(x)` (false = elutasítás), `release(x)`, `withdraw(x)`, `invariantError(Σ wallet)` = `|freeCash + Σ wallet + kivett − (capitalTotal + PnL − díj − funding − likv. veszteség)|`.
+- [x] **`ledger.ts`:** a `PionexLedger` egy közös `Capital`‑t kap a `capitalTotal` szám helyett (`freeCash` / `totals` getterként továbbít, a meglévő API marad); új `close(price, takerFee)` (teljes pozíció piaci eladása taker díjjal, nem grid‑kör) és `release()` (wallet → `freeCash`). Ledger‑tesztekben csak a konstruktorhívás változik.
+- [x] **`segments.ts`:** `runSegment` a kontextus **aktív botjain** fut: szegmenseleji ellenőrzés botonként; felfelé az összes bot eladásai ár szerint növekvő sorrendben; lefelé a következő esemény a botonkénti (következő vételi szint, `T`) közül a legmagasabb, döntetlennél likvidáció. Egy bot likvidációja a többit nem állítja meg. `checkLiquidation` → minden aktív botra.
+- [x] **`interventions.ts` (3.6–3.8):**
+  - `evaluateRules(...)` lezárt 5m gyertyán (az 5m‑et záró 1m: `(t+60s) % 300s == 0`): fix záróár (`last close ≤ bot1ClosePrice`), TP (`netIfClosed = equity(last close) − qty·close·taker − (I + E_start + Σ ciklusbeli feltöltés) ≥ TP%·I`), feltöltés botonként (`(markClose − P_liq)/markClose < triggerPct`), 2. bot (`close < L1·(1 − offset)`, egyszer) → függő lista.
+  - `settleCycle(I, E_start, topUps, wallet, reinvestPct)` tiszta függvény → `{ profit, eNext, withdraw, restart }` (3.6 mindkét ága, `restart = I + E_next ≥ I`).
+  - `executePending(...)` a következő 1m nyitón, a 3.8 sorrendben: (1) zárások — fix záróár elsőbbséggel (`stopped`, wallet → `freeCash`, nincs ciklus), különben TP‑zárás (`cycles++`, kivét); (2) feltöltések nyitott botokra — likvidált botra `topup_cancelled: already liquidated`, épp zárt botra `topup_cancelled: bot closing`, `freeCash = 0` → `topup_rejected`; (3) TP utáni újraindítás a bot saját pénzéből, `< I` → `restart_rejected`, a pénz a `freeCash`‑be; (4) 2. bot a `freeCash`‑ből (`I2 = I1·mult`, `E2 = E1·mult`, sáv `[L1 − (U1−L1), L1]`, azonos n / mód / tőkeáttét), hiány → `bot2_rejected`. Minden lépés után likvidációs ellenőrzés a modell‑mark openhez.
+- [x] **`engine.ts`:** botlista (bot1, opcionálisan bot2); 3. lépés = `executePending` (a start és a Fázis 1 `scheduledTopUps` horog ugyanabba a sorba kerül, bot1‑re); 5. lépés = `evaluateRules`. Minta: `wealth = freeCash + kivett + Σ equity(mark)`, `liqDistPct` = a nyitott pozíciójú botok minimuma, `qty` = összesen. Funding minden nyitott botra. Korai kilépés csak ha nincs aktív bot **és** új bot már nem indulhat (Fázis 1 viselkedés így bitre azonos). Események kapnak `bot` indexet (0/1).
+- [x] **`types.ts` / `RunResult`:** új eseménytípusok (`close`, `restart`, `restart_rejected`, `bot2_rejected`); `bots: BotSummary[]` (státusz, likvidáció ideje, körök, grid profit, sáv, ciklusok); `withdrawn`. A meglévő felső mezők run‑szintűek: `status`/`liquidatedAtMs` = bármelyik bot első likvidációja (különben bot1 státusza), `rounds`/`gridProfit`/`finalWallet` = összeg, `cycles` = bot1 ciklusai → `metrics.ts` változatlan marad.
+- [x] **`src/__tests__/pionexCycles.test.ts` (4.3 Fázis 2 kapu):**
+  - 3.6 példa: `settleCycle` → `E_next = 1970`, kivett 80; plusz egy motoros TP‑ciklus szintetikus áron (zárás → kivét → újraindítás ugyanazon a nyitón, `cycles = 1`);
+  - nem pozitív ciklusprofit: veszteség az `E`‑ből, nincs kivét; `< I` → `restart_rejected`, pénz a `freeCash`‑ben;
+  - `bot1ClosePrice`: `stopped`, nincs újraindítás, `cycles` nem nő, kivét nincs;
+  - egyidejű beavatkozások: fix záróár + TP egyszerre → csak a fix zárás; a záruló botra esedékes feltöltés `topup_cancelled`; eseménysorrend zárás → feltöltés → újraindítás → 2. bot;
+  - elutasítások okkal: `topup_rejected`, `bot2_rejected`, `restart_rejected`;
+  - főkönyvi invariáns két bottal minden eseménynél (`maxInvariantError < 1e‑9`); két bot ár szerint összefésült töltései egy szegmensen belül.
+- [x] Minden meglévő teszt zöld (Fázis 1 eredmények változatlanok), `tsc --noEmit` tiszta; a 9 kapuablak Fázis 1 számai újraszámolva azonosak.
+- [x] Review szakasz a todo.md végén.
+
+**Döntések (a terv nem rögzíti) — jóváhagyva a javaslatok szerint:**
+1. **Újraindítás sávja (3.6):** javaslat: az új ciklus a **kezdeti %‑offsetekkel újraközpontosít** az újraindítási árra (`L/start₀`, `U/start₀` arány megtartva) — ez felel meg annak, hogy élesben új botot indítanál az aktuális ár körül. Alternatíva: ugyanaz az abszolút sáv.
+2. **Run‑szintű verdikt két botnál:** „likvidált”, ha **bármelyik** bot likvidálódik (az időpont az első likvidáció). Botonkénti részletek a `bots`‑ban.
+3. **`takeProfitPrice` (3.6, opcionális Pionex natív TP):** kihagyom, amíg a 4.2 nem tisztázza a Pionex szemantikáját (újraindít‑e).
+4. **2. bot:** egyetlen indítási kísérlet (`bot2_rejected` után nincs újrapróbálás); a trigger az 1. bot utolsó sávjának `L1`‑ét használja, az 1. bot státuszától függetlenül.
+5. **Feltöltés** minden lezárt 5m gyertyán újra kiértékelődik, amíg a feltétel áll (a terv nem ad felső korlátot; a `freeCash` a korlát).
 
 ### Fázis 3 — UI és mentés (kapu: terv 7. táblázat, 3. sor)
 - [ ] `prisma/schema.prisma`: `PionexRun` (`String` JSON mezők) + `db push`.
@@ -203,6 +234,46 @@ Mind a 6 finding jogos volt; mindegyik javítva, célzott regressziós teszttel 
 - Ellenőrzés: **328 zöld**, `tsc` tiszta; a 9 kapuablak eredménye változatlan.
 
 **Nyitott, nem reprodukálható megfigyelés:** a teljes 9 ablakos mérőszkript ~30 futásából 4‑szer az ETH 2022‑11 A út grid profitja 23,20‑nak (= a B út értéke) látszott, miközben a körszám (476) és a mintaszám (20 833) az A úté volt. Minden más futás 23,55 (= a javítások előtti érték). Kizárva: a motor nemdeterminizmusa (ugyanazon adaton 24 ismételt futás azonos), az adat eltérése (az ujjlenyomatok 14 műszerezett futásban azonosak), a lekérdezési sorrend (`orderBy` asc). Gyanú (nem igazolt): az adatbázison vagy a repón párhuzamosan futó más folyamat (a hibás futások időben csoportosultak, a kód módosítása utáni első futásoknál). Ha újra előjön, az A út teljes eseményfolyamát le kell menteni és összevetni.
+
+### Fázis 2 — 2026‑10‑05 (kész, kapu teljesítve)
+
+**Új fájlok:**
+- `pionex/capital.ts` — `Capital`: közös keret (`freeCash`, `withdrawn` = kivett, közös `totals`), `allocate / release / withdraw`, invariáns `Σ wallet`‑tal (3.7).
+- `pionex/interventions.ts` — `settleCycle` (3.6 mindkét ága, tiszta függvény), `evaluateRules` (lezárt 5m: fix záróár, TP `netIfClosed`‑del, feltöltés botonként, 2. bot trigger), `executePending` (3.8 sorrend: zárások → feltöltések → újraindítás → 2. bot, minden lépés után likvidációs ellenőrzés), `startBot` (indulás / újraindítás piaci vételei).
+- `__tests__/pionexCycles.test.ts` — 11 teszt, a 4.3 Fázis 2 kapu minden pontja.
+
+**Módosított fájlok (minimálisan):**
+- `ledger.ts` — `freeCash` / `totals` a közös `Capital`‑ból (getterek, a meglévő API marad); új `close()` (teljes pozíció piaci zárása taker díjjal) és `release()`.
+- `segments.ts` — a szegmens a kontextus összes aktív botján fut: felfelé az eladások ár szerint összefésülve, lefelé a botonkénti (szint, `T`) események közül a legmagasabb jön, döntetlennél a likvidáció; **botonkénti kurzor**. `checkLiquidation` minden aktív botra.
+- `engine.ts` — botlista; a 3. lépés a start után az `executePending`, az 5. lépés az `evaluateRules`; a minta `freeCash + kivett + Σ equity`, `liqDistPct` a botok minimuma; funding minden nyitott botra; korai kilépés csak ha nincs aktív bot és 2. bot sem indulhat már.
+- `types.ts` — opcionális `cycle / topUp / bot2 / bot1ClosePrice`; új események (`close`, `cycle`, `restart`, `restart_rejected`, `bot2_rejected`), `bot` index; `RunResult.bots`, `withdrawn`.
+- `gridLevels.ts` — `newBotState()` helper. `pionexLedger.test.ts` — csak a konstruktorhívások (`new Capital(x)`).
+
+**Hiba, amit a teszt talált és javítottam:** az első több botos változatban a lefelé szegmens kurzora közös volt, így ha az 1. bot 98‑on töltött, a 2. bot 98‑as szintje kimaradt. Javítás: botonkénti kurzor. Egy botnál ez semmit nem változtat. A regressziós teszt két, közös szinteket tartalmazó gridet futtat egy szegmensen.
+
+**Ellenőrzés:**
+- **21 fájl, 339 zöld** (328 + 11), `tsc --noEmit` tiszta.
+- **A 9 kapuablak Fázis 1 számai bitre azonosak** a commitolt kóddal (`git stash` összevetés): likvidációs percek, körök, grid profit, funding, minta‑ és eseményszám, végső vagyon. Számítás két úttal 19–129 ms.
+
+**Tájékoztató: azonos tőkéjű trió valós adaton** (`capitalTotal` 600, Bot A alak, TP 5 % / reinvest 50 %; (1) minden tartalék E‑ként, (2) E 103,59 + 5 %‑os küszöbön 50‑es feltöltések, (3) 2. bot 1 % alatt, ×1):
+- ETH/SOL/BTC 2022‑05, 2022‑11, 2025‑ös ETH/SOL: mindhárom változat likvidál. Az (1) és a (2) ugyanakkor, mert a (2) a likvidáció előtt a teljes tartalékot feltölti (8 feltöltés). A (3)‑nál az első likvidáció korábbi (a kisebb E‑jű 1. bot), de a megmaradt vagyon a legnagyobb (pl. ETH 2022‑05: 145,7 vs 22,2), mert a 2. bot indulása után a `freeCash` egy része érintetlen marad.
+- BTC 2022‑11 és 2025‑10: az (1) túlél, a (2) „határeset” (a feltöltés előtt közel kerül a küszöbhöz), a (3) likvidál.
+- Ciklusok: a 2022‑05 és a 2025‑ös ablakokban 3–8 TP‑ciklus az esés előtt, a kivett profit 12,8–36,1. Invariáns hiba mindenhol ≤ 5·10⁻¹¹.
+
+**Nyitva marad:** `takeProfitPrice` (3. döntés, a 4.2‑re vár); a 4.2 fixture‑rögzítés és a Bot B `E` megerősítése (Fázis 1 nyitott kérdései).
+
+### Fázis 2 review‑javítások — 2026‑10‑05 (kész)
+
+Mindhárom finding jogos volt; mind javítva, regressziós teszttel. Az 1. és a 2. pont tesztje a javítás előtt bukott.
+
+- [x] **P2/1 zárás utáni vagyonminta** (`engine.ts`): a `checkAndSample` csak akkor vett mintát, ha maradt aktív bot, így a végleges zárás (fix záróár, `restart_rejected`) után a visszakapott vagyon csak az ablak végén jelent meg. Javítás: a minta mindig elkészül, kivéve ha épp ez az ellenőrzés likvidált (a likvidáció már mintázta a saját pontját). Az 1 botos viselkedés változatlan. Teszt: last 100 / mark 99, fix zárás az 5. percben → víz alatt 5 perc (korábban 61), a zárás percében `wealth 100, qty 0` minta.
+- [x] **P2/2 hiányzó végrehajtási perc** (`interventions.ts`, `engine.ts`): a `Pending` most tárolja az esedékes percet (`dueMs` = az 5m‑et záró perc + 60 s). Ha az a perc hiányzik, a függő beavatkozások **nem** futnak le később: `intervention_missed` esemény jön a listájukkal, és a szabályok a következő 5m záráskor újra kiértékelődnek. Teszt: hiányzó 5. perc → esemény a 6. percben, a zárás csak a 10. percben (a 9. perces újrakiértékelés után).
+- [x] **3. botonkénti útfüggőség** (`metrics.ts`): a `pathsDiffer` a run‑szintű feltételek mellett botonként is összeveti a túlélést és a likvidáció idejét (±1 h), valamint a botok számát. Egy csak az egyik úton túlélő bot így „árútfüggő” címkét ad (terv 3.4.2: „ha a túlélési verdikt … eltér”).
+- [x] **Tesztlefedettség** (+6 teszt): végleges zárás utáni metrikák; `restart_rejected` utáni minta; hiányzó végrehajtási perc; veszteséges TP‑végrehajtás után sikeres újraindítás az extra marginból (`wallet = I + E_start + profit`, nincs kivét); egy bot likvidációja mellett a másik ugyanabban a gyertyában tovább kereskedik; botonkénti útfüggőség.
+
+- [x] **P3 üres `intervention_missed`** (`interventions.ts`): az `evaluateRules` minden 5m záráskor beállította a `dueMs`‑t, így egy 5m zárás utáni hiányzó perc üres eseményt adott. Javítás: `dueMs` csak ténylegesen függő beavatkozásnál. Teszt: hiányzó perc, semmi sem esedékes → nincs esemény (a javítás előtt bukott).
+
+**Ellenőrzés:** 21 fájl, **346 zöld**, `tsc` tiszta. A 9 kapuablak Fázis 1 számai továbbra is bitre azonosak a commitolt kóddal.
 
 ---
 

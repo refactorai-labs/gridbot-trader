@@ -5,26 +5,29 @@
 //   sell (grid):            wallet += q·(p − avgEntry) − fee; qty shrinks; the lot closes
 //   funding:                wallet −= qty · mark · rate (long pays when rate > 0)
 //   top-up:                 wallet += x, freeCash −= x (cash movement, not profit)
+//   close (intervention):   market sell of the whole position, taker fee
 //   liquidation:            wallet and position are lost; no further events
+// freeCash, the withdrawn profit and the totals live in the common Capital (plan §3.7).
 // Lots are only used to pair fills for the grid-profit display; survival depends
 // on equity and qty alone (plan §3.2).
 
+import { Capital } from './capital';
 import { BotState, LedgerTotals, Lot } from './types';
 
 export class PionexLedger {
-  freeCash: number;
-  readonly capitalTotal: number;
-  readonly totals: LedgerTotals = { realizedTradePnl: 0, fees: 0, funding: 0, liquidationLoss: 0, topUps: 0 };
+  constructor(readonly capital: Capital, readonly bot: BotState) {}
 
-  constructor(capitalTotal: number, readonly bot: BotState) {
-    this.capitalTotal = capitalTotal;
-    this.freeCash = capitalTotal;
+  get freeCash(): number {
+    return this.capital.freeCash;
+  }
+
+  get totals(): LedgerTotals {
+    return this.capital.totals;
   }
 
   // Moves I + E from the common capital into the bot's isolated wallet. False = start_rejected.
   fund(amount: number): boolean {
-    if (this.freeCash < amount) return false;
-    this.freeCash -= amount;
+    if (!this.capital.allocate(amount)) return false;
     this.bot.wallet += amount;
     return true;
   }
@@ -76,9 +79,32 @@ export class PionexLedger {
   // Returns the amount actually moved (capped at freeCash).
   topUp(amount: number): number {
     const x = Math.min(amount, this.freeCash);
-    this.freeCash -= x;
+    this.capital.allocate(x);
     this.bot.wallet += x;
     this.totals.topUps += x;
+    return x;
+  }
+
+  // Intervention close (plan §3.2, §3.6, §3.8): market sell of the whole position
+  // at `price` with the taker fee. Not a grid round. Returns the fee.
+  close(price: number, takerFee: number): number {
+    const b = this.bot;
+    const fee = b.qty * price * takerFee;
+    const pnl = b.qty * (price - b.avgEntry);
+    b.wallet += pnl - fee;
+    this.totals.realizedTradePnl += pnl;
+    this.totals.fees += fee;
+    b.qty = 0;
+    b.avgEntry = 0;
+    b.held = b.held.map(() => null);
+    return fee;
+  }
+
+  // Wallet back to freeCash. Returns the amount released.
+  release(): number {
+    const x = this.bot.wallet;
+    this.capital.release(x);
+    this.bot.wallet = 0;
     return x;
   }
 
@@ -95,11 +121,8 @@ export class PionexLedger {
     return lost;
   }
 
-  // Plan §3.7 invariant, one bot: freeCash + wallet = capitalTotal + Σ trade PnL − Σ fee − Σ funding − Σ liquidation loss.
+  // Plan §3.7 invariant with this bot as the only one.
   invariantError(): number {
-    const t = this.totals;
-    return Math.abs(
-      this.freeCash + this.bot.wallet - (this.capitalTotal + t.realizedTradePnl - t.fees - t.funding - t.liquidationLoss)
-    );
+    return this.capital.invariantError(this.bot.wallet);
   }
 }
