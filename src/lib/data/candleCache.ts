@@ -7,6 +7,7 @@ import { fetchBinanceKlines, BinanceMarket } from './binanceApi';
 export interface CandleFetchOptions {
   market?: BinanceMarket; // default 'spot'
   symbol?: string;        // exchange symbol when it differs from the cache pair key (e.g. pair 'ETHUSDTPERP' → symbol 'ETHUSDT')
+                          // mark price: market 'futuresMark' + pair 'ETHUSDTMARK'
 }
 
 // Get cached Binance candles from database

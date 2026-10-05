@@ -5,7 +5,8 @@ import { OHLC } from '../types';
 import { fetchWithTimeout } from './fetch';
 import { BINANCE_API, BINANCE_FUTURES_API } from '../constants';
 
-export type BinanceMarket = 'spot' | 'futures';
+// 'futuresMark' = /fapi/v1/markPriceKlines: same kline array shape as /fapi/v1/klines (volume column is 0).
+export type BinanceMarket = 'spot' | 'futures' | 'futuresMark';
 
 // Fetch paginated klines from Binance, forward from startTime
 export async function fetchBinanceKlines(
@@ -19,8 +20,8 @@ export async function fetchBinanceKlines(
   const allCandles: OHLC[] = [];
   let currentStart = startTime;
 
-  const api = market === 'futures'
-    ? { base: `${BINANCE_FUTURES_API.baseUrl}/fapi/v1/klines`, delay: BINANCE_FUTURES_API.requestDelay }
+  const api = market !== 'spot'
+    ? { base: `${BINANCE_FUTURES_API.baseUrl}/fapi/v1/${market === 'futuresMark' ? 'markPriceKlines' : 'klines'}`, delay: BINANCE_FUTURES_API.requestDelay }
     : { base: `${BINANCE_API.baseUrl}/api/v3/klines`, delay: BINANCE_API.requestDelay };
 
   while (currentStart < endTime) {

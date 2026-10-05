@@ -1,3 +1,144 @@
+# Aktív terv — Pionex Long Futures Grid Backteszter (terv v3, fázisonként)
+
+**Státusz:** Fázis 0 kész (kapu teljesítve). Fázis 1 jóváhagyásra vár.
+**Forrás:** `tasks/pionex-backtester-plan.md` (v3) — a 9. pont indító promptja szerint. (A fájl a `tasks/` mappában van, nem a `docs/`‑ban.)
+**Dátum:** 2026‑10‑05
+
+## Kódbázis‑felmérés — ellenőrzött tények
+
+- **Adatréteg:** `fetchBinanceKlines(pair, interval, start, end, onProgress, market)` már tud `market: 'futures'` (`/fapi/v1/klines`). `getOrFetchCandles` pontos gap‑fillt csinál (`computeMissingGaps`), és **hibát dob**, ha letöltés után is marad lyuk → a Pionex útvonalon ezt el kell kapni és hiányjelentéssé alakítani (terv 3.10).
+- **Cache‑kulcs konvenció** a repóban: `pair: 'ETHUSDTPERP'`, `symbol: 'ETHUSDT'`, `market: 'futures'` (scripts/research/fetch-data.ts). A cache‑ben van: `ETHUSDTPERP 1m` 2024‑02‑01 → 2026‑06‑11, `30m` ugyanerre, funding `ETHUSDT` 2024‑02 → 2026‑06. A 2022‑es ablakok, SOL/BTC, és **minden mark adat** friss letöltés.
+- **Funding:** `fundingCache.storeFundingRates` **nem exportált**; `getOrFetchFundingRates` a 95 %‑os becsült rekordszámmal fogad el (terv szerint ezt a Pionex‑útvonal nem használja).
+- **TradingChart.tsx** (1476 sor): a marker‑effekt a 1246–1250. sorban `if (!combo) { setMarkers([]) … return; }` — a terv állítása megerősítve. Line‑series‑ek fix ref‑ekkel (avwap, sl, bb, vwap, atr); nincs dinamikus line‑series. Van `ComboEventTickPrimitive` (függőleges tick‑fésű a pane alján) → a `verticalMarkers` ezt tudja újrahasznosítani.
+- **constants.ts:** nincs SOL. `SUPPORTED_PAIRS`‑t a főoldal, `engine.ts`, `supervisorRunner.ts`, replay route **poolAddress alapján** keresi → SOL hozzáadása a fő szimulátort is érintené. Ezért **külön `PIONEX_SYMBOLS` konstans** lesz (ETHUSDT / SOLUSDT / BTCUSDT) a kulcskonvencióval.
+- **Prisma 5.22 / SQLite**, `prisma db push` (nincs migrations mappa; `dev.db` nem verziókezelt). Új `PionexRun` modell → `db push` kell.
+- **Főkönyv‑minta:** `src/lib/research/account.ts` (PerpAccount: cash/lots/fee/funding) — mintaként követem, nem importálom (terv 2/1).
+- **Tesztek:** vitest, `src/__tests__/*.test.ts`, relatív importok. Kiindulási állapot: lefuttatva (eredmény a Review‑ban).
+- **UI tokenek:** `globals.css` (`--panel-bg`, `--card-bg`, `.card`, `.badge`, `.stat-card`, `.app-rail`, `.rail-btn`), dark/light `data-theme`, Inter + JetBrains Mono. A `/research` oldal saját betűket/hátteret használ; a `/pionex` a **fő app shell tokenjeit** követi (terv 6: „meglévő design tokenek”), Tailwind‑del, tiszta rácsos elrendezésben.
+- **Rail:** a főoldal rail‑je `button`‑okból áll, jelenleg nincs benne oldal‑link; egy `next/link` `rail-btn` stílussal elfér.
+
+## Döntések és feltételezések — kérlek erősítsd meg
+
+1. **SOL:** `PIONEX_SYMBOLS` konstans, `SUPPORTED_PAIRS` érintetlen (indok fent).
+2. **Mark klines:** `fetchBinanceKlines` és `CandleFetchOptions` kap egy opcionális `endpoint: 'klines' | 'markPriceKlines'` paramétert (alap `'klines'`, viselkedés változatlan), így a teljes gap‑fill cache‑logika újrahasznosul a `*MARK` kulcsra. `markPrice.ts` ezt csomagolja `fetchBinanceMarkPriceKlines` néven. (Alternatíva: a letöltő ciklus duplikálása — több kód.)
+3. **2025‑ös esés ablak** a Fázis 0 kapuhoz: a `drawdowns.ts` Top N listája (1h adat) alapján választom, és a kapu‑jelentésben megírom, melyik lett (várhatóan 2025‑02‑02/03 vagy 2025‑10‑10). A 2022‑05 (Terra/LUNA) és 2022‑11 (FTX) ablakok fixek.
+4. **Ablak = a kiválasztott esés körüli, legfeljebb ~30 napos tartomány** (csúcs előtt X nap opcióval, terv 6.2).
+5. **UI nyelv:** a meglévő app angol; a tervben a feliratok magyarok. Javaslat: **angol feliratok** (konzisztens az app többi részével), a verdikt‑címkék magyar jelentése a Feltételezések panelben. Ha magyar UI‑t kérsz, szólj.
+6. **`verticalMarkers`** (ciklushatárok): a meglévő tick‑fésű primitive‑et használom (nincs új canvas‑kód); a teljes magasságú vonal csak ha kéred.
+7. **Fázis 0 kapu** élő Binance‑letöltést jelent (3 szimbólum × 3 ablak × 1m last + 1m mark + funding, ~45 ezer gyertya sorozatonként). A letöltést a `windows.ts`‑en keresztül, scratchpad‑szkriptből futtatom (nem kerül új szkript a repóba).
+8. **Fázis 1 végén megállok** és bemutatom a mért számokat (terv 9. pont) — a Fázis 2 csak jóváhagyás után.
+
+## Nem változik (terv 5.)
+`src/lib/simulation/*`, `combo/*`, `strategies/*`, `optimizer/*`, `research/*`, `src/app/page.tsx` (egy rail‑link kivételével), `BinanceCandle` és `BinanceFundingRate` séma, `getOrFetchFundingRates` viselkedése, meglévő tesztek.
+
+## Todo
+
+### Fázis 0 — adatréteg és váz (kapu: terv 7. táblázat)
+- [x] `src/lib/constants.ts`: `PIONEX_SYMBOLS` + kulcs‑helper (`lastPair = SYMBOL+'PERP'`, `markPair = SYMBOL+'MARK'`, intervallumok `1m`, `1h`).
+- [x] `src/lib/data/binanceApi.ts` + `candleCache.ts`: ~~opcionális `endpoint`~~ → a meglévő `market` paraméter kapott egy `'futuresMark'` értéket (a `candleCache` hívás változatlan, mert a meglévő cache‑tesztek a pontos argumentumlistát ellenőrzik).
+- [x] `src/lib/data/markPrice.ts`: `fetchBinanceMarkPriceKlines` + `getOrFetchMarkCandles` (cache‑kulcs `*MARK`).
+- [x] `src/lib/data/fundingCache.ts`: `storeFundingRates` **exportálása** (semmi más nem változik).
+- [x] `src/lib/pionex/funding.ts`: perces vödör (`floor(ms/60000)`), rekordonként egyszer (dupla vödör → hiba), **szigorú lefedettség** (max 8h+1m rés, ablakszélek is), hiányzó szakaszok célzott letöltése a `/fapi/v1/fundingRate`‑ből → `storeFundingRates`; konstans felülírás.
+- [x] `src/lib/pionex/dataQuality.ts`: várt vs talált percek (last, mark), lyuklista, funding‑lefedettség → `DataGapReport`.
+- [x] `src/lib/data/windows.ts`: `loadWindow(symbol, startMs, endMs)` → `{ last1m, mark1m, funding, gaps }`; a cache‑hibát hiányjelentéssé alakítja, nem dob.
+- [x] `src/lib/pionex/drawdowns.ts`: 1h teljes történet (`*PERP 1h`), Top N csúcs→mélypont esés (mélység, kezdő/vég idő).
+- [x] `src/app/api/pionex/data/route.ts` (ablak letöltés + hiányjelentés) és `src/app/api/pionex/drawdowns/route.ts`.
+- [x] `src/app/pionex/page.tsx` váz (fejléc: szimbólum, dátum, adat‑státusz; üres zónák) + rail‑link a főoldalon.
+- [x] **Kapu:** ETH/SOL/BTC 1m last + mark + funding a 2022‑05, 2022‑11 és egy 2025‑ös ablakra; hiányjelentés üres, vagy a hiányos ablak „adathiányos”. Mért idők (letöltés) a Review‑ba. **Teljesítve 2026‑10‑05**, lásd Review / Fázis 0.
+
+### Fázis 0 — review‑javítások (2026‑10‑05) — mind a 6 finding jogos
+- [x] **F1+F6 funding „complete”** (`pionex/funding.ts`): a teljes kért ablakot mindig lekérjük a `/fapi/v1/fundingRate`‑ből (≤1000 rekord/kérés → 120 napos ablak is 1 kérés), tároljuk a cache‑be, majd a cache‑ből olvasunk. Teljes csak ha az API‑egyeztetés sikerült **és** a 8h+1m szabály is átmegy (kiegészítő). A visszaadott rekordokon `bucketFunding()` fut → dupla vödör = hiba. Nem véges `fundingRate` az API‑ból = adat‑hiba (dob), nem csendes kihagyás.
+- [x] **F2 funding hálózati hiba** (`funding.ts`, `dataQuality.ts`, `windows.ts`): a letöltés (fetch/HTTP) hibáját elkapjuk → cache‑rekordok + egész ablakos funding‑gap + `error` szöveg a riportban; DB‑ és adat‑hiba továbbra is dob. Gyertyáknál a `catch` szűkítése: Prisma‑hiba továbbdobva, egyébként hiányjelentés **hibaokkal** (`report.errors`). UI: hibaokok kiírása.
+- [x] **F3 elavult válasz** (`page.tsx`, `DrawdownPicker.tsx`): `useRef` kérésazonosító a data‑checknél (szimbólum/dátum/pick váltáskor is növeljük, így a régi válasz eldobódik); a drawdown `useEffect` `AbortController`‑rel + cleanup.
+- [x] **F4 1h történet** (`pionex/drawdowns.ts`, drawdowns route, picker): (a) lookback és kizárás **időbélyeg** alapján; (b) `getFullHistory1h` → `{ candles, gaps, error }`; hiányos történetnél az API nem ad rangsort (`episodes: []` + hiányok), a UI kiírja; (c) listing‑kezdet pontosítása a valós első 1h gyertyára (BTC 2019‑09‑08 17:00, ETH 2019‑11‑27 07:00, SOL 2020‑09‑14 07:00 UTC — DB‑ből ellenőrizve, a cache 1h története hézagmentes).
+- [x] **F5 üres dátummező** (`page.tsx`): `toInput` NaN‑ra `''`, `valid` = mindkét időbélyeg véges és end > start; gomb tiltva, fejléc napszám védve. (Az ms‑állapot marad, mert a Top N pick nem éjféli időpontot ad.)
+- [x] Regressziós tesztek (`pionexFunding.test.ts`, `pionexDataQuality.test.ts`/új `pionexWindows.test.ts`, `pionexDrawdowns`): üres rövid ablak API‑val, hiányzó kezdő settlement, változó (2h/4h) ütem, API‑hiba → cache + gap + error, dupla vödör a `loadWindow` útvonalon, időben szétszakadt 1h gyertyák, hiányos 1h történet → nincs rangsor. (UI‑ra nincs React tesztkörnyezet a repóban → F3/F5 kézi ellenőrzés + `tsc`.)
+- [x] `vitest`, `tsc --noEmit`, majd a 9 kapuablak újraellenőrzése (cache + funding API‑egyeztetés).
+
+### Fázis 1 — főkönyv és egy bot eseménymotorja (kapu: terv 4.3 Fázis 1)
+- [ ] `src/lib/pionex/types.ts`: `PionexConfig`, `BotState`, `LedgerEvent` (minden okkal), `RunResult`, `Verdict`, `PathId ('A'|'B')`.
+- [ ] `src/lib/pionex/gridLevels.ts`: aritmetikus/geometrikus szintek, %‑offset → abszolút sáv, `Q = I·lev/n`.
+- [ ] `src/lib/pionex/ledger.ts` (3.2): wallet / qty / avgEntry / lots; vétel, eladás, funding, feltöltés, zárás, likvidáció; `equity(P)`, grid profit (kijelzés), ciklusprofit; **invariáns‑ellenőrző**.
+- [ ] `src/lib/pionex/liquidation.ts` (3.4.4): aktuális pozíció `P_liq`, teljes grid `P_liq`, távolság.
+- [ ] `src/lib/pionex/segments.ts` (3.4.1): `d` mark–last eltolás, `T = P_liq − d`, lefelé szegmens (szint vs. küszöb sorrend, likvidáció megszakít), felfelé szegmens, szegmensvégi ellenőrzés tényleges mark szélsőértékkel; 3.5 fedezetellenőrzés csak a nyitott pozícióra (kapcsolható); 3.4.5 sávon kívül.
+- [ ] `src/lib/pionex/aggregate.ts`: 1m → 5m (döntés + megjelenítés), 1m esemény → 5m gyertya illesztés.
+- [ ] `src/lib/pionex/engine.ts` (3.3 + 3.4): tiszta függvény `(last1m, mark1m, funding, config, path) → RunResult`; rögzített percenkénti sorrend: nyitási rés → funding → függő beavatkozások (Fázis 1‑ben csak a beégetett feltöltés‑horog a teszthez) → gyertyán belüli szegmensek (A/B út) → 5m záráskor szabály‑kiértékelés (Fázis 1: üres). Minden lépés után likvidációs ellenőrzés mark árral. Minden feltételezés kommentben a terv pontjára hivatkozva.
+- [ ] `src/lib/pionex/metrics.ts` + verdikt (6.1): A/B futtatás, „árútfüggő” összevetés (verdikt, likvidációs időpont ±1h, ciklusszám), min. liq. távolság és MTM DD a teljes eseményfolyamból, víz alatt töltött idő, visszatérés; ritkítás 5m‑re csak megjelenítéshez (vödrönkénti minimum megőrzésével).
+- [ ] Tesztek: `pionexLedger.test.ts`, `pionexEngine.test.ts`, `pionexFunding.test.ts`, `pionexFixtures.test.ts` — a 4.3 Fázis 1 lista minden pontja (visszapattanás; küszöb alatti szint nem töltődik fedezet nélkül is; nyitáskori likvidáció + `topup_cancelled`; nyitási rés; funding 1–4 ms eltolás / előjel / nyitott pozíció / azonnali ellenőrzés; kihagyott funding‑rekord → adathiányos; díj nincs duplán; `d` és `T`; A≠B → árútfüggő; fedezet csak nyitott pozícióra, Bot A `E=0` kihagyott vételek; invariáns).
+- [ ] Fixture‑tesztek (4.1): Bot A és Bot B profit/kör ±3 %, induló mennyiség ±2 %; teljes grid `P_liq` **csak riportálva** (nem kapu, 4.2‑ig).
+- [ ] **MEGÁLLÁS + check‑in:** mért számok (profit/kör, induló qty, `P_liq` induló és teljes grid, Bot A visszajátszás ha az időpontok adottak), bias‑vizsgálat eredménye, nyitott kérdések.
+
+### Fázis 2 — közös keret és beavatkozások (kapu: terv 4.3 Fázis 2)
+- [ ] `src/lib/pionex/capital.ts` (3.7): `capitalTotal`, `freeCash`, `kivett`; `allocate / release / reject` okkal; invariáns két botra.
+- [ ] `src/lib/pionex/interventions.ts` (3.6–3.8): ciklus‑szabály (`netIfClosed`, `E_next`, kivét, újraindítás saját pénzből, `restart_rejected`), feltöltés (`topUpTriggerPct`, `topup_rejected`), 2. bot trigger (`bot2_rejected`, egyszer), `bot1ClosePrice` végleges leállítás, **rögzített végrehajtási sorrend** (zárások → feltöltések → újraindítás → 2. bot), minden lépés után likvidációs ellenőrzés.
+- [ ] `engine.ts`: a függő beavatkozások lépés bekötése.
+- [ ] `src/__tests__/pionexCycles.test.ts`: 3.6 példa (`E_next = 1970`, kivett 80); nem pozitív ciklusprofit; `bot1ClosePrice`; egyidejű beavatkozások sorrendje, záruló botra feltöltés törlés; elutasítások okkal; invariáns két bottal minden eseménynél.
+
+### Fázis 3 — UI és mentés (kapu: terv 7. táblázat, 3. sor)
+- [ ] `prisma/schema.prisma`: `PionexRun` (`String` JSON mezők) + `db push`.
+- [ ] `src/app/api/pionex/run/route.ts` (adat → 2 út → metrikák → mentés; idők külön: betöltés / számítás / mentés) és `runs/route.ts` (lista, egy futás, törlés).
+- [ ] `TradingChart.tsx`: `lineSeries`, `markers`, `verticalMarkers` opcionális propok; **marker‑összefésülés egy helyen** (combo markerek + `markers`, idő szerint rendezve, egy `setMarkers`); propok nélkül változatlan viselkedés.
+- [ ] `src/components/pionex/`: `ParamPanel` (accordion: Bot, Közös tőke, Költségek, Ciklus, Feltöltés, 2. bot, Fix záróár), `PionexCard` (verdikt + kártya botonként), `ExposurePanel`, `SubCharts` (vagyon, liq. táv %, pozíció, funding), `EventList`, `DrawdownPicker` (Top N + „utólag kiválasztott” címke), `Assumptions`, `RunHistory` (kitűzés 2 futás, trió).
+- [ ] `src/app/pionex/page.tsx`: a 6. fejezet három zónája; trió futtatás (6.3).
+- [ ] **Kapu:** a három ablak egy kattintással fut; trió és két kitűzött futás egymás mellett; feltételezések és adathiány látszik; a főoldali chart markerei változatlanok; minden teszt zöld.
+
+## Kritikus fájlok
+- Olvasott/érintett meglévő: `src/lib/data/binanceApi.ts`, `candleCache.ts`, `fundingCache.ts`, `src/lib/constants.ts`, `src/components/charts/TradingChart.tsx`, `src/app/page.tsx`, `prisma/schema.prisma`.
+- Minta (nem módosul): `src/lib/research/account.ts`, `scripts/research/fetch-data.ts`, `src/app/research/page.tsx`.
+
+## Review
+
+### Fázis 0 — 2026‑10‑05 (kész, kapu teljesítve)
+
+**Kód (minimális érintés a meglévőn):**
+- `constants.ts`: `PIONEX_SYMBOLS` + `pionexLastPair/pionexMarkPair` helper.
+- `binanceApi.ts`: `BinanceMarket` kapott egy `'futuresMark'` értéket → `/fapi/v1/markPriceKlines`. A `candleCache.ts` hívása **nem változott** (csak komment), mert a meglévő `candleCache.test.ts` a fetch pontos argumentumlistáját ellenőrzi; az első, `endpoint`‑paraméteres változat 3 meglévő tesztet eltört, ezért visszavontam.
+- `fundingCache.ts`: `storeFundingRates` export (1 szó).
+- `page.tsx`: egy `Link` a rail‑ben (`/pionex`), `Target` ikon.
+- Új: `data/markPrice.ts`, `data/windows.ts`, `pionex/funding.ts` (perces vödör, egyszer, szigorú 8h+1m lefedettség, célzott letöltés), `pionex/dataQuality.ts`, `pionex/drawdowns.ts`, `api/pionex/{data,drawdowns}`, `app/pionex/page.tsx`, `components/pionex/DrawdownPicker.tsx`, tesztek `pionexFunding.test.ts` (6) és `pionexDataQuality.test.ts` (4).
+- Top N esés: **gördülő 30 napos** csúcshoz mért mélység (nem futó maximum), mert utóbbi a 2021‑11 → 2022‑06 medvepiacot egyetlen 7 hónapos „esésnek” mutatná. Epizódok a mélypont ±30 napján belül kizárva.
+
+**Tesztek:** 16 fájl, 269 teszt zöld (259 meglévő + 10 új). `tsc --noEmit` tiszta. Smoke‑teszt dev szerveren: `/pionex` 200, rail‑link a főoldalon, `/api/pionex/drawdowns` 1,9 s cache‑ből, hibás szimbólum 400.
+
+**Kapu — 9 ablak, mind `complete=true`, 0 lyuk (last, mark, funding):**
+
+| Szimbólum | Ablak | Percek (last = mark) | Funding rekord | Betöltés |
+|---|---|---|---|---|
+| ETH | 2022‑05‑04 → 05‑20 | 23 040 | 48 | 30 s |
+| ETH | 2022‑11‑06 → 11‑24 | 25 920 | 54 | 40 s |
+| ETH | 2025‑01‑04 → 02‑10 (−44,4 %) | 52 440 | 110 | 42 s |
+| SOL | 2022‑05‑04 → 05‑20 | 23 040 | 48 | 35 s |
+| SOL | 2022‑11‑06 → 11‑24 | 25 920 | 129 | 35 s |
+| SOL | 2025‑01‑24 → 03‑04 (−49,0 %) | 56 160 | 117 | 72 s |
+| BTC | 2022‑05‑04 → 05‑20 | 23 040 | 48 | 39 s |
+| BTC | 2022‑11‑06 → 11‑24 | 25 920 | 54 | 46 s |
+| BTC | 2025‑10‑25 → 11‑28 (−30,7 %) | 49 260 | 103 | 77 s |
+
+1h teljes történet: ETH 60 105 / SOL 53 097 / BTC 62 015 gyertya, ~40 s mindegyik (első letöltés; utána cache).
+
+**Megfigyelések:**
+- A 2025‑ös ablak szimbólumonként a Top 10 listából a 2025‑ös mélypontú legmélyebb epizód: ETH 2025‑02‑03, SOL 2025‑02‑25, BTC 2025‑11‑21. ETH‑nál a 2025‑10‑10 flash crash nem került a Top 10‑be (a 30 napos csúcshoz képest sekélyebb).
+- A funding gyakorisága változik: SOL 2022‑11‑ben 129 settlement 18 nap alatt (4h/1h ütem a ráta‑limit miatt). A szigorú lefedettség csak a **maximális** távolságot korlátozza, ezért ez rendben van; a perces vödör egyediség sem sérült.
+- Binance mark klines a 2022‑es ablakokra is hiánytalan.
+- Teljesítmény: a letöltést a Binance 300 ms‑os ütemezés dominálja (~1000 gyertya/kérés); 16 napos ablak ≈ 30–45 s, 35–40 napos ≈ 70–80 s, cache‑ből < 1 s.
+
+### Fázis 0 review‑javítások — 2026‑10‑05 (kész)
+
+**Kód:**
+- `pionex/funding.ts`: a kért ablak **mindig** egyeztetve a `/fapi/v1/fundingRate`‑tel (`endTime = endMs − 1`), tárolás a meglévő `storeFundingRates`‑szel, majd cache‑olvasás → `bucketFunding()` (dupla vödör = hiba) → a cache rekordszáma meg kell egyezzen az API‑éval (különben adat‑hiba). Hálózati/HTTP hiba = `FundingFetchError` → cache‑rekordok + egész ablakos gap + `error`; érvénytelen rekord (üres/nem véges ráta) = adat‑hiba, dob. A 8h+1m szabály kiegészítő ellenőrzés maradt.
+- `pionex/dataQuality.ts`: `DataGapReport.errors: string[]`; bármilyen hibaok → `complete=false`.
+- `data/windows.ts`: a gyertya‑`catch` csak nem‑Prisma hibát nyel el, és a hibaokot a riportba írja; a funding hibaok is oda kerül.
+- `pionex/drawdowns.ts`: lookback és kizárás időbélyeg alapján; listing‑kezdet a valós első 1h gyertya (BTC 17:00, ETH/SOL 07:00 UTC); `getFullHistory1h` → `{ candles, gaps, error }`. `api/pionex/drawdowns`: hiányos történetnél `episodes: []` + `complete/gaps/historyError`.
+- `app/pionex/page.tsx`: `useRef` kérésazonosító (szimbólum/dátum/pick váltás eldobja a késő választ, a betöltés‑jelzőt is visszaállítja), NaN‑biztos `toInput`, `validWindow` tiltja a gombot, hibaokok listája. `DrawdownPicker.tsx`: `AbortController` + cleanup, hiányos történet üzenet rangsor helyett.
+
+**Tesztek:** 17 fájl, **281 zöld** (+12 új `pionexWindows.test.ts`: rövid ablak üres cache‑sel, hiányzó kezdő settlement, kihagyott 4h settlement, hálózati + 503 hiba, érvénytelen ráta, cache‑többlet, dupla vödör a `loadWindow` útvonalán, funding‑hiba melletti gyertya‑lefedettség, gyertya‑hiba okkal / Prisma‑hiba továbbdobva, listing‑kezdet, hiányos 1h történet, 100 napos szakadás; +1 assert `pionexDataQuality.test.ts`). `tsc --noEmit` tiszta. UI‑ra (F3, F5) nincs React tesztkörnyezet → `tsc` + kézi ellenőrzés javasolt (dátummező kiürítése; szimbólumváltás betöltés közben).
+
+**Kapu újraellenőrzés (élő Binance funding‑egyeztetéssel):** mind a 9 ablak `complete=true`, a percszámok és funding rekordszámok **azonosak** a fenti táblázattal; az API‑egyeztetés egyik ablakban sem talált eltérést. Ablakonként cache‑ből ~0,5–1 s (a funding API‑hívás ~0,26 s). 1h történet: 0 gap, 0 hiba, ~1 s (korábban a listing előtti üres szakaszt minden alkalommal újra lekérte és csendben elnyelte a hibát). Dev‑szerver smoke: `/pionex` 200, drawdowns `complete:true`, 1 órás settlement nélküli ablak API‑val egyeztetve `complete:true, records:0`.
+
+**Tudatos döntés:** minden ablakbetöltés egy funding API‑kérés (kis költség), mert a cache önmagában nem bizonyíthatja a teljességet.
+
+---
+
 # Active Plan — Pre-commit review fixes (Strategy B research harness)
 
 **Status:** Complete. Approved by user ("do this according to your recommendation").

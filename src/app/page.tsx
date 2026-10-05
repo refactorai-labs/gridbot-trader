@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import Link from 'next/link';
 import {
   Activity,
   AlertCircle,
@@ -15,6 +16,7 @@ import {
   Settings,
   Shield,
   SlidersHorizontal,
+  Target,
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
@@ -729,6 +731,10 @@ export default function SimulatorPage() {
             <Database size={20} />
             <span>Data</span>
           </button>
+          <Link href="/pionex" className="rail-btn" title="Pionex grid backtester">
+            <Target size={20} />
+            <span>Pionex</span>
+          </Link>
           <button className="rail-run" onClick={() => openConfigDrawer()} title="Open run configuration">
             <Play size={19} />
             <span>Run</span>

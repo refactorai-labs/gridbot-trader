@@ -24,7 +24,7 @@ export async function getCachedFundingRates(
   }));
 }
 
-async function storeFundingRates(
+export async function storeFundingRates(
   symbol: string,
   rates: { fundingTime: number; fundingRate: number }[]
 ): Promise<number> {

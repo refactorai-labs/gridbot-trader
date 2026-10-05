@@ -59,6 +59,13 @@ export const BINANCE_API = {
   candlesPerRequest: 1000,
 };
 
+// Pionex backtester symbols (Binance USDT-M futures). Cache-key convention
+// (plan §5): last = `${symbol}PERP`, mark = `${symbol}MARK`, exchange symbol = symbol.
+export const PIONEX_SYMBOLS = ['ETHUSDT', 'SOLUSDT', 'BTCUSDT'] as const;
+export type PionexSymbol = (typeof PIONEX_SYMBOLS)[number];
+export const pionexLastPair = (symbol: string) => `${symbol}PERP`;
+export const pionexMarkPair = (symbol: string) => `${symbol}MARK`;
+
 // Binance USDT-M futures API config. Weight budget is 2400/min and a
 // 1000-row kline request costs 5, so ~300ms pacing stays far under the limit.
 export const BINANCE_FUTURES_API = {
