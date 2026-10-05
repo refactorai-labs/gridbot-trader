@@ -59,6 +59,13 @@ export const BINANCE_API = {
   candlesPerRequest: 1000,
 };
 
+// Binance USDT-M futures API config. Weight budget is 2400/min and a
+// 1000-row kline request costs 5, so ~300ms pacing stays far under the limit.
+export const BINANCE_FUTURES_API = {
+  baseUrl: 'https://fapi.binance.com',
+  requestDelay: 300,
+};
+
 // Adaptive layer defaults
 export const ADAPTIVE_DEFAULTS = {
   emaPeriod: 50,

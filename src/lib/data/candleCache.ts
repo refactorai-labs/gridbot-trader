@@ -2,7 +2,12 @@
 
 import prisma from '../prisma';
 import { OHLC } from '../types';
-import { fetchBinanceKlines } from './binanceApi';
+import { fetchBinanceKlines, BinanceMarket } from './binanceApi';
+
+export interface CandleFetchOptions {
+  market?: BinanceMarket; // default 'spot'
+  symbol?: string;        // exchange symbol when it differs from the cache pair key (e.g. pair 'ETHUSDTPERP' → symbol 'ETHUSDT')
+}
 
 // Get cached Binance candles from database
 export async function getCachedCandles(
@@ -123,8 +128,11 @@ export async function getOrFetchCandles(
   timeframe: string,
   startTime: Date,
   endTime: Date,
-  onProgress?: (fetched: number) => void
+  onProgress?: (fetched: number) => void,
+  opts?: CandleFetchOptions
 ): Promise<OHLC[]> {
+  const market = opts?.market ?? 'spot';
+  const symbol = opts?.symbol ?? pair;
   const now = Date.now();
   const startMs = startTime.getTime();
   // Clamp the end to now so a "today/future" end reaches the latest available candle.
@@ -138,7 +146,7 @@ export async function getOrFetchCandles(
   if (gaps.length === 0) return cached;
 
   for (const gap of gaps) {
-    const fetched = await fetchBinanceKlines(pair, timeframe, gap.startMs, gap.endMs, onProgress);
+    const fetched = await fetchBinanceKlines(symbol, timeframe, gap.startMs, gap.endMs, onProgress, market);
     if (fetched.length > 0) {
       await storeCandlesInCache(pair, timeframe, fetched);
     }
@@ -165,7 +173,9 @@ export async function getOrFetchCandles(
 
 export function getTimeframeMinutes(timeframe: string): number {
   switch (timeframe) {
+    case '1m': return 1;
     case '5m': return 5;
+    case '30m': return 30;
     case '15m': return 15;
     case '1h': return 60;
     case '4h': return 240;

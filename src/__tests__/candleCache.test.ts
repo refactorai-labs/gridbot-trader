@@ -156,7 +156,7 @@ describe('getOrFetchCandles', () => {
     expect(result).toHaveLength(4);
     expect(mockedFetch).toHaveBeenCalledTimes(1);
     expect(mockedFetch).toHaveBeenCalledWith(
-      'ETHUSDT', '5m', T0, T0 + 4 * FIVE_MIN_MS, undefined
+      'ETHUSDT', '5m', T0, T0 + 4 * FIVE_MIN_MS, undefined, 'spot'
     );
     expect(findMany).toHaveBeenCalledTimes(2);
   });
@@ -178,6 +178,7 @@ describe('getOrFetchCandles', () => {
       'ETHUSDT', '5m',
       T0 + 2 * FIVE_MIN_MS, T0 + 4 * FIVE_MIN_MS,
       undefined,
+      'spot',
     );
   });
 
@@ -197,10 +198,10 @@ describe('getOrFetchCandles', () => {
     expect(result).toHaveLength(6);
     expect(mockedFetch).toHaveBeenCalledTimes(2);
     expect(mockedFetch.mock.calls[0]).toEqual([
-      'ETHUSDT', '5m', T0, T0 + 2 * FIVE_MIN_MS, undefined,
+      'ETHUSDT', '5m', T0, T0 + 2 * FIVE_MIN_MS, undefined, 'spot',
     ]);
     expect(mockedFetch.mock.calls[1]).toEqual([
-      'ETHUSDT', '5m', T0 + 4 * FIVE_MIN_MS, T0 + 6 * FIVE_MIN_MS, undefined,
+      'ETHUSDT', '5m', T0 + 4 * FIVE_MIN_MS, T0 + 6 * FIVE_MIN_MS, undefined, 'spot',
     ]);
   });
 

@@ -1,9 +1,11 @@
 // Binance public API client for OHLCV candle data
-// Uses /api/v3/klines — no API key required
+// Spot: /api/v3/klines — Futures (USDT-M perp): /fapi/v1/klines. No API key required.
 
 import { OHLC } from '../types';
 import { fetchWithTimeout } from './fetch';
-import { BINANCE_API } from '../constants';
+import { BINANCE_API, BINANCE_FUTURES_API } from '../constants';
+
+export type BinanceMarket = 'spot' | 'futures';
 
 // Fetch paginated klines from Binance, forward from startTime
 export async function fetchBinanceKlines(
@@ -11,13 +13,18 @@ export async function fetchBinanceKlines(
   interval: string,
   startTime: number,
   endTime: number,
-  onProgress?: (fetched: number) => void
+  onProgress?: (fetched: number) => void,
+  market: BinanceMarket = 'spot'
 ): Promise<OHLC[]> {
   const allCandles: OHLC[] = [];
   let currentStart = startTime;
 
+  const api = market === 'futures'
+    ? { base: `${BINANCE_FUTURES_API.baseUrl}/fapi/v1/klines`, delay: BINANCE_FUTURES_API.requestDelay }
+    : { base: `${BINANCE_API.baseUrl}/api/v3/klines`, delay: BINANCE_API.requestDelay };
+
   while (currentStart < endTime) {
-    const url = `${BINANCE_API.baseUrl}/api/v3/klines?symbol=${pair}&interval=${interval}&startTime=${currentStart}&endTime=${endTime}&limit=${BINANCE_API.candlesPerRequest}`;
+    const url = `${api.base}?symbol=${pair}&interval=${interval}&startTime=${currentStart}&endTime=${endTime}&limit=${BINANCE_API.candlesPerRequest}`;
 
     const response = await fetchWithTimeout(url);
     if (!response.ok) {
@@ -48,7 +55,7 @@ export async function fetchBinanceKlines(
     if (data.length < BINANCE_API.candlesPerRequest) break;
 
     // Rate limit delay
-    await new Promise(r => setTimeout(r, BINANCE_API.requestDelay));
+    await new Promise(r => setTimeout(r, api.delay));
   }
 
   return allCandles;
