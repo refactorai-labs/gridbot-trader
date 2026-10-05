@@ -1,15 +1,131 @@
-# Active Plan — Profit Tracking Claim Verification
+# Active Plan — Pre-commit review fixes (Strategy B research harness)
 
-**Status:** Waiting for plan approval.
+**Status:** Complete. Approved by user ("do this according to your recommendation").
 
 ## Todo
 
-- [ ] Compare the pasted profit-tracking claim against the current `pnlTracker.ts` implementation.
-- [ ] Verify fill size, fee, and open-position matching behavior through `orderMatcher.ts`, `engine.ts`, and `gridGenerator.ts`.
-- [ ] Check existing P&L tests for coverage of entry quantity, entry fee, and adaptive multiplier cases.
-- [ ] Run the focused P&L test suite if verification needs executable confirmation.
-- [ ] Report which parts of the pasted claim are true, already fixed, false, or still untested.
-- [ ] Add a review section here with the verification result and any recommended minimal next step.
+- [x] Fix flat-leg stop skip in `fillSim.ts`: stops were only collected when the leg already held lots at segment start, so a leg that bought on the way down through its stop in the same 1m segment never stopped out.
+- [x] Regression test for the above in `researchFillSim.test.ts` (fails before the fix, passes after).
+- [x] Bring this file up to date (Phase 3/4 checkboxes, status, cache key name, review section).
+- [x] Note known caveats in `tasks/research-log.md` (`w` is display-only; maxDD is on daily closes; window-boundary fee skip; MC full-span overlaps IS).
+- [x] Commit in two pieces (data layer, then research harness), excluding stale `test_output.txt`; push to `main`.
+
+## Review
+
+- **Stop fix (root cause):** `fillSim.ts` gated stop *collection* on `leg.lots.length > 0` at the start of each path segment. Entries filled earlier in the same segment created lots after collection, so the stop never fired (probe: price 100→80 through a stop at 85 with 5 lots open → 0 stops, booked as profitable round trips). Fix: collect the stop trigger regardless; the execution loop already skips it if the leg is flat when price reaches it. One-line change; triggers are price-sorted, so entries above the stop fill first and the stop then flattens them.
+- **Impact on research conclusions:** the bug was optimistic (missed stops), so the published V1–V6 numbers are upper bounds; the "do not promote" verdict stands. Artifacts were not regenerated.
+- No other code changed. Tests: see commit.
+
+---
+
+# Active Plan — Strategy B: Dual-Grid Partial-Hedge Research (ETH/USDT Perp)
+
+**Status:** Complete (Phases 1–4). Phase 5 holdout SKIPPED — pre-registered robustness gate had 0 survivors.
+**Date:** 2026-06-11
+
+## Mission
+
+Validate whether the partial-close structure of Strategy B improves RISK-ADJUSTED results
+(Sharpe, max DD, tail outcomes) net of fees/funding/slippage vs three baselines on identical
+data + identical regime filter: (a) full-close winner, (b) full-hold winner, (c) plain one-sided grid.
+Target: OOS Sharpe ≥ 1.1 over last 2y, max DD ≤ 20%, unlevered. Final ~4-month holdout touched once.
+"Strategy B doesn't beat its baselines" is an acceptable answer.
+
+## Key design decisions (proposed — verify with user)
+
+1. **Signal timeframe: 30m confirmed.** Fills happen on 1m bars regardless, so the signal TF only
+   governs regime/anchoring cadence. 30m gives 48 obs/day — enough ER hysteresis responsiveness to
+   catch vol expansion within hours, without the ER flip-flopping that 15m shows. Keep 30m.
+2. **Data: native Binance USDT-M futures klines** (`fapi/v1/klines`), 1m + 30m, fetched directly
+   (not aggregated from spot 5m — spot/perp basis would contaminate fills). Cached in existing
+   `BinanceCandle` table under pair key `ETHUSDTPERP` (cache pair keys must be alphanumeric) to avoid colliding with spot rows. Funding
+   rates: existing `fundingCache.ts` is production-ready, reuse as-is.
+   Span: 2024-02-01 → now (~28 months; ~1.05M 1m rows). Holdout: 2026-02-11 → 2026-06-11.
+3. **Range anchoring: rolling Donchian midpoint** (lookback ~7d of 30m closes) as center; half-width
+   `k × ATR(30m,14)` clamped to [2%, 8%] of price. Chosen over S&R pivot detection: deterministic,
+   2 params instead of ~5, no subjective swing logic, ATR-adaptive, and trivially lookahead-free.
+   Re-anchor only at cycle start (both legs flat) and only when regime filter allows trading.
+4. **Zones:** invalidation zone = range edge → edge + `w × ATR`; hard SL at edge + `s × ATR`
+   (taker fill + ATR-scaled slippage, isolated margin per leg, sized so liquidation is never near).
+5. **Engine: new standalone `src/lib/research/` engine** (headless, run via `tsx` scripts; results
+   persisted as JSON artifacts consumed by the `/research` page through one small API route).
+   Why not retrofit `engine.ts`: it is Prisma/Simulation-model-coupled, spot-semantics, no partial
+   close, no per-leg margin. We REUSE the proven parts: `orderMatcher` intra-candle path logic,
+   `funding.ts`, `slippage.ts`, `efficiencyRatio.ts`, `atr.ts`, walk-forward windowing pattern,
+   `TradingChart` primitives. (219 existing tests pass; round-trip P&L regression tests confirmed
+   present and green — pnlTracker/orderMatcher fixes are covered.)
+6. **Fees:** maker 0.02% for resting grid limit fills, taker 0.05% for stops & partial market
+   closes. Every partial close pays real taker fees. Funding applied every 8h from cached history.
+7. **One shared engine, 4 modes:** `B` (partial close 50–70%), `A` (full-close winner),
+   `H` (full-hold winner), `G` (plain one-sided grid). Same data, same ER regime gate.
+8. **Metrics on stitched OOS equity:** Sharpe (daily-resampled), Sortino, max DD, 5% CVaR of trade
+   P&L, worst day, stop-event count, total fees/funding. Walk-forward: 6mo IS / 2mo OOS, rolling
+   2mo steps across 2024-02 → 2026-02.
+9. **Research log** `tasks/research-log.md`, hard cap 40 variants; stop and report honestly if hit.
+
+## Todo
+
+### Phase 1 — Honest fills (data + engine foundation)  → Gate 1
+- [x] Extend `binanceApi.ts` with a futures-market kline fetch (`fapi/v1/klines`, faster request pacing ~300ms) behind a `market` param; add `1m`/`30m` to `getTimeframeMinutes()`.
+- [x] Fetch script `scripts/research/fetch-data.ts`: 1m + 30m ETHUSDTPERP klines 2024-02 → now + funding rates; integrity check (gap report). Gap report prints at end.
+- [x] Core types + dual-leg portfolio state (isolated margin per leg, maker/taker fees, funding, stop slippage) in `src/lib/research/` (`types.ts`, `account.ts`).
+- [x] Fill simulator `src/lib/research/fillSim.ts`: grid fills/partial closes/stops on 1m bars (intra-candle path, gap-aware stops, auto counter-orders as exchange mechanics); strategy decisions ONLY on closed 30m bars, queued taker actions execute at next 1m open. 11 unit tests incl. no-lookahead — all green (suite: 230/230, tsc clean).
+
+### Phase 2 — Strategy B + baselines  → Gate 2 (trade-log sanity)
+- [x] Regime filter `src/lib/research/regime.ts`: incremental Kaufman ER with hysteresis (erLow/erHigh + confirm bars) + vol-expansion overlay (ATR vs SMA(ATR)). 5 unit tests.
+- [x] Range anchor `src/lib/research/rangeAnchor.ts`: Donchian mid ± clamp(k·ATR), invalidation zones, stop rails, level builder, off-center anchor guard. 4 unit tests.
+- [x] Strategy B state machine `src/lib/research/strategyB.ts`: idle → anchor (dual grids + initial inventory + stops) → active → bank at `bankAt` (partial 50–70% close, entries cancelled, hedge kept) → hedged → unwind on reversion / engine stop → cooldown. Engine gained Pionex-style initial positions (armed at next 1m open) so the favorable leg holds a real hedge at bank time.
+- [x] Baselines as mode flags: fullClose / fullHold / oneSided share identical regime+anchor+grids (verified: identical cycle counts 31/18/9/12 on the sample).
+- [x] 3-month sample runs (2025-03→2025-06, +14d warmup) for all 4 modes; trade log printed and sanity-checked (TP round trips match grid-step arithmetic net of maker fees; ledger drift ~1e-11). Artifacts in research-artifacts/.
+- [x] `/research` dashboard view (a): strategy anatomy chart (30m candles, cycle range/invalidation boxes, grid hairlines, stop rails, ER regime bands + ER ribbon, fill dots, partial-close ▼ with %, unwind ●, stop ✕, initial ◆), cycle navigator with zoom + structural event log. API route `/api/research`.
+
+### Phase 3 — Walk-forward  → Gate 3
+- [x] Walk-forward runner (6mo IS / 2mo OOS, rolling 2mo) optimizing: partial-close fraction, invalidation width w, SL distance s, grid spacing/levels, ER thresholds, hedge-unwind rule params. Random search within bounds; judge on stitched OOS equity.
+- [x] Run for B + A + H + G on identical windows; stitched OOS equity + drawdown artifacts.
+- [x] Dashboard view (b): stitched OOS equity curves B vs A/H/G vs buy-and-hold + drawdown subchart.
+- [x] Research log every variant (cap 40). 6 / 40 used (V1–V6).
+
+### Phase 4 — Robustness  → Gate 4
+- [x] Monte Carlo on best 10–20 OOS candidates: trade-resampling bootstrap (Sharpe/DD distributions) + ±15% parameter perturbation; per-window parameter stability table. Discard fragile peaks.
+- [x] Dashboard view (c): MC Sharpe distributions, perturbation scatter, stability table.
+
+### Phase 5 — Holdout (ASK USER FIRST)
+- [ ] ~~Single best candidate, one run on 2026-02-11 → 2026-06-11.~~ SKIPPED: no candidate passed the Phase-4 gate. `scripts/research/holdout.ts` exists but was never run; the holdout tail is untouched.
+- [x] Final report (in `tasks/research-log.md`).
+
+## Review
+
+- **Verdict:** partial-close (Strategy B) is structurally inert — indistinguishable from full-close and full-hold (Δ Sharpe ≤ 0.03) in every variant/window. One-sided is decisively worst. Full report: `tasks/research-log.md`.
+- **Best result:** V4 (lowChurn space, val selection) stitched OOS Sharpe 0.85 / maxDD 10.4% — misses the 1.1 Sharpe target and is fragile under ±15% parameter perturbation (0 MC survivors), so not promoted.
+- **Key finding:** cost centre is cycle turnover (taker inventory at every anchor + taker close at every derisk), not maker grid churn.
+- **Code delivered:** futures kline fetch + `1m`/`30m` timeframes in the shared data layer (spot default unchanged); standalone engine in `src/lib/research/`; scripts in `scripts/research/`; `/research` dashboard (anatomy / walk-forward / robustness) via `/api/research`; 40 research unit tests.
+- **Artifacts** live in `research-artifacts/` (~65 MB, gitignored) — regenerate with the scripts; `/research` shows "not found" until they exist.
+- **Known caveats:** see the "Known caveats" section of `tasks/research-log.md`.
+
+---
+
+# Active Plan — Profit Tracking Claim Verification
+
+**Status:** Complete.
+
+## Todo
+
+- [x] Compare the pasted profit-tracking claim against the current `pnlTracker.ts` implementation.
+- [x] Verify fill size, fee, and open-position matching behavior through `orderMatcher.ts`, `engine.ts`, and `gridGenerator.ts`.
+- [x] Check existing P&L tests for coverage of entry quantity, entry fee, and adaptive multiplier cases.
+- [x] Run the focused P&L test suite if verification needs executable confirmation.
+- [x] Report which parts of the pasted claim are true, already fixed, false, or still untested.
+- [x] Add a review section here with the verification result and any recommended minimal next step.
+
+## Review — Profit Tracking Claim Verification
+
+- Conclusion: the core `pnlTracker`/`orderMatcher` profit-accounting bug Claude is likely describing appears already fixed in the current code.
+- `processFill()` closes by `positionId` first when present, falls back to legacy adjacent-level matching otherwise, uses the entry fill quantity (`openPos.size / openPos.entryPrice`), and subtracts both entry and exit fees.
+- `matchOrders()` propagates `positionId` from pending orders to fills, so combo TP orders can close their exact market entry.
+- Combo market entries create a stable `positionId`; their TP orders inherit it; TP fills with a `positionId` intentionally do not spawn normal grid counter-orders.
+- Existing tests cover the important regressions: both fees, entry-fill quantity with changed exit size, short round-trip quantity, losing round-trip accounting, `positionId` matching, and combo market-entry TP closure.
+- Verification run: `npm test -- src/__tests__/gridPnl.test.ts` passed (13/13), and `npm test -- src/__tests__/comboSupervisor.test.ts` passed (19/19).
+- Scope note: I did not run the full project test suite in this analysis pass. The focused suites directly cover this claim.
 
 # Active Plan — Fetch Latest 5m Candles Up To "Now"
 
