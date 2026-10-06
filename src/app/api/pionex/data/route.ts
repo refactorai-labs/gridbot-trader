@@ -3,9 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { loadWindow } from '@/lib/data/windows';
-import { PIONEX_SYMBOLS } from '@/lib/constants';
-
-const MAX_WINDOW_MS = 120 * 86_400_000;
+import { PIONEX_MAX_WINDOW_DAYS, PIONEX_SYMBOLS } from '@/lib/constants';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,8 +14,8 @@ export async function POST(request: NextRequest) {
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
       return NextResponse.json({ error: 'startMs/endMs invalid' }, { status: 400 });
     }
-    if (endMs - startMs > MAX_WINDOW_MS) {
-      return NextResponse.json({ error: 'window longer than 120 days' }, { status: 400 });
+    if (endMs - startMs > PIONEX_MAX_WINDOW_DAYS * 86_400_000) {
+      return NextResponse.json({ error: `window longer than ${PIONEX_MAX_WINDOW_DAYS} days` }, { status: 400 });
     }
     const w = await loadWindow(symbol, startMs, endMs);
     return NextResponse.json({

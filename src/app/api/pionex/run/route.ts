@@ -4,10 +4,8 @@
 // (same shape as /api/pionex/data), nothing saved (plan §3.10).
 
 import { NextRequest, NextResponse } from 'next/server';
-import { PIONEX_SYMBOLS } from '@/lib/constants';
+import { PIONEX_MAX_WINDOW_DAYS, PIONEX_SYMBOLS } from '@/lib/constants';
 import { executeRun, PionexRunRequest, validateRunRequest } from '@/lib/pionex/runStore';
-
-const MAX_WINDOW_MS = 120 * 86_400_000;
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,8 +17,8 @@ export async function POST(request: NextRequest) {
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
       return NextResponse.json({ error: 'startMs/endMs invalid' }, { status: 400 });
     }
-    if (endMs - startMs > MAX_WINDOW_MS) {
-      return NextResponse.json({ error: 'window longer than 120 days' }, { status: 400 });
+    if (endMs - startMs > PIONEX_MAX_WINDOW_DAYS * 86_400_000) {
+      return NextResponse.json({ error: `window longer than ${PIONEX_MAX_WINDOW_DAYS} days` }, { status: 400 });
     }
     const invalid = validateRunRequest(body);
     if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });

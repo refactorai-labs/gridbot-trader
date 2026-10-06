@@ -65,6 +65,8 @@ export const PIONEX_SYMBOLS = ['ETHUSDT', 'SOLUSDT', 'BTCUSDT'] as const;
 export type PionexSymbol = (typeof PIONEX_SYMBOLS)[number];
 export const pionexLastPair = (symbol: string) => `${symbol}PERP`;
 export const pionexMarkPair = (symbol: string) => `${symbol}MARK`;
+// Longest backtest window /api/pionex/run and /api/pionex/data accept.
+export const PIONEX_MAX_WINDOW_DAYS = 365;
 
 // Binance USDT-M futures API config. Weight budget is 2400/min and a
 // 1000-row kline request costs 5, so ~300ms pacing stays far under the limit.
