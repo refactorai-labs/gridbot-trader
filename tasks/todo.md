@@ -1,3 +1,69 @@
+# Pionex 15× — két bot túléléséhez szükséges tőke — 2026-10-06
+
+**Kérés:** újraszámolás 15× tőkeáttétellel mindkét korábban vizsgált időablakban, A/B árúton. Az investment marad botonként 150 USDT; az extra margin és a közös tőke változhat. Alkalmazáskód és mentett futások módosítása nélkül.
+
+## Todo
+- [x] A mentett beállítások és a margin/feltöltés számításának ellenőrzése.
+- [x] Az eredeti eredmények reprodukálása a helyi perces last/mark és funding adatokból.
+- [x] Csak a szabad tartalék növelésének ellenőrzése a jelenlegi 5% / 50 USDT feltöltéssel.
+- [x] Előre kiosztott extra margin és teljes tőke összevetése; mindkét bot indulását és túlélését megkövetelve mind a négy esetben.
+- [x] A vizsgált tartományban talált túlélési küszöb és egy nagyobb biztonsági távolságú változat ellenőrzése; végső vagyon és maximális visszaesés bemutatása.
+- [x] Magyar értékelés és Review rögzítése.
+
+## Review
+76 számítás, 18 eltérő beállítás a két mentett ablakon (2026-01-01 → 2026-03-31, 2026-01-16 → 2026-04-17), A és B árúton. A 15× / I150 / E200 / capital1000 alapfutás pontosan reprodukálta mind a négy mentett végső vagyont és botszámot. Last/mark: 128 160 és 131 040 perc; funding: 267 és 273; kihagyott perc minden számításnál 0. A motor tiszta `runPionex` függvényét használtuk a SQLite csak olvasásos adataival, hálózati adatletöltés és futásmentés nélkül.
+
+- Csak a teljes keret emelése 5000-re, E200 megtartásával: az első bot továbbra is likvidált a jan. 1-i ablak mindkét útján és a jan. 16-i ablak B útján. Az 5% / 50 USDT késleltetett feltöltés nem oldja meg a gyors esést.
+- A vizsgált család: I150, 15×, mindkét bot azonos E, capital = 2 × (150 + E) + 300 tartalék; minden más szabály változatlan. A két botnak ténylegesen el kell indulnia és aktívnak kell maradnia mind a négy esetben.
+- E495 / capital1590: nem élte túl mindkét bot. E500 / capital1600: mindkét bot aktív minden esetben, de a legrosszabb MTM drawdown 98,2366%, minimum likvidációs távolság 0,05385%; csak utólagos, törékeny túlélési pont, nem javasolt gyakorlati beállítás. Nem globális vagy folytonos minimumkeresés.
+- E900 / capital2400: minden bot aktív, legrosszabb drawdown 65,5592%, min. liq távolság 8,7983%.
+- E1200 / capital3000: minden bot aktív, legrosszabb drawdown 52,4692%, min. liq távolság 32,6760%.
+- E1600 / capital3800: minden bot aktív, legrosszabb drawdown 41,4376%, min. liq távolság 64,5131%; feltöltés nem kellett, 300 szabad tőke maradt. Végső vagyon jan. 1-i ablak A/B: 3217,4797 / 3353,1823; jan. 16-i ablak: 3250,2127 / 3246,7100 USDT.
+- E2200 / capital5000: minden bot aktív, legrosszabb drawdown 31,5025%; az aktuális pozícióhoz nem alakult ki pozitív likvidációs ár a vizsgált időszakban. Feltöltés nem kellett, 300 szabad tőke maradt. Végső vagyon jan. 1-i ablak A/B: 4417,4797 / 4553,1823; jan. 16-i ablak: 4450,2127 / 4446,7100 USDT.
+
+Az investment változatlan maradt: a plusz tőke fedezet, nem nagyobb gridméret. A nominális teljes gridkitettség továbbra is 2250 USDT/bot. A nagyobb szabad pénz csökkentheti a teljes vagyon százalékos drawdownját akkor is, ha egy bot likvidálódik; ezt nem tekintettük bot-túlélésnek. A számítások a jelenlegi Binance-adatokra épülő modell két történelmi időablakára vonatkoznak, nem élő Pionex-garanciára. Alkalmazáskód, beállítások és adatbázis nem módosultak; csak ez a munkanapló frissült.
+
+---
+
+# Pionex teszt — ETHUSDT 2026-01-01 → 2026-03-31 (képernyőkép paraméterei) — 2026-10-06
+
+**Kérés:** friss futtatás a képernyőkép paramétereivel (sáv −15 % / +1,2 %, 60 rács, aritmetikus, I 150, E 200, 15×, közös tőke 1000; rejtett szekciók: a panel jelenlegi beállításai — TP 1,2 %/reinvest 20 %, top-up 5 %/50, bot 2 1 %/×1) és tételes magyarázat. Kódmódosítás nincs.
+
+## Todo
+- [x] Futtatás: `POST /api/pionex/run` a fenti kéréssel.
+- [x] Kiolvasás: verdikt, A/B összegzés, botonkénti adatok, metrikák, eseményidővonal.
+- [x] Értelmezés a kódból (`engine`, `interventions`, `capital`, `metrics`, `ledger`).
+- [x] Összevetés a mentett `cmuwc5g6…` futással.
+- [x] Tételes magyar válasz + Review.
+
+## Review
+Futás: `cmuwgxvnv000aj5i8qmqcprys` (HTTP 200; betöltés 2,6 s, számítás 0,8 s). Adat teljes: 128 160/128 160 perc last és mark, 267 funding, nincs hézag. Verdikt: **path_dependent** (A 17 / B 15 TP-ciklus; a likvidáció ideje azonos). A metrikák és az eseménylista bájtra egyezik a mentett `cmuwc5g6…` futással, tehát a motor determinisztikus.
+
+- **Bot 1:** jan. 20–28 között 17/15 apró TP-ciklus (≈1,8 USDT, ebből 80 % kivéve). A jan. 28-i újraindítás után az ár 3000-ről 2400-ra esett. 2026-01-31 18:43-kor egy 1 perces kanóc (2202) likvidálta mindkét úton.
+- **Bot 2:** jan. 31-én indult, a −15 %-os sáv alatt (2079–2569), a feltöltésekkel túlélte a febr. 6-i 1736-os mélypontot, és az ablak végén aktív (likvidációs távolság 26–28 %).
+- **Végső vagyon (A):** 0 szabad pénz + 30,04 kivett + bot 2 equity 517,33 = 547,37.
+- **Gridprofit (322 / 391):** csak a párosított gridügyletek eredménye; nem tartalmazza a likvidációs veszteséget (362 / 307) és a nem realizált veszteséget.
+
+Kód nem változott. Az adatbázisba egy új `PionexRun` sor került.
+
+---
+
+# Pionex backtest eredményének értelmezése — 2026-10-06
+
+**Kérés:** az ETHUSDT 2026-01-01 → 2026-03-31 képernyőkép közérthető értelmezése. Alkalmazáskód módosítása nem része a kérésnek.
+
+## Todo
+- [x] A kártya és a mutatók számításának előzetes megismerése (`PionexCard`, `format`, `types`, `engine`, `metrics`, `capital`, `runStore`).
+- [x] A felhasználó további utasítása: közvetlen magyarázatot kér a válaszban, tervjóváhagyási kör nélkül.
+- [x] Az A/B árút, a végső vagyon, a likvidációs távolság, a maximális visszaesés, a ciklusok/körök, a gridprofit és a kivett profit jelentésének ellenőrzése és magyarázata.
+- [x] A képen látható eredmény összefoglalása; a likvidáció után jelzett drawdown-időpont tisztázása a mentett futás alapján.
+- [x] Rövid review rögzítése.
+
+## Review
+A képernyőképhez pontosan illeszkedő mentett futás: `cmuwc5g6c0006j5i8s41pugoi` (csak olvasás SQLite-ból). Mindkét árúton az első bot likvidált 2026-01-31 18:43 UTC-kor; a második az ablak végén aktív. Ez megmagyarázza a későbbi, 2026-02-06 00:19 UTC maximális drawdownt. A végső vagyon a szabad pénz, kivett profit és nyitott bot mark áron számolt saját tőkéjének összege; a kivett profitot nem szabad újra hozzáadni. A gridprofit a párosított gridügyletek vételi és eladási díj utáni mutatója, nem a teljes stratégia nettó hozama. Az árútfüggő verdikthez önmagában elegendő a 17 és 15 ciklus eltérése. A mentett beállítás 15× tőkeáttételt, két botot, TP-ciklusokat és feltöltéseket tartalmaz. Alkalmazáskód és adatbázis nem változott; tesztfuttatás nem volt szükséges a csak olvasásos értelmezéshez.
+
+---
+
 # Aktív terv — Pionex Long Futures Grid Backteszter (terv v3, fázisonként)
 
 **Státusz:** Fázis 0 kész (kapu teljesítve). Fázis 1 kész + review‑javítások (2 P1, 3 P2, 1 validációs pont). **Fázis 2 kész (kapu teljesítve, 2026‑10‑05).** **Fázis 3 kész (kapu teljesítve, 2026‑10‑06)** + review‑javítások (2 P1, 4 P2) — a v1 terv minden fázisa kész.
@@ -384,6 +450,42 @@ Mindkettő jogos. A fenti P1/1 Review állítása („a kiürített mező 400‑
 - **Tesztek:** 23 fájl, **386 zöld** (+7: 5 elutasítás és 1 elfogadási eset a valódi JSON‑úton; régi sor → `stale` + érvényes újrafuttatási kérés; új mentés → nem `stale`). `tsc` tiszta.
 - **DB (csak olvasva):** a 32 meglévő `PionexRun` sor egyike sem verziózott → mind „stale”‑ként jelenik meg.
 - **Kézi ellenőrzés még hátra (dev szerver újraindítása után):** Common capital be + üres mező → Run → 400 üzenet; régi futás megnyitása → figyelmeztetés + Re-run → a 2. bot liq vonala 05‑08 13:45‑nél ~719,44 (A).
+
+### Ablak/eredmény összhang és Top drops pontosítása (2026‑10‑06)
+
+Cél: az aktív eredmény mindig a kiválasztott coinhoz és ablakhoz tartozik; futás/megnyitás közben nem látszik korábbi eredmény; érvénytelenített kérések válasza nem módosítja a felületet. Csak felületi állapotkezelés és feliratok + automatizált regressziós tesztek.
+
+**Ablak és eredmény (`src/app/pionex/page.tsx`):**
+- [x] Két segéd: `clearResult` (csak `run/trio/timing`), `invalidateRun` (+ `runId++`, `runError` és `running` törlése).
+- [x] Symbol/From/To/Top drops/gate ablakváltás: függő futás/betöltés érvénytelenítése, eredmény és data check törlése; a gate az új ablak értékeivel fut.
+- [x] Run, Trio, Re-run, Open indításakor azonnali eredménytörlés + új kérésazonosító.
+- [x] Minden aszinkron siker/hiba/lezárás ág csak saját, aktuális azonosítóval módosít; érvénytelenített Trio nem indít további részfutást.
+- [x] Open sikere: `symbol/startMs/endMs` közvetlenül a válaszból (nincs éjfélre kerekítés), `picked` és data check törlése (a betöltés közben indított ellenőrzés is érvénytelen).
+- [x] Aktuális futási/betöltési hiba után nincs eredmény/timing, a hibaüzenet látszik; 422 → adatlefedettségi kártya + függő kézi ellenőrzés érvénytelenítése.
+- [x] Az aktuális kérés hibakezelése `clearResult`‑ot használ (nem `invalidateRun`‑t): nem vált azonosítót, nem törli az új hibát.
+
+**Feliratok (`src/components/pionex/DrawdownPicker.tsx`, page):**
+- [x] Fejléc `Top drops · full history` + rövid magyarázat (teljes futures történet, 30 napos gördülő maximum).
+- [x] Recovery: `recovered YYYY-MM-DD` / `not recovered`, külön sorban; tooltip (első későbbi 1h gyertya maximuma ≥ korábbi csúcs, UTC; árfolyam‑helyreállás, nem bot‑túlélés; hiányzó = a betöltött történet végéig).
+- [x] Epizódgomb tooltip: a kiválasztandó ablak UTC‑időpontjai (`windowFromEpisode`) + szabály (csúcs − N nap → mélypont + 7 nap, legfeljebb mostanáig).
+- [x] Re-run: `Re-run saved settings` + tooltip (mentett ablak és beállítások, új futást ment); Run tooltip: jelenlegi ablak + paraméterpanel.
+
+**Ellenőrzés:**
+- [x] `@testing-library/react` (React 18‑kompatibilis) + `jsdom` dev függőség; jsdom csak az új UI‑tesztfájlra (fájlszintű `@vitest-environment jsdom`), Vitestben automatikus JSX; a meglévő tesztek környezete változatlan.
+- [x] A valódi oldal tesztje vezérelhető, késleltetett `fetch`‑csel; grafikonkomponensek könnyű helyettesítőkkel.
+- [x] Regressziós esetek: ablakváltás törli az eredményt, késői régi siker/hiba hatástalan · régi lezárás nem törli az új futásjelzést · két Open fordított válaszsorrend + dátumváltás érvényteleníti a függő Opent · általános hiba és 422 után nincs régi eredmény/timing, 422‑nél aktuális jelentés · érvénytelenített Trio nem küld következő részfutást · Open és Re-run megőrzi a nem éjféli időpontot, Run a panel, Re-run a mentett config értékeit küldi · Top drops kiválasztás, gate, recovery‑felirat, mostanáig korlátozott ablak · kitűzött kártyák ablakváltás után megmaradnak.
+- [x] `tsc --noEmit`, teljes Vitest, production build; keskeny oldalsáv vizuális ellenőrzése.
+
+**Rögzített határok:** nincs API‑, payload‑, DB‑ vagy motorváltozás; az érvénytelenítés csak a felületi alkalmazást tiltja (a szerveren indult futás befejeződhet és mentődhet); Open nem írja felül a paraméterpanelt; a leadDays módosítása nem változtatja a kiválasztott ablakot; Top drops rangsor, gate‑ablakok és a 2022‑es alapablak változatlan.
+
+**Review (kész, 2026‑10‑06):**
+- **Gyökérok:** az ablakváltás csak a data checket érvénytelenítette, a futás/megnyitás kérésazonosítóját (`runId`) nem, és az eredményt sem törölte; új futás/megnyitás indításakor a régi eredmény látszott tovább; általános hibánál a régi `run/trio/timing` megmaradt (422‑nél a `timing` is); a megnyitott futás nem vette át a saját coinját és ablakát.
+- **`page.tsx`:** `clearResult` (csak `run/trio/timing`) és `invalidateRun` (+ `runId++`, `runError` és `running` törlése); `windowChanged = resetCheck + invalidateRun` a Symbol/From/To/Top drops/gate kezelőben. `execute` és `openRun` indításkor `clearResult`; az aktuális kérés hibaágában `clearResult` (azonosító és új hiba érintetlen). Az Open sikere `symbol/startMs/endMs`‑t pontosan átveszi, törli a `picked`‑et és a data checket (`resetCheck` → a betöltés közben indított ellenőrzés is érvénytelen). A Trio a meglévő „await után azonosító‑ellenőrzés” miatt érvénytelenítés után nem küld következő részfutást — ezt most teszt is rögzíti. Feliratok: `Re-run saved settings` + tooltip; Run tooltip (fő és oldalsáv gomb közös `RUN_TITLE`).
+- **`DrawdownPicker.tsx`:** fejléc `Top drops · full history` + egysoros magyarázat; recovery külön sorban (`recovered YYYY-MM-DD` / `not recovered`) tooltippel; epizódgomb tooltip a `windowFromEpisode` UTC‑időpontjaival és a szabállyal.
+- **Tesztinfra:** `@testing-library/react` 16, `@testing-library/dom` 10 (a peer függősége), `jsdom` 25 dev függőség; `vitest.config.ts`: `esbuild.jsx = 'automatic'`; a jsdom csak az új fájlban (`// @vitest-environment jsdom`), a többi teszt környezete változatlan (node).
+- **`src/__tests__/pionexPage.test.tsx`** (9 eset, a valódi oldal + valódi `PionexCard/ExposurePanel/RunHistory/DrawdownPicker/ParamPanel`, valódi motorból épített payloadokkal; csak a `TradingChart`, `SubCharts`, `ThemeToggle`, `next/link` helyettesítve; kézzel vezérelt, késleltetett `fetch`): mind a 8 kötelező regressziós csoport lefedve. **A régi `page.tsx`‑szel mind a 9 elbukik** (a Run‑tooltip‑szelektor kiiktatásával is), az újjal zöld.
+- **Ellenőrzés:** `tsc --noEmit` tiszta; Vitest **24 fájl, 395 zöld** (+9); `next build` sikeres (scratchpad‑másolatból, a futó :3000 `.next`‑je érintetlen); vizuálisan (Chrome, 1440 px, 340 px‑es bal oszlop) a Top drops lista elfér, nincs vízszintes túlcsordulás, a recovery külön sorban; a fejléc két sorba törik a „start N d before peak” mező mellett (olvasható, nem változtattam).
+- **Korlátok:** az érvénytelenítés csak a felületi alkalmazást tiltja — a szerveren már elindult futás befejeződik és mentődik (megjelenik a Runs listában a következő frissítéskor). Nincs API‑, payload‑, DB‑ vagy motorváltozás; a 2022‑es alapablak és a gate‑ablakok változatlanok.
 
 ---
 

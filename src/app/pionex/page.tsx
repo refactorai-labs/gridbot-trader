@@ -38,6 +38,7 @@ const fmtTs = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T
 interface RunTiming { load: number; compute: number; save: number }
 
 const NO_FILLED = new Set<number>();
+const RUN_TITLE = 'Run the current window with the parameter panel settings';
 
 // A window without usable data comes back as 422 with the gap report (plan §3.10);
 // it is shown in the data coverage card instead of a run.
@@ -108,11 +109,32 @@ export default function PionexPage() {
     setChecking(false);
   };
 
+  // Clears only the shown result.
+  const clearResult = () => {
+    setRun(null);
+    setTrio(null);
+    setTiming(null);
+  };
+
+  // Drops any pending run/open response, its result, error and progress line.
+  const invalidateRun = () => {
+    runId.current++;
+    clearResult();
+    setRunError(null);
+    setRunning(null);
+  };
+
+  // Any symbol/window change: the shown result and data check belong to the old one.
+  const windowChanged = () => {
+    resetCheck();
+    invalidateRun();
+  };
+
   const pickWindow = (w: PickedWindow) => {
     setPicked(w);
     setStartMs(w.startMs);
     setEndMs(w.endMs);
-    resetCheck();
+    windowChanged();
   };
 
   const runCheck = async () => {
@@ -143,6 +165,7 @@ export default function PionexPage() {
   // Runs requests in order; the first result becomes the shown run, several = trio.
   const execute = async (reqs: PionexRunRequest[]) => {
     const id = ++runId.current;
+    clearResult();
     setRunError(null);
     const results: PionexRunPayload[] = [];
     const timings: RunTiming[] = [];
@@ -160,12 +183,11 @@ export default function PionexPage() {
       setRefreshKey(k => k + 1);
     } catch (e) {
       if (id !== runId.current) return;
+      clearResult();
       if (e instanceof NoDataError) {
         checkId.current++; // drop a pending manual check for the same window
         setChecking(false);
         setCheck(e.check);
-        setRun(null);
-        setTrio(null);
       }
       setRunError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -180,22 +202,30 @@ export default function PionexPage() {
     setPicked(null);
     setStartMs(w.startMs);
     setEndMs(w.endMs);
-    resetCheck();
+    windowChanged();
     execute([toRunRequest(params, symbol, w.startMs, w.endMs)]);
   };
 
   const openRun = async (rid: string) => {
     const id = ++runId.current;
+    clearResult();
     setRunError(null);
     setRunning('Loading run…');
     try {
       const r = await getRun(rid);
       if (id !== runId.current) return;
+      // The opened run defines the window (exact times, not rounded to midnight);
+      // resetCheck also drops a data check started while it was loading.
+      setSymbol(r.symbol as PionexSymbol);
+      setStartMs(r.startMs);
+      setEndMs(r.endMs);
+      setPicked(null);
+      resetCheck();
       setRun(r);
-      setTrio(null);
-      setTiming(null);
     } catch (e) {
-      if (id === runId.current) setRunError(e instanceof Error ? e.message : String(e));
+      if (id !== runId.current) return;
+      clearResult();
+      setRunError(e instanceof Error ? e.message : String(e));
     } finally {
       if (id === runId.current) setRunning(null);
     }
@@ -266,7 +296,7 @@ export default function PionexPage() {
             <Database size={20} />
             <span>Data</span>
           </button>
-          <button className="rail-run" title="Run" disabled={busy || !validWindow} onClick={runCurrent}>
+          <button className="rail-run" title={RUN_TITLE} disabled={busy || !validWindow} onClick={runCurrent}>
             <Play size={19} />
             <span>Run</span>
           </button>
@@ -285,7 +315,7 @@ export default function PionexPage() {
                 <select
                   className="form-select"
                   value={symbol}
-                  onChange={e => { setSymbol(e.target.value as PionexSymbol); setPicked(null); resetCheck(); }}
+                  onChange={e => { setSymbol(e.target.value as PionexSymbol); setPicked(null); windowChanged(); }}
                 >
                   {PIONEX_SYMBOLS.map(s => <option key={s} value={s}>{s} PERP</option>)}
                 </select>
@@ -297,7 +327,7 @@ export default function PionexPage() {
                     type="date"
                     className="form-input"
                     value={toInput(startMs)}
-                    onChange={e => { setStartMs(fromInput(e.target.value)); setPicked(null); resetCheck(); }}
+                    onChange={e => { setStartMs(fromInput(e.target.value)); setPicked(null); windowChanged(); }}
                   />
                 </div>
                 <div>
@@ -306,7 +336,7 @@ export default function PionexPage() {
                     type="date"
                     className="form-input"
                     value={toInput(endMs)}
-                    onChange={e => { setEndMs(fromInput(e.target.value)); setPicked(null); resetCheck(); }}
+                    onChange={e => { setEndMs(fromInput(e.target.value)); setPicked(null); windowChanged(); }}
                   />
                 </div>
               </div>
@@ -329,7 +359,7 @@ export default function PionexPage() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <button className="btn btn-primary flex items-center justify-center gap-2" disabled={busy || !validWindow} onClick={runCurrent}>
+                <button className="btn btn-primary flex items-center justify-center gap-2" disabled={busy || !validWindow} onClick={runCurrent} title={RUN_TITLE}>
                   {busy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
                   Run
                 </button>
@@ -434,9 +464,14 @@ export default function PionexPage() {
               <>
                 <PionexCard run={run} />
                 {run.stale && (
-                  <button className="btn btn-secondary self-start flex items-center gap-2 text-xs" disabled={busy} onClick={() => execute([rerunRequest(run)])}>
+                  <button
+                    className="btn btn-secondary self-start flex items-center gap-2 text-xs"
+                    disabled={busy}
+                    onClick={() => execute([rerunRequest(run)])}
+                    title="Uses the saved run's window and settings (not the panel) and saves a fresh run"
+                  >
                     <Play size={13} />
-                    Re-run (saves a fresh run)
+                    Re-run saved settings
                   </button>
                 )}
                 <ExposurePanel run={run} path={path} />

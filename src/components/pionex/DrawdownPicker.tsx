@@ -30,6 +30,17 @@ export function windowFromEpisode(e: DrawdownEpisode, leadDays: number): { start
 }
 
 const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const fmtTs = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+
+const RECOVERY_NOTE = 'Price recovery, not a bot survival result.';
+const recoveryTitle = (e: DrawdownEpisode) => (e.recoveredMs
+  ? `First later 1h candle whose high reached the prior peak (date in UTC). ${RECOVERY_NOTE}`
+  : `No later 1h candle reached the prior peak, up to the end of the loaded history. ${RECOVERY_NOTE}`);
+
+function windowTitle(e: DrawdownEpisode, leadDays: number): string {
+  const w = windowFromEpisode(e, leadDays);
+  return `Window ${fmtTs(w.startMs)} → ${fmtTs(w.endMs)} UTC\npeak − ${leadDays} d → trough + 7 d, capped at now`;
+}
 
 export default function DrawdownPicker({ symbol, leadDays, onLeadDaysChange, onPick }: Props) {
   const [episodes, setEpisodes] = useState<DrawdownEpisode[] | null>(null);
@@ -58,7 +69,7 @@ export default function DrawdownPicker({ symbol, leadDays, onLeadDaysChange, onP
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
-        <span className="form-label !mb-0">Top drops · 30d lookback</span>
+        <span className="form-label !mb-0">Top drops · full history</span>
         <label className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
           start
           <input
@@ -72,6 +83,9 @@ export default function DrawdownPicker({ symbol, leadDays, onLeadDaysChange, onP
           d before peak
         </label>
       </div>
+      <p className="text-[10.5px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+        Ranked over the coin&apos;s full available futures history; depth is measured from the 30-day rolling high.
+      </p>
       {error && <div className="text-xs" style={{ color: 'var(--grid-short)' }}>{error}</div>}
       {!episodes && !error && (
         <div className="text-xs animate-pulse" style={{ color: 'var(--text-muted)' }}>loading 1h history…</div>
@@ -82,16 +96,19 @@ export default function DrawdownPicker({ symbol, leadDays, onLeadDaysChange, onP
             <li key={e.troughMs}>
               <button
                 onClick={() => onPick({ ...windowFromEpisode(e, leadDays), episode: e })}
-                className="w-full flex items-center gap-3 rounded-md px-2.5 py-1.5 text-left text-xs font-mono transition-colors"
+                title={windowTitle(e, leadDays)}
+                className="w-full flex flex-col gap-0.5 rounded-md px-2.5 py-1.5 text-left text-xs font-mono transition-colors"
                 style={{ border: '1px solid var(--card-border)', background: 'var(--btn-secondary-bg)' }}
               >
-                <span className="w-5 text-right" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>
-                <span className="font-semibold w-14" style={{ color: 'var(--grid-short)' }}>
-                  −{(e.depthPct * 100).toFixed(1)}%
+                <span className="flex items-center gap-3">
+                  <span className="w-5 text-right" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>
+                  <span className="font-semibold w-14" style={{ color: 'var(--grid-short)' }}>
+                    −{(e.depthPct * 100).toFixed(1)}%
+                  </span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{fmt(e.peakMs)} → {fmt(e.troughMs)}</span>
                 </span>
-                <span style={{ color: 'var(--text-secondary)' }}>{fmt(e.peakMs)} → {fmt(e.troughMs)}</span>
-                <span className="ml-auto" style={{ color: 'var(--text-muted)' }}>
-                  {e.recoveredMs ? 'recovered' : 'open'}
+                <span className="pl-8 text-[11px]" style={{ color: 'var(--text-muted)' }} title={recoveryTitle(e)}>
+                  {e.recoveredMs ? `recovered ${fmt(e.recoveredMs)}` : 'not recovered'}
                 </span>
               </button>
             </li>
