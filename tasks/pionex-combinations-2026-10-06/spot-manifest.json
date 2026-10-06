@@ -1,0 +1,50 @@
+[
+  {
+    "month": "2026-01",
+    "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2026-01.zip",
+    "sha256": "cadd060ab73bd03fee94708b78738144da76d007fc2170d8ad2cec678de7a654",
+    "minutes": 44640
+  },
+  {
+    "month": "2026-02",
+    "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2026-02.zip",
+    "sha256": "1ddb64d08739a40b7f66a37bccf5ca5fec58339c7f01e83311086116f41b445f",
+    "minutes": 40320
+  },
+  {
+    "month": "2026-03",
+    "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2026-03.zip",
+    "sha256": "5747c9f1f76be7afbf9513d50ea65ff6e979fa9684c75a775b6974e64c751844",
+    "minutes": 44640
+  },
+  {
+    "month": "2026-04",
+    "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2026-04.zip",
+    "sha256": "8a2f0a2907764827ca3c52416bd9357c5d6213f3816fadbd0515bf504ea75ffd",
+    "minutes": 43200
+  },
+  {
+    "month": "2022-05",
+    "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2022-05.zip",
+    "sha256": "7f3e2df3fc5c365cd678233c27d7a8864855bab0709370ac665d388e5795dfc3",
+    "minutes": 44640
+  },
+  {
+    "month": "2022-11",
+    "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2022-11.zip",
+    "sha256": "925acf2264f9ffbe1dea1beada4b480eed9bfd7585bebe799a276d7e85ada0df",
+    "minutes": 43200
+  },
+  {
+    "month": "2025-01",
+    "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2025-01.zip",
+    "sha256": "04ab6131e9f8ad979676b72115a8cfaf7e4f827b06f44cdf80c840d95016766d",
+    "minutes": 44640
+  },
+  {
+    "month": "2025-02",
+    "url": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2025-02.zip",
+    "sha256": "5ec2fb4e87e29241745ee7e9449fb86f4f44bad96508a80a1af0e308d73c6f5a",
+    "minutes": 40320
+  }
+]

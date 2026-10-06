@@ -1,0 +1,196 @@
+{
+  "date": "2026-10-06",
+  "gitHead": "405e7142335910b3fb0eeba706e4d14849eab293",
+  "loggedBacktests": 844,
+  "stageCounts": {
+    "baseline": 4,
+    "sweep": 192,
+    "controls": 108,
+    "sensitivity": 228,
+    "validation": 192,
+    "spot": 120
+  },
+  "savedRunCount": 24,
+  "maxInvariantError": 1.1950760381296277e-09,
+  "data": [
+    {
+      "window": "jan01",
+      "sourceRuns": [
+        "cmuwc5g6c0006j5i8s41pugoi",
+        "cmuwgxvnv000aj5i8qmqcprys",
+        "cmuwhqcz4000bj5i8up4v4xzu",
+        "cmuwi6kye000cj5i8u7rwo0hf"
+      ],
+      "start": 1767225600000,
+      "end": 1774915200000,
+      "last": 128160,
+      "mark": 128160,
+      "funding": 267,
+      "complete": true,
+      "fingerprint": "c64daee64b362951f0530880c3d448ffd1bf460ec910552b97dd3c91ec176805"
+    },
+    {
+      "window": "jan16",
+      "sourceRuns": [
+        "cmuwcstrd0007j5i8tsl5droh"
+      ],
+      "start": 1768521600000,
+      "end": 1776384000000,
+      "last": 131040,
+      "mark": 131040,
+      "funding": 273,
+      "complete": true,
+      "fingerprint": "caf080782f2a0262b9de715e09f29b45a885d8335799b9274cc97927d0720106"
+    },
+    {
+      "window": "terra2022",
+      "sourceRuns": [
+        "cmuvse5n10000q9brzptkt86j",
+        "cmuvsf9t60009q9brtfehi1yw",
+        "cmuvsfi1o000aq9brxfwagp8f",
+        "cmuvsfl7b000bq9brj6jb2jnz",
+        "cmuvsflql000cq9brsz1n2v9p",
+        "cmuvsfmai000dq9brjtc5qvfe",
+        "cmuvsgsxi000eq9brs8ovi4p9",
+        "cmuvsgwe1000fq9brcqaelk7u",
+        "cmuvsgx0d000gq9br2rf28qwt",
+        "cmuvsgxmm000hq9br8wihel3x",
+        "cmuvsh64v000iq9brzg3jcgf9"
+      ],
+      "start": 1651622400000,
+      "end": 1653004800000,
+      "last": 23040,
+      "mark": 23040,
+      "funding": 48,
+      "complete": true,
+      "fingerprint": "2014d44cc2df30c92bb52f2e7bb8972afabd13a4032d8c3e2044138befe1a102"
+    },
+    {
+      "window": "ftx2022",
+      "sourceRuns": [
+        "cmuvse66x0001q9brp90wd7zt"
+      ],
+      "start": 1667692800000,
+      "end": 1669248000000,
+      "last": 25920,
+      "mark": 25920,
+      "funding": 54,
+      "complete": true,
+      "fingerprint": "bd43f24c681d83e03d1e5f147cf4d429a04aa5eaa848ed4d21744eb7cd1d43c8"
+    },
+    {
+      "window": "drop2025",
+      "sourceRuns": [
+        "cmuvse71i0002q9brz0kr34ie"
+      ],
+      "start": 1735948800000,
+      "end": 1739145600000,
+      "last": 53280,
+      "mark": 53280,
+      "funding": 111,
+      "complete": true,
+      "fingerprint": "b19553eb72ba9e4c67e1400c93ba1f3394202437ed5a054f684be3dc1715af57"
+    },
+    {
+      "window": "start2026-01-05",
+      "sourceRuns": [
+        "cmuwc5g6c0006j5i8s41pugoi",
+        "cmuwgxvnv000aj5i8qmqcprys",
+        "cmuwhqcz4000bj5i8up4v4xzu",
+        "cmuwi6kye000cj5i8u7rwo0hf"
+      ],
+      "start": 1767571200000,
+      "end": 1774915200000,
+      "last": 122400,
+      "mark": 122400,
+      "funding": 255,
+      "complete": true,
+      "fingerprint": "ad0536342e5441fe81a7bb5837ef7f9a9fc50c13a44de179fd80f99c52e69e11"
+    },
+    {
+      "window": "start2026-01-10",
+      "sourceRuns": [
+        "cmuwc5g6c0006j5i8s41pugoi",
+        "cmuwgxvnv000aj5i8qmqcprys",
+        "cmuwhqcz4000bj5i8up4v4xzu",
+        "cmuwi6kye000cj5i8u7rwo0hf"
+      ],
+      "start": 1768003200000,
+      "end": 1774915200000,
+      "last": 115200,
+      "mark": 115200,
+      "funding": 240,
+      "complete": true,
+      "fingerprint": "6745183f09fe943235ff665f5a5e9a8a07fdb806a7d8f1bfd96ff4a68bd617b3"
+    },
+    {
+      "window": "start2026-01-20",
+      "sourceRuns": [
+        "cmuwc5g6c0006j5i8s41pugoi",
+        "cmuwcstrd0007j5i8tsl5droh",
+        "cmuwgxvnv000aj5i8qmqcprys",
+        "cmuwhqcz4000bj5i8up4v4xzu",
+        "cmuwi6kye000cj5i8u7rwo0hf"
+      ],
+      "start": 1768867200000,
+      "end": 1774915200000,
+      "last": 100800,
+      "mark": 100800,
+      "funding": 210,
+      "complete": true,
+      "fingerprint": "cd6f707b04457d605b43908788413736bbcb4a7af2917a30a109e1b803a18cfc"
+    },
+    {
+      "window": "start2026-01-25",
+      "sourceRuns": [
+        "cmuwc5g6c0006j5i8s41pugoi",
+        "cmuwcstrd0007j5i8tsl5droh",
+        "cmuwgxvnv000aj5i8qmqcprys",
+        "cmuwhqcz4000bj5i8up4v4xzu",
+        "cmuwi6kye000cj5i8u7rwo0hf"
+      ],
+      "start": 1769299200000,
+      "end": 1774915200000,
+      "last": 93600,
+      "mark": 93600,
+      "funding": 195,
+      "complete": true,
+      "fingerprint": "5e33f43d66b27dcbfb677dd7049f305f58b193b445b0c5537f5bc88eab22b9b2"
+    },
+    {
+      "window": "start2026-02-01",
+      "sourceRuns": [
+        "cmuwc5g6c0006j5i8s41pugoi",
+        "cmuwcstrd0007j5i8tsl5droh",
+        "cmuwgxvnv000aj5i8qmqcprys",
+        "cmuwhqcz4000bj5i8up4v4xzu",
+        "cmuwi6kye000cj5i8u7rwo0hf"
+      ],
+      "start": 1769904000000,
+      "end": 1774915200000,
+      "last": 83520,
+      "mark": 83520,
+      "funding": 174,
+      "complete": true,
+      "fingerprint": "9de9d087a9101de07fef50c6bca09958bbc79c5d392de86e2b0a04d189146d71"
+    }
+  ],
+  "verification": {
+    "existingTests": "71/71",
+    "typescript": "passed",
+    "spotHandChecks": "passed",
+    "cashAccountingCrossChecks": {
+      "A": 0,
+      "B": 4.320099833421409e-12
+    }
+  },
+  "assumptions": {
+    "futuresMaker": 0.0002,
+    "futuresTaker": 0.0005,
+    "mmr": 0.005,
+    "spotFeePerLeg": 0.0005,
+    "spotFeeBuffer": 0.01,
+    "slippage": 0,
+    "minOrderAndQuantityFilters": false
+  }
+}

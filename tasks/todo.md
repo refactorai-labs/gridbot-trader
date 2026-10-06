@@ -1,3 +1,69 @@
+# Pionex — extend the 120-day backtest window limit — 2026-10-06
+
+**Cause:** a hard-coded `MAX_WINDOW_MS = 120 days` guard duplicated in `/api/pionex/run` and `/api/pionex/data`. No engine/data/UI limit behind it.
+
+## Todo
+
+- [x] Add one shared `PIONEX_MAX_WINDOW_DAYS = 365` to `src/lib/constants.ts`.
+- [x] Use it in both routes; error message built from it.
+- [x] Leave the drawdown picker's `lookbackDays` cap (120) alone — it is the drop-measurement span, not the backtest window.
+- [x] Verify: `tsc`, vitest, and a real 365-day run via the API (timing + memory).
+
+## Review
+
+- `src/lib/constants.ts`: new `PIONEX_MAX_WINDOW_DAYS = 365`.
+- `src/app/api/pionex/run/route.ts`, `src/app/api/pionex/data/route.ts`: local `MAX_WINDOW_MS` removed, check + error message use the shared constant. No UI change needed (UI has no own cap).
+- Verified: `tsc` clean, vitest 395/395. ETHUSDT 2025-01-01 → 2026-01-01 data check complete (525,600 last + 525,600 mark minutes, 1,095 funding); first mark fetch ~5 min, cached afterwards. 731-day window → 400 `window longer than 365 days`.
+- Full 365-day run via `/api/pionex/run`: 200, ~14 s (load 8.5 s, compute 3.6 s, save 1.3 s), verdict survived; saved as "365d limit test (2025)"; reopen 200 in ~4.6 s.
+- Cost note: response/saved row scale linearly — a year is ~85 MB JSON (equity ~56 MB at 5m buckets with minima kept, liq ~13 MB, 5m candles ~11 MB, events ~4 MB); headless run peaked ~2.4 GB heap. Works, but going far beyond 365 days would need coarser display thinning first.
+
+# Pionex — spot / 2× / 3× / 5× / 15× kombinációk összehasonlítása — 2026-10-06
+
+**Státusz:** kész — 844 naplózott A/B futtatás, 128 eltérő konfiguráció, külön spot referencia és többablakos ellenőrzés.
+**Kérés:** a „Tisztázd a szimulációs chartot” chat kontextusával új tesztek alapján konkrét Investment I, Extra margin E, közös tőke és további inputkombinációk ajánlása, a spot és a különböző futures tőkeáttételek összevetésével.
+
+## Áthozott kontextus
+
+- Forráschat: `01a11081-cebd-7cb2-9d31-59ecd59d5644`, „Tisztázd a szimulációs chartot”; a releváns felhasználói kérések és válaszok beolvasva.
+- ETHUSDT ablakok: [2026-01-01, 2026-03-31), [2026-01-16, 2026-04-17), UTC, a mentett futások pontos határaival. Az ablakok erősen átfednek, ezért nem két független bizonyíték.
+- Alap: I150 / E200 botonként, 15×, közös tőke 1000; sáv −15% / +1,2%; 60 arithmetic grid; margin check bekapcsolva; maker 0,02%, taker 0,05%, MMR 0,5%, történelmi funding; TP az I 1,2%-a, reinvest 20%; top-up 5% / 50 USDT; bot 2 offset 1%, multiplier 1; fixed close kikapcsolva.
+- Előző teszt: 3× mellett mindkét bot aktív mind a négy esetben, legrosszabb drawdown 31,1%; a végső eredmény még veszteség. 5× mellett drawdown 51,9%; 15× / E200 mellett likvidációk.
+- 15× / I150 / E2200 / total5000: mindkét bot aktív, max. drawdown 31,5%; a négy végső vagyon 4417,48 / 4553,18 / 4450,21 / 4446,71 USDT. E500 / total1600 csak törékeny utólagos túlélő, min. liq távolság 0,054%.
+- Pusztán a szabad közös keret növelése E200 megtartásával nem védte meg mindkét botot. A késleltetett feltöltés és a két bot közös tartalékfogyasztása számít.
+- A jelenlegi `runPionex` futures motor; 1× nem valódi spot. A helyi spot ETHUSDT cache-ben nincs 1m sorozat, a futures last/mark sorozatok külön kulcson vannak.
+
+## Todo
+
+- [x] A forráschat, a korábbi 15× munkanapló, a mentett konfigurációk és a cache elérhetőségének beolvasása.
+- [x] A paraméterek, gridméretezés, margin, ciklus, bot 2, tőkekönyvelés és metrikák releváns kódjának ellenőrzése.
+- [x] A felhasználó ellenőrzi és jóváhagyja ezt a tervet az AGENTS.md 3. pontja szerint.
+- [x] Reprodukálni a két eredeti mentett futás négy A/B eredményét; ellenőrizni a perces last/mark és funding teljességét, a botszámot és a tőkekönyvelési invariánst. Csak olvasás az adatbázisból.
+- [x] Készíteni egy újrafuttatható kutatási segédet és géppel olvasható eredményt; futuresnél közvetlenül a meglévő tiszta motort használni. Alkalmazáskód, UI, futáslista és DB változtatása nem része a feladatnak.
+- [x] Futures alapsweep: 2× / 3× / 5× / 15× × I {50, 100, 150} × E {50, 100, 200, 300}, total1000. Ez 48 konfiguráció × 2 ablak × A/B = 192 számítás. A többi szabály az alapértéken marad. A két bot kezdeti finanszírozása után elméleti tartalék = 1000 − 2×(I+E); a tényleges pénzmozgást külön mérni.
+- [x] Azonos kitettségű kontroll: total1000, botonként 350 induló fedezet és 450 teljes gridnévérték. 2×: I225/E125; 3×: I150/E200; 5×: I90/E260; 15×: I30/E320. Azonos 1,80 USDT TP-küszöböt is vizsgálni (`TP% = 100×1,80/I`), hogy az I-hez kötött TP ne torzítsa az összevetést. A margin check miatti eltérő vételkihagyásokat rögzíteni.
+- [x] Tőkekontroll: I150/E200 változatok total {700, 1000, 2000}, valamint 15× / I150 / E {500, 900, 1200, 1600, 2200} / total = 2×(I+E)+300. A jobb jelölteknél 500 és 2000 USDT-re arányosan skálázott változatot is ellenőrizni; a pusztán nagyobb tőkével csökkentett százalékos veszteséget nem stratégiajavulásként értékelni.
+- [x] Spot referencia: tényleges, kölcsön nélküli cash + ETH készlet elszámolás, nulla funding és likvidáció; tényleges spot ár és ellenőrzött spot díj. A szükséges 1m spot gyertyákat külön kutatási fájlba letölteni, a projekt DB-jét nem módosítani. A/B árút, azonos sáv/indítás/ciklusszabály; total1000 mellett 150, 300 és 450 USDT gridkeret botonként, külön díjfedezettel. Buy-and-hold és készpénz kontroll. Ha a valódi spotadat nem elérhető, külön jelölni a futures árral számolt, funding nélküli cash referenciát; ezt nem nevezni valódi spot backtestnek.
+- [x] A spot segéd számítását kézzel ellenőrizhető kis példán validálni: cash nem mehet negatívba, készlet nélküli eladás tiltott, díj mindkét oldalon, vagyon = cash + ETH×ár + kivett profit; díjfedezet és cikluselszámolás ellenőrzése. Kizárólag kutatási referencia, nem spot funkció beépítése az appba.
+- [x] A legfeljebb 3 jobb futures jelöltnél célzott, egyenkénti érzékenységvizsgálat: sáv −15/+1,2 illetve −20/+5%; grid 30/60/90; bot 2 offset 1/5/10%, multiplier 0,5/1, valamint bot 2 kikapcsolva; TP kikapcsolva/1,2/3%, reinvest 0/20/50%; top-up kikapcsolva vagy trigger5/10/15% és összeg50/100. Nem az összes paraméter teljes kombinatorikus optimalizálása.
+- [x] Az előre kiválasztott jelölteket újrahangolás nélkül ellenőrizni elkülönülő, teljes cache-lefedettségű ETH stresszablakokon (2022 május, 2022 november, 2025 január–február), továbbá több indulási dátummal. A hiányos adatú ablakokat egyértelműen kizárni a túlélési állításokból.
+- [x] Összevetés: nettó végső vagyon és hozam a teljes tőkére, max. drawdown százalékban és USDT-ben, min. liq távolság, botszám és botonkénti állapot, gridprofit, unrealized P&L, díjak/funding, top-up és elutasítások, szabad tartalék, ciklusok és A/B különbség. A teljes gridnévérték/induló saját tőke mellett a tényleges csúcskitettséget is mutatni.
+- [x] Konkrét, a felületen beírható óvatos / közepes / magasabb kitettségű kombinációkat ajánlani, a spot és futures különbségeivel, a tesztek korlátaival; ha nincs nyereséges robusztus jelölt, ezt világosan megállapítani.
+- [x] Magyar összehasonlító riport és Review elkészítése, futásszámokkal, adatlefedettséggel és reprodukálhatósági adatokkal.
+
+## Review
+
+844 naplózott backtest: baseline 4, első futures sweep 192, kitettség- és tőkekontroll 108, érzékenység 228, külön ellenőrző ablakok 192, spot 120. 128 eltérő paraméterkombináció. Az eredeti négy végső vagyon pontosan reprodukálva; a két korábbi ablak teljes last/mark adata 128 160 és 131 040 perc, funding 267 és 273. További három különálló stresszablak és öt eltolt indulás, teljes lefedettséggel; a fundingot minden esetben korábban API-val egyeztetett teljes mentett jelentés is lefedi. Valódi Binance spot havi archívumok, SHA256 ellenőrzéssel, külön cash + ETH referenciamodell; nem 1× futures átnevezése.
+
+A kitettségazonos 2×/3×/5×/15× kontrollok mind a négy végső vagyonra egyeztek, ha a gridnévérték 450/bot, fedezet 350/bot, abszolút TP 1,80 USDT egyezett. A 15× / I150 / E200 / total1000 továbbra is súlyos likvidációs eredményt adott; E2200/total5000 túlélő, de veszteséges. Az eredeti két ablakban egyik tesztelt konfiguráció sem lett nettó nyereséges.
+
+Az óvatos vizsgálati ajánlás: total 1000, futures 2×/I100/E300, bot 2 multiplier 0,5 (I2=50,E2=150), tartalék 400; sáv −15%/+1,2%, 60 arithmetic grid, TP 1,2%, reinvest 20%, top-up 5%/50, margin check be, fixed close ki. Mindkét bot aktív mind a 20 jelöltspecifikus esetben; max. drawdown 11,0412%, legrosszabb nettó hozam −5,1285%. Spot óvatos referencia: I150/bot, külön 1,50 díjpuffer/bot, tartalék 697, max. drawdown 10,5151%, legrosszabb hozam −6,3583%. Közepes futures 3×/I100/E300/bot2×1: max. DD 20,7668%, legrosszabb hozam −7,4194%; nagyobb kitettségű 5×/I100/E300/bot2×1: DD 34,5954%, hozam −13,7250%.
+
+Meglévő motortesztek 71/71, TypeScript-ellenőrzés sikeres. Spot kézi elszámolás-, cash-korlát- és cikluspéldák sikeresek; két további, azonos spotárú és díjú, funding nélküli algebrai ledger-keresztellenőrzés eltérése 0 illetve 4,32e−12 USDT. A naplózott backtestek legnagyobb könyvelési eltérése 1,20e−9 USDT. A kutatás a saját tükrözött ciklus/bot2 szabályainkat használja, nem pontos Pionex Spot Grid implementáció; slippage és exchange minimum/lot-kerekítés nincs modellezve.
+
+Részletes magyar eredmény: `tasks/pionex-combinations-2026-10-06/report.md`; minden számítás: `results.jsonl`; adathash, funding-források és ellenőrzések: `metadata.json`; spot eredeti URL/checksum: `spot-manifest.json`. Újrafuttatható segédek: `scripts/research/pionex-combinations.ts`, `pionex-spot-reference.ts`, `fetch-pionex-spot.py`. Alkalmazáskód, beállítások és DB nem módosultak; a 24 mentett futás mellé új sor nem került.
+
+---
+
 # Pionex 15× — két bot túléléséhez szükséges tőke — 2026-10-06
 
 **Kérés:** újraszámolás 15× tőkeáttétellel mindkét korábban vizsgált időablakban, A/B árúton. Az investment marad botonként 150 USDT; az extra margin és a közös tőke változhat. Alkalmazáskód és mentett futások módosítása nélkül.
