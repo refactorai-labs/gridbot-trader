@@ -13,7 +13,7 @@ import { newBotState } from './gridLevels';
 import { PionexLedger } from './ledger';
 import { currentLiqPrice, fullGridLiqPrice } from './liquidation';
 import { StepContext } from './segments';
-import { LiqLevels, PionexBotConfig, PionexRunConfig } from './types';
+import { CycleRecord, CycleTrigger, LiqLevels, PionexBotConfig, PionexRunConfig } from './types';
 
 const FIVE_MIN_MS = 300_000;
 
@@ -25,17 +25,22 @@ export interface BotRun {
   cycles: number;
   liquidatedAtMs: number | null;
   startLiq: LiqLevels | null; // right after the first start (plan §3.4.4)
+  // Current cycle's (re)start: price TP reference and cycle record fields (trailing plan).
+  cycleStartMs: number;
+  cycleStartPrice: number;
+  cycleStartRounds: number;
 }
 
 export interface Pending {
   dueMs: number | null; // the 1m open the interventions must run on (null = nothing due)
   fixedClose: boolean;
   tpClose: boolean;
+  tpTrigger: CycleTrigger | null; // which TP rule fired (profit is checked first)
   topUps: { bot: number; amount: number }[];
   bot2: boolean;
 }
 
-export const emptyPending = (): Pending => ({ dueMs: null, fixedClose: false, tpClose: false, topUps: [], bot2: false });
+export const emptyPending = (): Pending => ({ dueMs: null, fixedClose: false, tpClose: false, tpTrigger: null, topUps: [], bot2: false });
 
 export const describePending = (p: Pending): string =>
   [p.fixedClose && 'fixed close', p.tpClose && 'TP close', ...p.topUps.map(t => `top-up bot ${t.bot + 1}`), p.bot2 && 'bot 2 start']
@@ -43,15 +48,18 @@ export const describePending = (p: Pending): string =>
 
 export const closesFiveMinute = (openMs: number): boolean => (openMs + 60_000) % FIVE_MIN_MS === 0;
 
-// Plan §3.6: cycle settlement after the TP close. basis = I + E_start + Σ cycle top-ups.
-//   profit > 0: E_next = E_start + top-ups + reinvest·profit; withdraw (1 − reinvest)·profit
-//   profit ≤ 0: E_next = E_start + top-ups + profit (the loss comes out of E); no withdrawal
-// The restart budget I + E_next is the bot's own returned money minus the withdrawal.
+// Plan §3.6 (compounding, 2026-10-06): cycle settlement after the TP close.
+// basis = I + E_start + Σ cycle top-ups.
+//   profit > 0: I_next = I + reinvest·profit (the grid grows); E_next = E_start + top-ups;
+//               withdraw (1 − reinvest)·profit
+//   profit ≤ 0: I_next = I; E_next = E_start + top-ups + profit (the loss comes out of E); no withdrawal
+// The restart budget I_next + E_next is the bot's own returned money minus the withdrawal.
 export function settleCycle(investment: number, eStart: number, cycleTopUps: number, wallet: number, reinvestPct: number) {
   const profit = wallet - (investment + eStart + cycleTopUps);
   const withdraw = profit > 0 ? (1 - reinvestPct) * profit : 0;
-  const eNext = eStart + cycleTopUps + (profit > 0 ? reinvestPct * profit : profit);
-  return { profit, eNext, withdraw, canRestart: eNext >= 0 }; // I + E_next ≥ I
+  const iNext = investment + (profit > 0 ? reinvestPct * profit : 0);
+  const eNext = eStart + cycleTopUps + (profit > 0 ? 0 : profit);
+  return { profit, iNext, eNext, withdraw, canRestart: eNext >= 0 }; // I_next + E_next ≥ I
 }
 
 // Current position and full-grid P_liq of a bot (plan §3.4.4).
@@ -90,7 +98,13 @@ export function evaluateRules(runs: BotRun[], config: PionexRunConfig, last: OHL
       const b = bot1.ledger.bot;
       const net = bot1.ledger.equity(last.close) - b.qty * last.close * takerFee -
         (bot1.cfg.investment + bot1.cfg.extraMargin + bot1.cycleTopUps);
-      if (net >= config.cycle.takeProfitPct * bot1.cfg.investment) p.tpClose = true;
+      const pricePct = config.cycle.takeProfitPricePct;
+      if (net >= config.cycle.takeProfitPct * bot1.cfg.investment) p.tpTrigger = 'profit';
+      // Trailing plan, decisions 6–7: optional price TP on the 5m close vs the cycle start price.
+      // Relative tolerance: 100 · 1.1 is 110.00000000000001 in floating point, and a close
+      // exactly at the level must still count ("at the level closes").
+      else if (typeof pricePct === 'number' && last.close >= bot1.cycleStartPrice * (1 + pricePct) * (1 - 1e-12)) p.tpTrigger = 'price';
+      if (p.tpTrigger) p.tpClose = true;
     }
   }
 
@@ -123,7 +137,8 @@ export function executePending(
   config: PionexRunConfig,
   price: number,
   mark: number,
-  check: () => void
+  check: () => void,
+  cycleLog: CycleRecord[]
 ): BotRun | null {
   const takerFee = config.costs.takerFee;
   const bot1 = runs[0];
@@ -145,9 +160,15 @@ export function executePending(
       l.capital.withdraw(restart.withdraw);
       l.bot.wallet -= restart.withdraw;
       bot1.cycles++;
+      const trigger: CycleTrigger = pending.tpTrigger ?? 'profit';
       ctx.emit({
         type: 'cycle', bot: 0, timeMs: ctx.timeMs, amount: restart.profit,
-        reason: `cycle ${bot1.cycles}: E_next ${restart.eNext}, withdrawn ${restart.withdraw}`,
+        reason: `cycle ${bot1.cycles} (${trigger}): I_next ${restart.iNext}, E_next ${restart.eNext}, withdrawn ${restart.withdraw}`,
+      });
+      cycleLog.push({
+        index: bot1.cycles, startMs: bot1.cycleStartMs, endMs: ctx.timeMs,
+        startPrice: bot1.cycleStartPrice, closePrice: price, rounds: l.bot.rounds - bot1.cycleStartRounds,
+        profit: restart.profit, withdrawn: restart.withdraw, iNext: restart.iNext, eNext: restart.eNext, trigger,
       });
     }
     check();
@@ -180,12 +201,16 @@ export function executePending(
       l.release();
     } else {
       // Decision 1 (Phase 2): the new cycle re-centres the band with the initial % offsets.
+      // Compounding: I_next sizes the new grid (slotNotional reads cfg.investment).
       const ratio = price / bot1.startPrice!;
       const first = config.bot;
-      bot1.cfg = { ...bot1.cfg, lower: first.lower * ratio, upper: first.upper * ratio, extraMargin: restart.eNext };
+      bot1.cfg = { ...bot1.cfg, lower: first.lower * ratio, upper: first.upper * ratio, investment: restart.iNext, extraMargin: restart.eNext };
       bot1.cycleTopUps = 0;
       const fresh = newBotState(bot1.cfg);
       Object.assign(l.bot, { levels: fresh.levels, slotQty: fresh.slotQty, held: fresh.held });
+      bot1.cycleStartMs = ctx.timeMs;
+      bot1.cycleStartPrice = price;
+      bot1.cycleStartRounds = l.bot.rounds;
       startBot(ctx, l, price, takerFee, 'restart');
     }
     check();
@@ -212,7 +237,10 @@ export function executePending(
       return null;
     }
     ctx.ledgers.push(l);
-    const run: BotRun = { ledger: l, cfg: cfg2, cycleTopUps: 0, startPrice: price, cycles: 0, liquidatedAtMs: null, startLiq: null };
+    const run: BotRun = {
+      ledger: l, cfg: cfg2, cycleTopUps: 0, startPrice: price, cycles: 0, liquidatedAtMs: null, startLiq: null,
+      cycleStartMs: ctx.timeMs, cycleStartPrice: price, cycleStartRounds: 0,
+    };
     runs.push(run);
     startBot(ctx, l, price, takerFee, 'start');
     run.startLiq = liqLevels(l, config);

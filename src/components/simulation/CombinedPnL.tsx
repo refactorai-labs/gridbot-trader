@@ -24,6 +24,9 @@ interface CombinedPnLProps {
   dcaShortTrades?: number;
   // Equity history for sparkline (optional — falls back to no sparkline)
   equityHistory?: number[];
+  // Classic engine v1: open positions per side at the playback index
+  longOpenPositions?: number;
+  shortOpenPositions?: number;
 }
 
 function formatPnl(value: number): string {
@@ -121,6 +124,8 @@ export default function CombinedPnL({
   dcaLongTrades,
   dcaShortTrades,
   equityHistory,
+  longOpenPositions,
+  shortOpenPositions,
 }: CombinedPnLProps) {
   const hasDCA = dcaLongPnl !== undefined || dcaShortPnl !== undefined;
   const dcaTotalPnl = (dcaLongPnl ?? 0) + (dcaShortPnl ?? 0);
@@ -187,6 +192,11 @@ export default function CombinedPnL({
           >
             {formatPnl(longTotal)}
           </div>
+          {longOpenPositions !== undefined && (
+            <div className="font-mono mt-0.5" style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+              {longOpenPositions} open
+            </div>
+          )}
         </div>
         <div>
           <div className="stat-label" style={{ fontSize: 9, marginBottom: 2 }}>Short total</div>
@@ -196,6 +206,11 @@ export default function CombinedPnL({
           >
             {formatPnl(shortTotal)}
           </div>
+          {shortOpenPositions !== undefined && (
+            <div className="font-mono mt-0.5" style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+              {shortOpenPositions} open
+            </div>
+          )}
         </div>
       </div>
 

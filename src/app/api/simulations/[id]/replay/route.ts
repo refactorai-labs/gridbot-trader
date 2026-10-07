@@ -4,6 +4,9 @@ import { getCachedCandles, getTimeframeMinutes } from '@/lib/data/candleCache';
 import { aggregate5mTo } from '@/lib/data/aggregator';
 import { SUPPORTED_PAIRS } from '@/lib/constants';
 import { generateGridLevels } from '@/lib/simulation/gridGenerator';
+import type { GridConfiguration, Simulation } from '@prisma/client';
+import { buildClassicReplay } from '@/lib/simulation/classicReplay';
+import { DIAGNOSTIC_EVENT_TYPES } from '@/lib/simulation/classicGridTypes';
 
 // Cap chart candles to keep the replay payload + lightweight-charts canvas under
 // the renderer's memory ceiling. Combo @ 5m × 4 months ≈ 37k candles, which OOMs
@@ -67,6 +70,11 @@ export async function GET(
         error: 'Simulation not completed',
         status: simulation.status,
       }, { status: 400 });
+    }
+
+    // Classic engine v1 rows: timestamp-mapped aligned replay (Contract D).
+    if (simulation.engineVersion >= 1 && !simulation.comboBotEnabled) {
+      return await classicV1Replay(simulation, fromParam, toParam); // await: errors reach the catch below
     }
 
     // Load 5m candles and aggregate to sim timeframe (matches engine behavior).
@@ -343,4 +351,66 @@ export async function GET(
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+// Classic engine v1 replay (Contract D). Candles are the effective 5m window
+// aggregated into clock-aligned chart buckets; fills, snapshots and state events
+// are mapped to buckets by timestamp. from/to are 5m (DB) indexes.
+async function classicV1Replay(
+  simulation: Simulation & { gridConfigs: GridConfiguration[] },
+  fromParam: string | null,
+  toParam: string | null,
+) {
+  const effStart = simulation.effectiveStartTime ?? simulation.startTime;
+  const effEnd = simulation.effectiveEndTime ?? simulation.endTime;
+  const pairConfig = SUPPORTED_PAIRS.find(p => p.poolAddress === simulation.poolAddress);
+  const binanceSymbol = pairConfig?.binanceSymbol || simulation.pair;
+  const candles5m = await getCachedCandles(binanceSymbol, '5m', effStart, effEnd);
+  if (candles5m.length === 0) {
+    return NextResponse.json({
+      error: `No cached candles for ${binanceSymbol} between ${effStart.toISOString()} and ${effEnd.toISOString()}. Use the Data Manager to download.`,
+    }, { status: 404 });
+  }
+
+  const dbFrom = fromParam ? parseInt(fromParam) : 0;
+  const dbTo = toParam ? parseInt(toParam) : candles5m.length - 1;
+  const simulationId = simulation.id;
+  const diagnosticTypes = [...DIAGNOSTIC_EVENT_TYPES] as string[];
+
+  const [orders, snapshots, stateEvents, diagnosticEventCount] = await Promise.all([
+    prisma.gridOrder.findMany({
+      where: { simulationId, fillCandleIdx: { gte: dbFrom, lte: dbTo } },
+      orderBy: { fillSeq: 'asc' },
+      select: {
+        id: true, side: true, level: true, levelPrice: true, orderType: true, status: true,
+        fillPrice: true, fillTime: true, fillCandleIdx: true, pnl: true,
+        quantity: true, positionId: true, role: true, fillSeq: true, fees: true,
+      },
+    }),
+    prisma.pnlSnapshot.findMany({
+      where: { simulationId, candleIdx: { gte: dbFrom, lte: dbTo } },
+      orderBy: { candleIdx: 'asc' },
+    }),
+    // State events only — per-order diagnostics are served by the events endpoint.
+    prisma.adaptiveEvent.findMany({
+      where: { simulationId, candleIdx: { gte: dbFrom, lte: dbTo }, eventType: { notIn: diagnosticTypes } },
+      orderBy: [{ candleIdx: 'asc' }, { id: 'asc' }],
+    }),
+    prisma.adaptiveEvent.count({
+      where: { simulationId, candleIdx: { gte: dbFrom, lte: dbTo }, eventType: { in: diagnosticTypes } },
+    }),
+  ]);
+
+  return NextResponse.json(buildClassicReplay({
+    candles5m: candles5m.slice(dbFrom, dbTo + 1),
+    simTimeframeMins: getTimeframeMinutes(simulation.timeframe),
+    orders,
+    snapshots,
+    stateEvents,
+    diagnosticEventCount,
+    gridConfigs: simulation.gridConfigs,
+    engineVersion: simulation.engineVersion,
+    effectiveStart: Math.floor(effStart.getTime() / 1000),
+    effectiveEnd: Math.floor(effEnd.getTime() / 1000),
+  }));
 }

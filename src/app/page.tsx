@@ -28,6 +28,7 @@ import DCAPnL from '@/components/simulation/DCAPnL';
 import PlaybackControls from '@/components/simulation/PlaybackControls';
 import CombinedPnL from '@/components/simulation/CombinedPnL';
 import AdaptiveStatus from '@/components/simulation/AdaptiveStatus';
+import EventLog from '@/components/simulation/EventLog';
 import TradeLog from '@/components/results/TradeLog';
 import PerformanceSummary from '@/components/results/PerformanceSummary';
 import ComboPane from '@/components/combo/ComboPane';
@@ -40,6 +41,7 @@ import {
 } from '@/lib/types';
 import { DCATradeSnapshot } from '@/lib/strategies/dcaTypes';
 import { SUPPORTED_PAIRS } from '@/lib/constants';
+import { classicCandleFetchRange } from '@/lib/data/executionWindow';
 import { usePersistentState } from '@/lib/usePersistentState';
 import OptimizerTab from '@/components/OptimizerTab';
 
@@ -66,6 +68,61 @@ function checkReplayPayload(replay: ReplayData): string | null {
   }
   return null;
 }
+
+// A run that is confirmed gone (404) or failed — the only poll outcomes that
+// justify forgetting the saved run id.
+class TerminalRunError extends Error {}
+
+// Map the detail GET row onto the summary shape used by the results panels.
+function toSummary(sim: SimulationSummary): SimulationSummary {
+  return {
+    id: sim.id,
+    name: sim.name,
+    pair: sim.pair,
+    timeframe: sim.timeframe,
+    status: sim.status,
+    createdAt: sim.createdAt,
+    startTime: sim.startTime,
+    endTime: sim.endTime,
+    totalPnl: sim.totalPnl,
+    totalPnlPct: sim.totalPnlPct,
+    longPnl: sim.longPnl,
+    shortPnl: sim.shortPnl,
+    totalTrades: sim.totalTrades,
+    maxDrawdown: sim.maxDrawdown,
+    maxDrawdownPct: sim.maxDrawdownPct,
+    totalCandles: sim.totalCandles,
+    winCount: sim.winCount,
+    lossCount: sim.lossCount,
+    comboBotEnabled: sim.comboBotEnabled,
+    comboMode: sim.comboMode,
+    comboGridLevels: sim.comboGridLevels,
+    fundingDataMissing: sim.fundingDataMissing,
+    requireDirectionalConfirmation: sim.requireDirectionalConfirmation,
+    totalSlippageCost: sim.totalSlippageCost,
+    longSlippageCost: sim.longSlippageCost,
+    shortSlippageCost: sim.shortSlippageCost,
+    totalFundingCost: sim.totalFundingCost,
+    longFundingCost: sim.longFundingCost,
+    shortFundingCost: sim.shortFundingCost,
+    // Classic engine v1 (Contract C)
+    engineVersion: sim.engineVersion,
+    startingCapital: sim.startingCapital,
+    finalEquity: sim.finalEquity,
+    realizedPnl: sim.realizedPnl,
+    unrealizedPnl: sim.unrealizedPnl,
+    totalFees: sim.totalFees,
+    roundTrips: sim.roundTrips,
+    skippedEntries: sim.skippedEntries,
+    effectiveStartTime: sim.effectiveStartTime,
+    effectiveEndTime: sim.effectiveEndTime,
+  };
+}
+
+// "2026-01-14 15:55 UTC" from unix seconds.
+const fmtUtc = (sec: number) => `${new Date(sec * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+// "5m" / "1h" / "1d" from minutes.
+const fmtTf = (mins: number) => (mins % 1440 === 0 ? `${mins / 1440}d` : mins % 60 === 0 ? `${mins / 60}h` : `${mins}m`);
 
 function getDefaultDCAConfig(direction: Direction): DCABreakoutConfig {
   return {
@@ -101,6 +158,13 @@ export default function SimulatorPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [notice, setNotice] = useState<string | null>(null);
+  // Polling a grid/combo run: each poll loop owns a token; bumping it stops the loop.
+  const [isPolling, setIsPolling] = useState(false);
+  const pollTokenRef = useRef(0);
+  // Bumped when a new run starts or the page unmounts; the saved-run load discards
+  // responses that arrive after its sequence number has changed.
+  const loadSeqRef = useRef(0);
 
   // Strategy toggles
   const [gridLongEnabled, setGridLongEnabled] = usePersistentState('gridLongEnabled', true);
@@ -148,59 +212,102 @@ export default function SimulatorPage() {
   // Single source of truth for the selected pair (shared with ConfigPanel + Data Manager)
   const [selectedPairIdx, setSelectedPairIdx] = usePersistentState('selectedPairIdx', 0);
 
+  // Poll a grid/combo run until it reaches a terminal status. Returns the completed
+  // row, or null when the user pressed "Stop waiting" (the run keeps going on the
+  // server; the run id stays saved so a page reload resumes waiting). Throws on failure.
+  const pollUntilDone = async (id: string): Promise<SimulationSummary | null> => {
+    const token = ++pollTokenRef.current;
+    setIsPolling(true);
+    const started = Date.now();
+    try {
+      while (true) {
+        await new Promise(r => setTimeout(r, 1000));
+        if (pollTokenRef.current !== token) return null;
+        const statusRes = await fetch(`/api/simulations/${id}`);
+        if (pollTokenRef.current !== token) return null;
+        if (statusRes.status === 404) throw new TerminalRunError('Simulation not found');
+        if (!statusRes.ok) continue;
+        const { simulation: sim } = await statusRes.json();
+        if (pollTokenRef.current !== token) return null;
+        if (sim.status === 'completed') return sim;
+        if (sim.status === 'failed') throw new TerminalRunError(sim.errorMessage || 'Grid simulation failed');
+        setStatusMessage(`Grid simulation running... (${Math.round((Date.now() - started) / 1000)}s)`);
+      }
+    } finally {
+      if (pollTokenRef.current === token) setIsPolling(false);
+    }
+  };
+
+  const stopWaiting = () => {
+    pollTokenRef.current++;
+    setIsPolling(false);
+    setNotice('Stopped waiting. The simulation keeps running on the server; reload the page to resume waiting for it.');
+  };
+
   // Reload last simulation on mount
   useEffect(() => {
-    const savedId = localStorage.getItem('lastSimulationId');
-    if (!savedId) return;
-
-    const loadSavedSimulation = async () => {
+    const seq = loadSeqRef.current;
+    const stale = () => loadSeqRef.current !== seq;
+    const loadSavedSimulation = async (savedId: string) => {
       try {
         setStatusMessage('Loading last simulation...');
         const statusRes = await fetch(`/api/simulations/${savedId}`);
+        if (stale()) return;
         if (!statusRes.ok) {
-          localStorage.removeItem('lastSimulationId');
+          // Only a confirmed missing run drops the id; temporary failures keep it for a retry.
           setStatusMessage('');
+          if (statusRes.status === 404) {
+            localStorage.removeItem('lastSimulationId');
+          } else {
+            const body = await statusRes.json().catch(() => null);
+            if (stale()) return;
+            setError(`Failed to load the last simulation: ${body?.error || `HTTP ${statusRes.status}`}`);
+          }
           return;
         }
 
-        const { simulation: sim } = await statusRes.json();
+        let { simulation: sim } = await statusRes.json();
+        if (stale()) return;
+        if (sim.status === 'pending' || sim.status === 'running') {
+          // Resume waiting for a run that was still going when the page was left.
+          setSimulationId(savedId);
+          setIsRunning(true);
+          setStatusMessage('Grid simulation running...');
+          try {
+            sim = await pollUntilDone(savedId);
+            if (stale()) return;
+          } catch (err) {
+            if (stale()) return;
+            if (err instanceof TerminalRunError) {
+              localStorage.removeItem('lastSimulationId');
+              setError(err.message);
+            } else {
+              // Network error or malformed response: the run may still be going; keep the id.
+              setError(`Lost contact with the running simulation: ${err instanceof Error ? err.message : 'unknown error'}. Reload the page to resume waiting.`);
+            }
+            sim = null;
+          } finally {
+            if (!stale()) setIsRunning(false);
+          }
+          if (!sim) {
+            setStatusMessage('');
+            return;
+          }
+        }
+        if (sim.status === 'failed') {
+          // Already failed before the reload: confirmed terminal, so drop the id and show the run's error.
+          localStorage.removeItem('lastSimulationId');
+          setStatusMessage('');
+          setError(sim.errorMessage || 'Grid simulation failed');
+          return;
+        }
         if (sim.status !== 'completed') {
           setStatusMessage('');
           return;
         }
 
         setSimulationId(savedId);
-        setSimulation({
-          id: sim.id,
-          name: sim.name,
-          pair: sim.pair,
-          timeframe: sim.timeframe,
-          status: sim.status,
-          createdAt: sim.createdAt,
-          startTime: sim.startTime,
-          endTime: sim.endTime,
-          totalPnl: sim.totalPnl,
-          totalPnlPct: sim.totalPnlPct,
-          longPnl: sim.longPnl,
-          shortPnl: sim.shortPnl,
-          totalTrades: sim.totalTrades,
-          maxDrawdown: sim.maxDrawdown,
-          maxDrawdownPct: sim.maxDrawdownPct,
-          totalCandles: sim.totalCandles,
-          winCount: sim.winCount,
-          lossCount: sim.lossCount,
-          comboBotEnabled: sim.comboBotEnabled,
-          comboMode: sim.comboMode,
-          comboGridLevels: sim.comboGridLevels,
-          fundingDataMissing: sim.fundingDataMissing,
-          requireDirectionalConfirmation: sim.requireDirectionalConfirmation,
-          totalSlippageCost: sim.totalSlippageCost,
-          longSlippageCost: sim.longSlippageCost,
-          shortSlippageCost: sim.shortSlippageCost,
-          totalFundingCost: sim.totalFundingCost,
-          longFundingCost: sim.longFundingCost,
-          shortFundingCost: sim.shortFundingCost,
-        });
+        setSimulation(toSummary(sim));
 
         // Sync grid toggles to match loaded simulation type
         if (sim.comboBotEnabled) {
@@ -209,8 +316,10 @@ export default function SimulatorPage() {
         }
 
         const replayRes = await fetch(`/api/simulations/${savedId}/replay`);
+        if (stale()) return;
         if (replayRes.ok) {
           const replay = await replayRes.json();
+          if (stale()) return;
           const tooLarge = checkReplayPayload(replay);
           if (tooLarge) {
             localStorage.removeItem('lastSimulationId');
@@ -221,15 +330,26 @@ export default function SimulatorPage() {
             setStatusMessage('');
           }
         } else {
+          const body = await replayRes.json().catch(() => null);
+          if (stale()) return;
           setStatusMessage('');
+          setError(`Failed to load replay of the last simulation: ${body?.error || `HTTP ${replayRes.status}`}`);
         }
-      } catch {
-        localStorage.removeItem('lastSimulationId');
+      } catch (err) {
+        if (stale()) return;
+        // Network error or invalid JSON: keep the id so a reload can retry.
         setStatusMessage('');
+        setError(`Failed to load the last simulation: ${err instanceof Error ? err.message : 'unknown error'}`);
       }
     };
 
-    loadSavedSimulation();
+    const savedId = localStorage.getItem('lastSimulationId');
+    if (savedId) loadSavedSimulation(savedId);
+    return () => {
+      // Unmount: stop any polling loop (resumed or fresh) and drop late saved-run responses.
+      pollTokenRef.current++;
+      loadSeqRef.current++;
+    };
   }, []);
 
   // Current snapshot for P&L display
@@ -266,6 +386,34 @@ export default function SimulatorPage() {
     }
     return { longFilledLevels: longSet, shortFilledLevels: shortSet };
   }, [replayData?.gridOrders, currentIdx]);
+
+  // Classic grid result (not Combo); v1 = corrected engine (Contracts A–D)
+  const isClassic = !!simulation && !simulation.comboBotEnabled;
+  const isClassicV1 = isClassic && (simulation?.engineVersion ?? 0) >= 1;
+
+  // Open positions per side at the playback index (Contract D): group fills up to
+  // the current chart bucket by positionId; entry/initial quantity minus
+  // exit/reduce/exhaust quantity > 1e-9 is still open.
+  const openPositions = useMemo(() => {
+    if (!isClassicV1 || !replayData) return null;
+    const remaining = new Map<string, { side: string; qty: number }>();
+    for (const o of replayData.gridOrders) {
+      if (o.fillCandleIdx == null || o.fillCandleIdx > currentIdx || !o.positionId || o.quantity == null) continue;
+      const sign = o.role === 'initial' || o.role === 'entry' ? 1 : -1;
+      const p = remaining.get(o.positionId) ?? { side: o.side, qty: 0 };
+      p.qty += sign * o.quantity;
+      remaining.set(o.positionId, p);
+    }
+    let long = 0;
+    let short = 0;
+    remaining.forEach(p => {
+      if (p.qty > 1e-9) {
+        if (p.side === 'long') long++;
+        else short++;
+      }
+    });
+    return { long, short };
+  }, [isClassicV1, replayData, currentIdx]);
 
   // Grid fill markers for trade visualization
   const { longFills, shortFills } = useMemo(() => {
@@ -325,7 +473,11 @@ export default function SimulatorPage() {
 
   // Run simulation handler (grid + DCA)
   const handleRunSimulation = useCallback(async (config: SimulationConfig) => {
+    // Bumping the sequence drops a saved-run load still in flight; the unmount cleanup
+    // bumps it too, so a late create response below cannot save the id or start polling.
+    const seq = ++loadSeqRef.current;
     setError(null);
+    setNotice(null);
     setIsRunning(true);
     setStatusMessage('Fetching candle data...');
     setReplayData(null);
@@ -344,14 +496,18 @@ export default function SimulatorPage() {
       // ── Grid / Combo simulation (if enabled) ──
       // Combo is an opt-in supervisor wrapping grids; the sim path is the same.
       if (gridLongEnabled || gridShortEnabled || config.combo?.enabled) {
+        // Classic runs fetch exactly the effective 5m window the engine requires
+        // (Contract E); Combo keeps the raw dates.
+        const fetchRange = config.combo?.enabled
+          ? { startTime: config.startTime, endTime: config.endTime }
+          : classicCandleFetchRange(config.startTime, config.endTime, Date.now());
         const candleRes = await fetch('/api/candles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             pair: selectedPair.binanceSymbol,
             timeframe: '5m',
-            startTime: config.startTime,
-            endTime: config.endTime,
+            ...fetchRange,
           }),
         });
 
@@ -394,77 +550,34 @@ export default function SimulatorPage() {
         }
 
         const { id } = await simRes.json();
+        if (loadSeqRef.current !== seq) return;   // page left while the run was being created
         setSimulationId(id);
         localStorage.setItem('lastSimulationId', id);
         setStatusMessage('Grid simulation running...');
 
-        // Poll for completion
-        let attempts = 0;
-        while (attempts < 180) {
-          await new Promise(r => setTimeout(r, 1000));
-          attempts++;
+        // Poll until the run completes or fails (or the user stops waiting)
+        const sim = await pollUntilDone(id);
+        if (sim) {
+          setStatusMessage('Loading grid results...');
+          setSimulation(toSummary(sim));
 
-          const statusRes = await fetch(`/api/simulations/${id}`);
-          if (!statusRes.ok) continue;
-
-          const { simulation: sim } = await statusRes.json();
-
-          if (sim.status === 'completed') {
-            setStatusMessage('Loading grid results...');
-            setSimulation({
-              id: sim.id,
-              name: sim.name,
-              pair: sim.pair,
-              timeframe: sim.timeframe,
-              status: sim.status,
-              createdAt: sim.createdAt,
-              startTime: sim.startTime,
-              endTime: sim.endTime,
-              totalPnl: sim.totalPnl,
-              totalPnlPct: sim.totalPnlPct,
-              longPnl: sim.longPnl,
-              shortPnl: sim.shortPnl,
-              totalTrades: sim.totalTrades,
-              maxDrawdown: sim.maxDrawdown,
-              maxDrawdownPct: sim.maxDrawdownPct,
-              totalCandles: sim.totalCandles,
-              winCount: sim.winCount,
-              lossCount: sim.lossCount,
-              comboBotEnabled: sim.comboBotEnabled,
-              comboMode: sim.comboMode,
-              comboGridLevels: sim.comboGridLevels,
-              fundingDataMissing: sim.fundingDataMissing,
-              requireDirectionalConfirmation: sim.requireDirectionalConfirmation,
-              totalSlippageCost: sim.totalSlippageCost,
-              longSlippageCost: sim.longSlippageCost,
-              shortSlippageCost: sim.shortSlippageCost,
-              totalFundingCost: sim.totalFundingCost,
-              longFundingCost: sim.longFundingCost,
-              shortFundingCost: sim.shortFundingCost,
-            });
-
-            const replayRes = await fetch(`/api/simulations/${id}/replay`);
-            if (replayRes.ok) {
-              const replay = await replayRes.json();
-              const tooLarge = checkReplayPayload(replay);
-              if (tooLarge) {
-                // Fresh sim came back with a too-big payload. Don't mount the
-                // chart; surface the reason so the user knows to shorten the
-                // range or switch to a coarser timeframe.
-                setError(tooLarge);
-              } else {
-                setReplayData(replay);
-                setConfigCollapsed(true);
-              }
+          const replayRes = await fetch(`/api/simulations/${id}/replay`);
+          if (replayRes.ok) {
+            const replay = await replayRes.json();
+            const tooLarge = checkReplayPayload(replay);
+            if (tooLarge) {
+              // Fresh sim came back with a too-big payload. Don't mount the
+              // chart; surface the reason so the user knows to shorten the
+              // range or switch to a coarser timeframe.
+              setError(tooLarge);
+            } else {
+              setReplayData(replay);
+              setConfigCollapsed(true);
             }
-            break;
+          } else {
+            const body = await replayRes.json().catch(() => null);
+            setError(`Failed to load replay: ${body?.error || `HTTP ${replayRes.status}`}`);
           }
-
-          if (sim.status === 'failed') {
-            throw new Error(sim.errorMessage || 'Grid simulation failed');
-          }
-
-          setStatusMessage(`Grid simulation running... (${attempts}s)`);
         }
       }
 
@@ -582,17 +695,25 @@ export default function SimulatorPage() {
     ? new Date(currentCandles[currentIdx].timestamp * 1000).toLocaleString()
     : '';
 
-  // Total capital
-  const initialCapital = simulation ? (currentSnapshot?.equity ?? 10000) - (currentSnapshot?.realizedPnl ?? 0) - (currentSnapshot?.unrealizedPnl ?? 0) : 10000;
+  // Total capital: a classic row's startingCapital; Combo and rows without it keep
+  // the old reconstruction from the current snapshot.
+  const initialCapital = (isClassic ? simulation?.startingCapital : undefined)
+    ?? (simulation ? (currentSnapshot?.equity ?? 10000) - (currentSnapshot?.realizedPnl ?? 0) - (currentSnapshot?.unrealizedPnl ?? 0) : 10000);
 
   // Has any data to show?
   const hasData = replayData || dcaLongSnapshots.length > 0 || dcaShortSnapshots.length > 0;
-  const chartGridClass = gridLongEnabled && gridShortEnabled ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1';
+  // Per-side charts follow the replay (levels are empty for a disabled side), not the current toggles.
+  const showLongChart = (replayData?.longLevels.length ?? 0) > 0;
+  const showShortChart = (replayData?.shortLevels.length ?? 0) > 0;
+  const chartGridClass = showLongChart && showShortChart ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1';
   const dcaGridClass = dcaLongEnabled && dcaShortEnabled ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1';
   const topPairLabel = simulation?.pair ?? SUPPORTED_PAIRS[selectedPairIdx]?.pair ?? 'WETH/USDC';
   const topTimeframe = simulation?.timeframe ?? '1h';
   const topCandleCount = simulation?.totalCandles ?? totalCandles;
-  const gridPnl = (currentSnapshot?.realizedPnl ?? 0) + (currentSnapshot?.unrealizedPnl ?? 0);
+  // Classic v1 headline = equity − startingCapital (= net realized + unrealized, Contract C).
+  const gridPnl = isClassicV1 && currentSnapshot
+    ? currentSnapshot.equity - initialCapital
+    : (currentSnapshot?.realizedPnl ?? 0) + (currentSnapshot?.unrealizedPnl ?? 0);
   // Per-direction realized P&L is summed from the trade arrays (already split by direction
   // in handleRunSimulation). Snapshots cannot be used because the engine returns one merged
   // snapshot stream when both sides run, which would double-count.
@@ -698,6 +819,25 @@ export default function SimulatorPage() {
           <span className="text-sm font-mono" style={{ color: 'var(--text-secondary)' }}>
             {statusMessage}
           </span>
+          {isPolling && (
+            <button className="ml-auto text-xs btn-secondary btn py-0.5 px-2" onClick={stopWaiting}>
+              Stop waiting
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Notice (e.g. stopped waiting for a run) */}
+      {notice && (
+        <div className="mx-3 mt-3 p-3 rounded-lg flex items-center gap-2" style={{
+          background: 'rgba(var(--grid-neutral-rgb), 0.08)',
+          border: '1px solid rgba(var(--grid-neutral-rgb), 0.15)',
+        }}>
+          <AlertCircle size={16} className="flex-shrink-0" style={{ color: 'var(--grid-neutral)' }} />
+          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{notice}</span>
+          <button className="ml-auto text-xs btn-secondary btn py-0.5 px-2" onClick={() => setNotice(null)}>
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -840,7 +980,7 @@ export default function SimulatorPage() {
               )}
 
               {/* Grid Bot Row (only when combo is NOT active) */}
-              {replayData && !simulation?.comboBotEnabled && (gridLongEnabled || gridShortEnabled) && (
+              {replayData && !simulation?.comboBotEnabled && (showLongChart || showShortChart) && (
                 <section className="workspace-section">
                   <div className="section-kicker">
                     <span>
@@ -849,8 +989,38 @@ export default function SimulatorPage() {
                     <span className="section-kicker-line" />
                     <span>{currentIdx + 1}/{totalCandles || 0}</span>
                   </div>
+                  {isClassic && simulation?.engineVersion === 0 && (
+                    <div className="mb-3 p-3 rounded-lg flex items-center gap-2" style={{
+                      background: 'rgba(245, 158, 11, 0.1)',
+                      border: '1px solid rgba(245, 158, 11, 0.25)',
+                    }}>
+                      <AlertCircle size={16} className="flex-shrink-0" style={{ color: '#f59e0b' }} />
+                      <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        Legacy result from the old neutral-grid engine; long and short were simulated identically and P&amp;L was realized-only — rerun for corrected results
+                      </span>
+                    </div>
+                  )}
+                  {isClassic && (
+                    <div className="mb-3 text-xs font-mono flex flex-col gap-1" style={{ color: 'var(--text-muted)' }}>
+                      {replayData.effectiveStart != null && replayData.effectiveEnd != null && (
+                        <span>Execution window {fmtUtc(replayData.effectiveStart)} → {fmtUtc(replayData.effectiveEnd)} (end exclusive)</span>
+                      )}
+                      {replayData.chartTimeframeMins != null && (
+                        <span>Chart timeframe {fmtTf(replayData.chartTimeframeMins)}</span>
+                      )}
+                      {isClassicV1 ? (
+                        <span>
+                          Execution on 5m candles; the selected timeframe is chart-only. Not modelled: leverage, funding, exchange liquidation, slippage, protective stop-loss, automatic grid recentering.
+                        </span>
+                      ) : (
+                        <span>
+                          Legacy run: executed on the selected {simulation?.timeframe} candles{simulation?.timeframe === '5m' ? '.' : ', not on 5m.'}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className={`grid ${chartGridClass} gap-3`}>
-                    {gridLongEnabled && (
+                    {showLongChart && (
                       <div className="chart-card chart-card-long">
                         <TradingChart
                           candles={replayData.candles}
@@ -865,7 +1035,7 @@ export default function SimulatorPage() {
                         />
                       </div>
                     )}
-                    {gridShortEnabled && (
+                    {showShortChart && (
                       <div className="chart-card chart-card-short">
                         <TradingChart
                           candles={replayData.candles}
@@ -978,6 +1148,13 @@ export default function SimulatorPage() {
                     {activeTab === 'trades' && replayData && (
                       <TradeLog trades={replayData.gridOrders} />
                     )}
+                    {activeTab === 'trades' && isClassicV1 && simulationId && (replayData?.diagnosticEventCount ?? 0) > 0 && (
+                      <EventLog
+                        key={simulationId}
+                        simulationId={simulationId}
+                        total={replayData?.diagnosticEventCount ?? 0}
+                      />
+                    )}
                     {activeTab === 'optimizer' && (
                       <OptimizerTab
                         pair={SUPPORTED_PAIRS[selectedPairIdx]?.pair ?? 'WETH/USDC'}
@@ -1010,11 +1187,14 @@ export default function SimulatorPage() {
                     equityHistory={replayData?.pnlSnapshots
                       .filter(s => s.candleIdx <= currentIdx)
                       .map(s => s.equity)}
+                    longOpenPositions={openPositions && showLongChart ? openPositions.long : undefined}
+                    shortOpenPositions={openPositions && showShortChart ? openPositions.short : undefined}
                   />
                   {replayData && (
                     <AdaptiveStatus
                       events={replayData.adaptiveEvents}
                       currentCandleIdx={currentIdx}
+                      compactedStateEvents={isClassicV1 ? replayData._compactionStats?.compactedStateEvents : undefined}
                     />
                   )}
                 </aside>

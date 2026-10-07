@@ -12,6 +12,7 @@ import TradingChart from '@/components/charts/TradingChart';
 import DrawdownPicker, { PickedWindow } from '@/components/pionex/DrawdownPicker';
 import ParamPanel from '@/components/pionex/ParamPanel';
 import PionexCard from '@/components/pionex/PionexCard';
+import CycleTable from '@/components/pionex/CycleTable';
 import ExposurePanel from '@/components/pionex/ExposurePanel';
 import SubCharts from '@/components/pionex/SubCharts';
 import Assumptions from '@/components/pionex/Assumptions';
@@ -463,7 +464,8 @@ export default function PionexPage() {
             {run && chart && (
               <>
                 <PionexCard run={run} />
-                {run.stale && (
+                {run.config.cycle && <CycleTable run={run} />}
+                {(run.stale || (run.config.cycle && run.report.paths.A.summary.cycleLog === undefined)) && (
                   <button
                     className="btn btn-secondary self-start flex items-center gap-2 text-xs"
                     disabled={busy}

@@ -56,6 +56,17 @@ model Simulation {
   finalEquity    Float?
   totalCandles   Int?
 
+  // Classic grid engine version: 0 = legacy neutral-grid engine (results kept as-is),
+  // 1 = corrected directional slot engine (always executes on 5m candles).
+  engineVersion      Int       @default(0)
+  effectiveStartTime DateTime?
+  effectiveEndTime   DateTime?
+  realizedPnl        Float?
+  unrealizedPnl      Float?
+  totalFees          Float?
+  roundTrips         Int?
+  skippedEntries     Int       @default(0)
+
   // Combo cost reporting (persisted from runComboSimulationCore result)
   totalSlippageCost Float?
   longSlippageCost  Float?
@@ -85,6 +96,7 @@ model GridConfiguration {
   simulation   Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
 
   side       String // "long" or "short"
+  enabled    Boolean @default(true)
   gridLevels Int    @default(10)
   gridType   String @default("arithmetic") // "arithmetic" or "geometric"
   upperBound Float
@@ -132,8 +144,16 @@ model GridOrder {
 
   sizeMultiplier Float @default(1.0)
 
+  // Corrected engine (engineVersion >= 1) only
+  quantity   Float?
+  slotIndex  Int?
+  positionId String?
+  role       String? // "initial" | "entry" | "exit" | "reduce" | "exhaust"
+  fillSeq    Int?    // global 0-based execution order within the run
+
   @@index([simulationId, side, status])
   @@index([simulationId, fillCandleIdx])
+  @@index([simulationId, fillSeq])
 }
 
 // Adaptive layer events

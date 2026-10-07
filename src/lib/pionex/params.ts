@@ -23,6 +23,7 @@ export interface PionexParams {
   marginCheck: boolean;
   cycleOn: boolean;
   tpPct: number;
+  tpPricePct: number | null; // optional price TP, % above the cycle start price; null = off
   reinvestPct: number;
   topUpOn: boolean;
   topUpTriggerPct: number;
@@ -54,6 +55,7 @@ export const BOT_A_PARAMS: PionexParams = {
   marginCheck: true,
   cycleOn: false,
   tpPct: 5,
+  tpPricePct: null,
   reinvestPct: 50,
   topUpOn: false,
   topUpTriggerPct: 5,
@@ -84,7 +86,9 @@ export function toRunRequest(p: PionexParams, symbol: string, startMs: number, e
     },
     marginCheck: p.marginCheck,
     capitalTotal: p.capitalTotal ?? undefined,
-    cycle: p.cycleOn ? { takeProfitPct: pct(p.tpPct), reinvestPct: pct(p.reinvestPct) } : null,
+    cycle: p.cycleOn
+      ? { takeProfitPct: pct(p.tpPct), reinvestPct: pct(p.reinvestPct), takeProfitPricePct: p.tpPricePct === null ? null : pct(p.tpPricePct) }
+      : null,
     topUp: p.topUpOn ? { triggerPct: pct(p.topUpTriggerPct), amount: p.topUpAmount } : null,
     bot2: p.bot2On ? { triggerOffsetPct: pct(p.bot2OffsetPct), capitalMultiplier: p.bot2Mult } : null,
     bot1ClosePrice: p.closeOn ? p.closePrice : undefined,

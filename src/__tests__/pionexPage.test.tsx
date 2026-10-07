@@ -5,7 +5,7 @@ import { OHLC } from '../lib/types';
 import type { PionexRunPayload } from '../lib/pionex/runStore';
 import type { DataGapReport } from '../lib/pionex/dataQuality';
 import type { DrawdownEpisode } from '../lib/pionex/drawdowns';
-import { PionexRunConfig } from '../lib/pionex/types';
+import { CycleRecord, LedgerEvent, PionexRunConfig } from '../lib/pionex/types';
 import { runPionex } from '../lib/pionex/engine';
 import { buildReport } from '../lib/pionex/report';
 import { aggregateTo5m } from '../lib/pionex/aggregate';
@@ -336,5 +336,92 @@ describe('/pionex window ↔ result consistency', () => {
     setFrom('2022-05-06');
     expect(anyResult()).toBe(false);
     expect(shown('📌 run p1')).toBe(true);
+  });
+});
+
+// ── cycle table (trailing plan, decisions 10–11): hand-built records and events ──
+const cycleConfig: PionexRunConfig = { ...baseConfig, cycle: { takeProfitPct: 0.05, reinvestPct: 0.5 } };
+const S = Date.UTC(2022, 4, 4);
+const rec = (index: number, o: Partial<CycleRecord> = {}): CycleRecord => ({
+  index, startMs: S, endMs: S + 2 * M, startPrice: 100, closePrice: 105, rounds: 3,
+  profit: 1.5, withdrawn: 0.75, eNext: 50.75, trigger: 'profit', ...o,
+});
+
+// A missing key (not undefined) marks an old saved run without cycle details.
+function withCycles(run: PionexRunPayload, log: { A?: CycleRecord[]; B?: CycleRecord[] }, eventsA?: LedgerEvent[]) {
+  for (const p of ['A', 'B'] as const) {
+    const s = run.report.paths[p].summary;
+    if (log[p]) s.cycleLog = log[p]; else delete s.cycleLog;
+    s.bots[0].status = 'active';
+  }
+  if (eventsA) run.report.events.A = eventsA;
+  return run;
+}
+const cycleTable = () => within(screen.getByText('Cycles (bot 1)').closest('section') as HTMLElement);
+const rerunButton = () => screen.queryByRole('button', { name: 'Re-run saved settings' });
+
+describe('/pionex cycle table', () => {
+  it('shows the closed cycles of the selected path; A/B switch', async () => {
+    await renderPage();
+    const run = withCycles(makeRun('c1', { config: cycleConfig }), {
+      A: [rec(1, { closePrice: 123.45 }), rec(2, { startMs: S + 2 * M, endMs: S + 5 * M, closePrice: 111.11, trigger: 'price' })],
+      B: [rec(1, { closePrice: 234.56, trigger: 'price' })],
+    });
+    await runAndShow(run);
+    const t = cycleTable();
+    expect(t.getByText('123.45')).toBeTruthy();
+    expect(t.getByText('111.11')).toBeTruthy();
+    expect(t.getByText('profit')).toBeTruthy();
+    expect(t.getByText('11.11%')).toBeTruthy(); // Δ % = 111.11 / 100 − 1
+    expect(t.queryByText('234.56')).toBeNull();
+
+    fireEvent.change(t.getByDisplayValue('Path A'), { target: { value: 'B' } });
+    expect(t.getByText('234.56')).toBeTruthy();
+    expect(t.queryByText('123.45')).toBeNull();
+    expect(t.queryByText('profit')).toBeNull();
+    expect(t.getByText('price')).toBeTruthy();
+    expect(rerunButton()).toBeNull();
+  });
+
+  it('open row: since the last start / restart event of bot 1, not the window start', async () => {
+    await renderPage();
+    const events: LedgerEvent[] = [
+      { type: 'start', bot: 0, timeMs: S + 3 * M, price: 101 },
+      { type: 'restart', bot: 0, timeMs: S + 7 * M, price: 103 },
+      { type: 'start', bot: 1, timeMs: S + 9 * M, price: 99 }, // bot 2 is ignored
+    ];
+    const run = withCycles(makeRun('c2', { config: cycleConfig }), { A: [], B: [] }, events);
+    await runAndShow(run);
+    const t = cycleTable();
+    expect(t.getByText('No closed cycle')).toBeTruthy();
+    expect(t.getByText('open since 2022-05-04 00:07')).toBeTruthy();
+    expect(t.getByText('103.00')).toBeTruthy();
+    expect(t.queryByText(/00:00/)).toBeNull();
+    expect(t.queryByText(/00:03/)).toBeNull();
+  });
+
+  it('no open row when bot 1 is not active', async () => {
+    await renderPage();
+    const run = withCycles(makeRun('c3', { config: cycleConfig }), { A: [rec(1)], B: [rec(1)] });
+    run.report.paths.A.summary.bots[0].status = 'stopped';
+    await runAndShow(run);
+    expect(cycleTable().queryByText(/open since/)).toBeNull();
+  });
+
+  it('missing cycle data: note and re-run button even when not stale; no table without a cycle rule', async () => {
+    await renderPage();
+    const old = withCycles(makeRun('c4', { config: cycleConfig }), {});
+    expect(old.stale).toBe(false);
+    await runAndShow(old);
+    expect(cycleTable().getByText('Re-run for cycle details')).toBeTruthy();
+    expect(cycleTable().queryByText('No closed cycle')).toBeNull();
+    expect(rerunButton()).toBeTruthy();
+
+    await runAndShow(withCycles(makeRun('c5', { config: cycleConfig }), { A: [], B: [] }));
+    expect(rerunButton()).toBeNull();
+
+    await runAndShow(makeRun('c6'));
+    expect(screen.queryByText('Cycles (bot 1)')).toBeNull();
+    expect(rerunButton()).toBeNull();
   });
 });

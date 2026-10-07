@@ -11,14 +11,7 @@ interface GridSideConfigProps {
 
 export default function GridSideConfig({ side, config, onChange }: GridSideConfigProps) {
   const update = (field: string, value: number | string) => {
-    const updated = { ...config, [field]: value } as GridSideConfigType;
-    // Auto-calculate totalCapital when orderSize or gridLevels changes
-    if (field === 'orderSize' || field === 'gridLevels') {
-      const orderSize = field === 'orderSize' ? (value as number) : config.orderSize;
-      const gridLevels = field === 'gridLevels' ? (value as number) : config.gridLevels;
-      updated.totalCapital = orderSize * gridLevels;
-    }
-    onChange(updated);
+    onChange({ ...config, [field]: value } as GridSideConfigType);
   };
 
   // Keep the raw typed string for the price bounds so decimals like "1.15" survive while
@@ -38,7 +31,9 @@ export default function GridSideConfig({ side, config, onChange }: GridSideConfi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.upperBound]);
 
-  const calculatedCapital = config.orderSize * config.gridLevels;
+  // N price lines → N−1 slots; each slot funds one entry of `orderSize`.
+  const slots = Math.max(0, config.gridLevels - 1);
+  const fundingEstimate = slots * config.orderSize;
 
   const color = side === 'long' ? 'var(--grid-long)' : 'var(--grid-short)';
 
@@ -109,11 +104,22 @@ export default function GridSideConfig({ side, config, onChange }: GridSideConfi
         />
       </div>
 
-      {/* Total capital (auto-calculated) */}
+      {/* Total capital (user-set; never overwritten) + funding estimate */}
       <div>
-        <label className="form-label">Total Capital</label>
-        <div className="form-input" style={{ background: 'var(--bg-secondary)', cursor: 'default', opacity: 0.8 }}>
-          ${calculatedCapital.toLocaleString()}
+        <label className="form-label">Total Capital ($)</label>
+        <input
+          type="number"
+          className="form-input"
+          min={0}
+          step="any"
+          value={config.totalCapital}
+          onChange={(e) => update('totalCapital', parseFloat(e.target.value) || 0)}
+        />
+        <div
+          className="text-xs font-mono mt-1"
+          style={{ color: config.totalCapital < fundingEstimate ? 'var(--grid-short)' : 'var(--text-muted)' }}
+        >
+          Funding estimate: {slots} slots (N−1) × ${config.orderSize.toLocaleString()} = ${fundingEstimate.toLocaleString()}
         </div>
       </div>
 

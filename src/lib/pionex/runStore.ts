@@ -188,6 +188,7 @@ export function validateRunRequest(r: PionexRunRequest): string | null {
   if (c.capitalTotal !== undefined && !pos(c.capitalTotal)) return 'capitalTotal must be > 0';
   if (c.cycle) {
     if (!pos(c.cycle.takeProfitPct)) return 'take profit must be > 0';
+    if (c.cycle.takeProfitPricePct != null && !pos(c.cycle.takeProfitPricePct)) return 'TP price must be > 0';
     if (!(num(c.cycle.reinvestPct) && c.cycle.reinvestPct >= 0 && c.cycle.reinvestPct <= 1)) return 'reinvest must be in [0, 100%]';
   }
   if (c.topUp) {

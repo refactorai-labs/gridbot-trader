@@ -152,10 +152,10 @@ Alul: nincs több töltés. Felül: pozíció üres, várakozás.
 
 - Kiértékelés lezárt 5m gyertyán: `netIfClosed = equity(last close) − qty·close·taker − (I + E_start + Σ ciklusbeli feltöltés)`. Ha `netIfClosed ≥ TP% · I` → zárás a következő 1m nyitón (3.8), `cycles++`.
 - A ténylegesen realizált ciklusprofit dönt:
-  - **pozitív:** `E_next = E_start + Σ ciklusbeli feltöltés + reinvest% · profit`; `kivett += (1 − reinvest%) · profit`;
-  - **nem pozitív** (a végrehajtási ár a TP‑döntés óta romlott): `E_next = E_start + Σ ciklusbeli feltöltés + profit` (a veszteség az extra marginból fogy), nincs kivét.
-- `I` változatlan. Újraindítás ugyanazon az 1m nyitón **a bot saját visszakapott pénzéből** (`I + E_next`), a `freeCash`‑ből nem húz. Ha a visszakapott pénz `< I`: nincs újraindítás (`restart_rejected`), a pénz a `freeCash`‑be kerül.
-- Példa: `E_start = 1750`, ciklusbeli feltöltés 200, nettó profit 100, reinvest 20% → `E_next = 1970`, kivett 80.
+  - **pozitív** (módosítva 2026-10-06, kamatos): `I_next = I + reinvest% · profit`; `E_next = E_start + Σ ciklusbeli feltöltés`; `kivett += (1 − reinvest%) · profit`;
+  - **nem pozitív** (a végrehajtási ár a TP‑döntés óta romlott): `I_next = I`; `E_next = E_start + Σ ciklusbeli feltöltés + profit` (a veszteség az extra marginból fogy), nincs kivét.
+- Az új ciklus gridje `I_next`‑ből méreteződik (`Q = I_next·lev/n`), a profit‑TP küszöb `TP% · I_next`. Újraindítás ugyanazon az 1m nyitón **a bot saját visszakapott pénzéből** (`I_next + E_next`), a `freeCash`‑ből nem húz. Ha `E_next < 0`: nincs újraindítás (`restart_rejected`), a pénz a `freeCash`‑be kerül.
+- Példa: `I = 1000`, `E_start = 1750`, ciklusbeli feltöltés 200, nettó profit 100, reinvest 20% → `I_next = 1020`, `E_next = 1950`, kivett 80.
 - A 2. botra v1‑ben nincs ciklus‑szabály (tartás).
 - Opcionális `takeProfitPrice` (Pionex natív, árszintes TP). Fázis 1 ellenőrzés: a Pionex Customize nézet TP‑mezői futures gridnél.
 

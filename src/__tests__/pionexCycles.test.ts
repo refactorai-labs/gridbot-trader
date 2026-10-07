@@ -33,10 +33,11 @@ const invariant = (r: RunResult, capitalTotal: number) =>
   (capitalTotal + r.totals.realizedTradePnl - r.totals.fees - r.totals.funding - r.totals.liquidationLoss);
 
 describe('pionex cycle settlement (plan §3.6)', () => {
-  it('plan example: E_start 1750, top-ups 200, net profit 100, reinvest 20 % → E_next 1970, withdrawn 80', () => {
+  it('plan example: I 1000, E_start 1750, top-ups 200, net profit 100, reinvest 20 % → I_next 1020, E_next 1950, withdrawn 80', () => {
     const s = settleCycle(1000, 1750, 200, 1000 + 1750 + 200 + 100, 0.2);
     expect(s.profit).toBeCloseTo(100, 9);
-    expect(s.eNext).toBeCloseTo(1970, 9);
+    expect(s.iNext).toBeCloseTo(1020, 9); // compounding: the reinvested share grows I
+    expect(s.eNext).toBeCloseTo(1950, 9);
     expect(s.withdraw).toBeCloseTo(80, 9);
     expect(s.canRestart).toBe(true);
   });
@@ -44,6 +45,7 @@ describe('pionex cycle settlement (plan §3.6)', () => {
   it('non-positive profit: the loss comes out of E, nothing withdrawn', () => {
     const s = settleCycle(1000, 1750, 200, 1000 + 1750 + 200 - 50, 0.2);
     expect(s.profit).toBeCloseTo(-50, 9);
+    expect(s.iNext).toBe(1000); // I never shrinks
     expect(s.eNext).toBeCloseTo(1900, 9);
     expect(s.withdraw).toBe(0);
     expect(settleCycle(100, 10, 0, 90, 0.2).canRestart).toBe(false); // returned 90 < I
@@ -62,7 +64,9 @@ describe('pionex engine — TP cycle (plan §3.6)', () => {
     expect(r.cycles).toBe(1);
     expect(r.withdrawn).toBeCloseTo(5, 9);
     expect(r.freeCash).toBe(0); // the restart never draws on freeCash
-    expect(r.bots[0].wallet).toBeCloseTo(105, 9); // I + E_next = 100 + 5
+    expect(r.bots[0].wallet).toBeCloseTo(105, 9); // I_next + E_next = 105 + 0
+    // Compounding: the restarted grid is sized from I_next = 105 → Q = 105, 5 slots at 102.
+    expect(r.events.find(e => e.type === 'restart')!.qty).toBeCloseTo(5 * 105 / 102, 9);
     // Decision 1: the new cycle re-centres the band with the initial % offsets.
     expect(r.bots[0].lower).toBeCloseTo(91.8, 9);
     expect(r.bots[0].upper).toBeCloseTo(112.2, 9);
@@ -305,5 +309,137 @@ describe('pionex engine — review regressions (Phase 2)', () => {
     // Same first liquidation and cycle count, but bot 2 survives on one path only.
     expect(decideVerdict(a, a, true)).toBe('liquidated');
     expect(decideVerdict(a, liqBot2, true)).toBe('path_dependent');
+  });
+});
+
+describe('pionex engine — price TP and cycle log (trailing plan)', () => {
+  // Profit TP at 100 % of I never fires in these fixtures; the price TP is 1 % above the cycle start.
+  const priceTp = (over: Partial<PionexRunConfig> = {}, bot: Partial<PionexRunConfig['bot']> = {}) =>
+    cfg({ cycle: { takeProfitPct: 1, reinvestPct: 0.5, takeProfitPricePct: 0.01 }, ...over }, bot);
+  const closeTimes = (r: RunResult) => r.events.filter(e => e.type === 'close').map(e => e.timeMs);
+
+  it('price TP exactly at the level closes despite floating-point rounding (100 · 1.1 = 110.00000000000001), both paths', () => {
+    // Band 90–120 so 110 sits inside the grid; minute 4 closes at 109.99 (no close), minute 9 at 110 → minute 10.
+    const last = [flat(0, 100), ...flats(1, 4, 109.99), ...flats(5, 12, 110)];
+    for (const path of ['A', 'B'] as const) {
+      const r = runPionex(last, last, [], priceTp({ cycle: { takeProfitPct: 1, reinvestPct: 0.5, takeProfitPricePct: 0.1 } }, { upper: 120 }), path);
+      expect(closeTimes(r)).toEqual([T0 + 10 * M]);
+      expect(r.cycleLog[0]).toMatchObject({ startPrice: 100, closePrice: 110, trigger: 'price' });
+    }
+    // 30 · 1.03 = 30.900000000000002: a close of 30.90 still counts.
+    const small = [flat(0, 30), ...flats(1, 4, 30.89), ...flats(5, 12, 30.9)];
+    const r = runPionex(small, small, [], priceTp({ cycle: { takeProfitPct: 1, reinvestPct: 0.5, takeProfitPricePct: 0.03 } }, { lower: 27, upper: 33 }), 'A');
+    expect(closeTimes(r)).toEqual([T0 + 10 * M]);
+  });
+
+  it('price TP: a 5m close below the level does nothing; at the level → close at the next 1m open, restart on the same open', () => {
+    // Minute 4 closes at 100.9 < 101: no close. Minute 9 closes at 101 ≥ 100 · 1.01 → minute 10.
+    const last = [flat(0, 100), ...flats(1, 4, 100.9), ...flats(5, 12, 101)];
+    const r = runPionex(last, last, [], priceTp(), 'A');
+    const t10 = T0 + 10 * M;
+    expect(closeTimes(r)).toEqual([t10]);
+    expect(r.events.filter(e => e.timeMs === t10).map(e => e.type)).toEqual(['close', 'cycle', 'restart']);
+    expect(r.events.find(e => e.type === 'close')).toMatchObject({ price: 101, reason: 'take profit' });
+    expect(r.events.find(e => e.type === 'cycle')!.reason).toMatch(/^cycle 1 \(price\): /);
+    expect(r.cycleLog).toHaveLength(1);
+    expect(r.cycleLog[0]).toMatchObject({ index: 1, startMs: T0, endMs: t10, startPrice: 100, closePrice: 101, rounds: 0, trigger: 'price' });
+    expect(r.cycleLog[0].profit).toBeCloseTo(5, 9); // qty 5 · (101 − 100)
+    expect(r.cycleLog[0].withdrawn).toBeCloseTo(2.5, 9);
+    expect(r.cycleLog[0].iNext).toBeCloseTo(102.5, 9);
+    expect(r.cycleLog[0].eNext).toBe(0);
+    // The new band is centred on the restart price with the initial offsets.
+    expect(r.bots[0].lower).toBeCloseTo(90.9, 9);
+    expect(r.bots[0].upper).toBeCloseTo(111.1, 9);
+    expect(r.status).toBe('active');
+    expect(r.maxInvariantError).toBeLessThan(1e-9);
+  });
+
+  it('both rules true on one 5m close → profit; otherwise whichever fires first', () => {
+    // 100 → 102 sells slot 5: net 10 ≥ 5 % · I and 102 ≥ 101 on the same close → profit.
+    const last = [flat(0, 100), bar(1, 100, 102, 100, 102), ...flats(2, 6, 102)];
+    const both = runPionex(last, last, [], cfg({ cycle: { takeProfitPct: 0.05, reinvestPct: 0.5, takeProfitPricePct: 0.01 } }), 'A');
+    expect(both.cycleLog.map(c => c.trigger)).toEqual(['profit']);
+    expect(both.events.find(e => e.type === 'cycle')!.reason).toMatch(/^cycle 1 \(profit\): /);
+    // Price first: net 10 < 20 % · I, 102 ≥ 101.
+    const price = runPionex(last, last, [], cfg({ cycle: { takeProfitPct: 0.2, reinvestPct: 0.5, takeProfitPricePct: 0.01 } }), 'A');
+    expect(price.cycleLog.map(c => c.trigger)).toEqual(['price']);
+    // Profit first: net 10 ≥ 5 % · I, 102 < 150.
+    const profit = runPionex(last, last, [], cfg({ cycle: { takeProfitPct: 0.05, reinvestPct: 0.5, takeProfitPricePct: 0.5 } }), 'A');
+    expect(profit.cycleLog.map(c => c.trigger)).toEqual(['profit']);
+    for (const r of [both, price, profit]) {
+      expect(r.events.find(e => e.type === 'close')).toMatchObject({ timeMs: T0 + 5 * M, price: 102, reason: 'take profit' });
+    }
+  });
+
+  it('after a restart the price threshold follows the new cycle start price', () => {
+    // Cycle 1 closes on minute 5 (101 ≥ 101), restart at 101 → threshold 102.01. Minute 14 closes at
+    // 102: above the old level, below the new one → no close. Minute 19 closes at 103 → minute 20.
+    const last = [flat(0, 100), ...flats(1, 9, 101), ...flats(10, 14, 102), ...flats(15, 21, 103)];
+    const r = runPionex(last, last, [], priceTp(), 'A');
+    expect(closeTimes(r)).toEqual([T0 + 5 * M, T0 + 20 * M]);
+    expect(r.cycles).toBe(2);
+    expect(r.cycleLog).toHaveLength(2);
+    expect(r.cycleLog[1]).toMatchObject({ index: 2, startMs: T0 + 5 * M, endMs: T0 + 20 * M, startPrice: 101, closePrice: 103, trigger: 'price' });
+  });
+
+  it('price TP with a negative net (taker fee): closes, nothing withdrawn, E shrinks, record profit < 0', () => {
+    // Taker 1 %: start fee 5 (qty 5 at 100), close at 101 fee 5.05 → profit 5 − 10.05 = −5.05 out of E = 50.
+    const last = [flat(0, 100), ...flats(1, 7, 101)];
+    const r = runPionex(last, last, [], priceTp({ costs: { makerFee: 0, takerFee: 0.01, mmr: 0 } }, { extraMargin: 50 }), 'A');
+    expect(r.events.find(e => e.type === 'close')).toMatchObject({ timeMs: T0 + 5 * M, price: 101, reason: 'take profit' });
+    expect(types(r)).toContain('restart');
+    expect(r.withdrawn).toBe(0);
+    expect(r.cycleLog).toHaveLength(1);
+    expect(r.cycleLog[0]).toMatchObject({ trigger: 'price', withdrawn: 0 });
+    expect(r.cycleLog[0].profit).toBeCloseTo(-5.05, 9);
+    expect(r.cycleLog[0].eNext).toBeCloseTo(44.95, 9);
+    expect(r.maxInvariantError).toBeLessThan(1e-9);
+  });
+
+  it('cycle log: two cycles → two records, start price = restart price, rounds counted per cycle', () => {
+    // Cycle 1: 100 → 125 sells all 5 slots (net 30) → close on minute 5, restart at 125 (band 112.5–137.5,
+    // step 2.5) with I_next = 115 (Q = 115 instead of 100). Cycle 2: 125 → 128 sells slot 5 at 127.5
+    // (1 round), net = 1.15 · 11.6 = 13.34 ≥ 5 % · 115 → close on minute 15.
+    const last = [flat(0, 100), bar(1, 100, 125, 100, 125), ...flats(2, 9, 125), bar(10, 125, 128, 125, 128), ...flats(11, 16, 128)];
+    const r = runPionex(last, last, [], cfg({ cycle: { takeProfitPct: 0.05, reinvestPct: 0.5 } }), 'A');
+    expect(closeTimes(r)).toEqual([T0 + 5 * M, T0 + 15 * M]);
+    expect(r.rounds).toBe(6);
+    expect(r.cycleLog).toHaveLength(2);
+    expect(r.cycleLog[0]).toMatchObject({ index: 1, startMs: T0, endMs: T0 + 5 * M, startPrice: 100, closePrice: 125, rounds: 5, trigger: 'profit' });
+    expect(r.cycleLog[0].profit).toBeCloseTo(30, 9);
+    expect(r.cycleLog[0].withdrawn).toBeCloseTo(15, 9);
+    expect(r.cycleLog[0].iNext).toBeCloseTo(115, 9);
+    expect(r.cycleLog[0].eNext).toBe(0);
+    expect(r.cycleLog[1]).toMatchObject({ index: 2, startMs: T0 + 5 * M, endMs: T0 + 15 * M, startPrice: 125, closePrice: 128, rounds: 1, trigger: 'profit' });
+    expect(r.cycleLog[1].profit).toBeCloseTo(13.34, 9); // 1.15 × the fixed-I profit of 11.6
+    expect(r.cycleLog[1].iNext).toBeCloseTo(115 + 6.67, 9); // compounds again
+    expect(r.maxInvariantError).toBeLessThan(1e-9);
+  });
+
+  it('a missed execution minute or a liquidation before the TP leaves no closed cycle record', () => {
+    // Price TP due on minute 5's open; minute 5 is missing from the mark series and the data ends before the next 5m close.
+    const last = [flat(0, 100), ...flats(1, 8, 101)];
+    const missed = runPionex(last, last.filter((_, i) => i !== 5), [], priceTp(), 'A');
+    expect(missed.events.find(e => e.type === 'intervention_missed')!.reason).toContain('TP close');
+    expect(types(missed)).not.toContain('close');
+    expect(missed.cycles).toBe(0);
+    expect(missed.cycleLog).toEqual([]);
+    // TP decided on the 5m close at 100 (net 0 ≥ 0 % · I); the gap to 80 on minute 5's open liquidates first.
+    const gap = [...flats(0, 4, 100), flat(5, 80)];
+    const liq = runPionex(gap, gap, [], cfg({ cycle: { takeProfitPct: 0, reinvestPct: 0.5 } }, { lower: 101, upper: 121 }), 'A');
+    expect(liq.status).toBe('liquidated');
+    expect(types(liq)).not.toContain('cycle');
+    expect(liq.cycleLog).toEqual([]);
+  });
+
+  it('a rejected restart keeps the closed record and stops the bot', () => {
+    const last = [flat(0, 100), bar(1, 100, 102, 100, 102), ...flats(2, 4, 102), ...flats(5, 6, 95)];
+    const r = runPionex(last, last, [], cfg({ cycle: { takeProfitPct: 0.05, reinvestPct: 0.5 } }), 'A');
+    expect(types(r)).toContain('restart_rejected');
+    expect(r.bots[0].status).toBe('stopped');
+    expect(r.cycleLog).toHaveLength(1);
+    expect(r.cycleLog[0]).toMatchObject({ index: 1, endMs: T0 + 5 * M, closePrice: 95, trigger: 'profit', withdrawn: 0 });
+    expect(r.cycleLog[0].profit).toBeLessThan(0);
+    expect(r.cycleLog[0].profit).toBeCloseTo(r.events.find(e => e.type === 'cycle')!.amount!, 9);
   });
 });

@@ -142,6 +142,17 @@ export default function ParamPanel({ params: p, onChange }: Props) {
       <Section title="Cycle (bot 1)" toggle={p.cycleOn} onToggle={v => set('cycleOn', v)}>
         <Num label="Take profit % of I" value={p.tpPct} onChange={v => set('tpPct', v)} />
         <Num label="Reinvest %" value={p.reinvestPct} onChange={v => set('reinvestPct', v)} />
+        <div className="col-span-2">
+          <label className="form-label">TP price % above cycle start (empty = off)</label>
+          <input
+            type="number"
+            className="form-input"
+            step="any"
+            placeholder="off"
+            value={p.tpPricePct ?? ''}
+            onChange={e => set('tpPricePct', e.target.value === '' ? null : Number(e.target.value))}
+          />
+        </div>
       </Section>
 
       <Section title="Top-up" toggle={p.topUpOn} onToggle={v => set('topUpOn', v)}>

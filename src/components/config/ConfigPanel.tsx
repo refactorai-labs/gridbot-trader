@@ -397,6 +397,7 @@ export default function ConfigPanel({
   const [endDate, setEndDate] = usePersistentState('endDate', () => toLocalDatetimeInput(new Date()));
   const [simName, setSimName] = usePersistentState('simName', '');
   const [feeRate, setFeeRate] = usePersistentState('feeRate', DEFAULT_SIMULATION.feeRate * 100);
+  // Off by default for new runs: the classic adaptive layer returns in checkpoint 3.
   const [adaptiveEnabled, setAdaptiveEnabled] = usePersistentState('adaptiveEnabled', DEFAULT_SIMULATION.adaptiveEnabled);
   const [emaPeriod, setEmaPeriod] = usePersistentState('emaPeriod', DEFAULT_SIMULATION.emaPeriod);
   const [volumeMultiplier, setVolumeMultiplier] = usePersistentState('volumeMultiplier', DEFAULT_SIMULATION.volumeMultiplier);
@@ -411,16 +412,17 @@ export default function ConfigPanel({
   const selectedPair = SUPPORTED_PAIRS[selectedPairIdx];
 
   const handleRun = () => {
-    if ((gridLongEnabled || gridShortEnabled) &&
-        (!longConfig.lowerBound || !longConfig.upperBound || !shortConfig.lowerBound || !shortConfig.upperBound)) {
-      alert('Please set grid boundaries for both long and short sides');
+    const missingBounds = (c: GridSideConfigType) => !c.lowerBound || !c.upperBound;
+    if ((gridLongEnabled && missingBounds(longConfig)) || (gridShortEnabled && missingBounds(shortConfig))) {
+      alert('Please set grid boundaries for every enabled grid side');
       return;
     }
 
     // When combo is enabled, it owns capital. Distribute it into the grid configs so
     // both paths (grid and combo) see the same totalCapital. Keeps the DB schema stable.
-    let effectiveLongConfig = longConfig;
-    let effectiveShortConfig = shortConfig;
+    // Classic grid: each side runs only when its Grid Long / Grid Short toggle is on.
+    let effectiveLongConfig: GridSideConfigType = { ...longConfig, enabled: gridLongEnabled };
+    let effectiveShortConfig: GridSideConfigType = { ...shortConfig, enabled: gridShortEnabled };
     if (comboConfig.enabled) {
       const total = comboConfig.totalCapital;
       const longFrac = comboConfig.mode === 'long' ? 1 : comboConfig.mode === 'short' ? 0 : comboConfig.allocationLong;
@@ -607,6 +609,9 @@ export default function ConfigPanel({
         onToggle={setAdaptiveEnabled}
         id="cfg-adaptive"
       >
+        <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
+          Adaptive layer is unavailable until checkpoint 3
+        </p>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="form-label">EMA Period</label>

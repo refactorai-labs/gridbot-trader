@@ -29,6 +29,7 @@ import { rerunRequest } from '../lib/pionex/params';
 const T0 = Date.UTC(2022, 4, 10);
 const M = 60_000;
 const flat = (i: number, p: number): OHLC => ({ timestamp: (T0 + i * M) / 1000, open: p, high: p, low: p, close: p, volume: 0 });
+const flats = (from: number, to: number, p: number) => Array.from({ length: to - from + 1 }, (_, k) => flat(from + k, p));
 
 const gapReport = (complete: boolean): DataGapReport => ({
   symbol: 'ETHUSDT', startMs: T0, endMs: T0 + 10 * M,
@@ -108,5 +109,39 @@ describe('pionex runStore integration', () => {
     const req = JSON.parse(JSON.stringify(rerunRequest(old)));
     expect(validateRunRequest(req)).toBeNull();
     expect(req).toMatchObject({ symbol: 'ETHUSDT', startMs: T0, endMs: T0 + 10 * M, band: request.band });
+  });
+
+  it('price TP validation: takeProfitPricePct 0 rejected, null (off) accepted', () => {
+    const withCycle = (takeProfitPricePct: number | null) =>
+      validateRunRequest({ ...request, config: { ...request.config, cycle: { takeProfitPct: 0.05, reinvestPct: 0.5, takeProfitPricePct } } });
+    expect(withCycle(0)).toBe('TP price must be > 0');
+    expect(withCycle(-0.01)).not.toBeNull();
+    expect(withCycle(null)).toBeNull();
+    expect(withCycle(0.02)).toBeNull();
+  });
+
+  it('save → reload keeps both paths\' cycle log; a row saved without one is not stale', async () => {
+    // Price TP 1 % above the start: minute 4 closes at 101 → the cycle closes on minute 5's open on both paths.
+    const last = [flat(0, 100), ...flats(1, 9, 101)];
+    loadWindow.mockResolvedValueOnce(window(last, true));
+    cached.candles = last;
+    const r = await executeRun({ ...request, config: { ...request.config, cycle: { takeProfitPct: 1, reinvestPct: 0.5, takeProfitPricePct: 0.01 } } });
+    if (!r.ok) throw new Error('run failed');
+    for (const p of ['A', 'B'] as const) {
+      expect(r.run.report.paths[p].summary.cycleLog).toHaveLength(1);
+      expect(r.run.report.paths[p].summary.cycleLog![0]).toMatchObject({ index: 1, startMs: T0, endMs: T0 + 5 * M, startPrice: 100, closePrice: 101, trigger: 'price' });
+    }
+    const reloaded = (await loadRun(r.run.id))!;
+    expect(reloaded.stale).toBe(false);
+    expect(reloaded.report.paths.A.summary.cycleLog).toEqual(r.run.report.paths.A.summary.cycleLog);
+    expect(reloaded.report.paths.B.summary.cycleLog).toEqual(r.run.report.paths.B.summary.cycleLog);
+    // Old row: same report version, summaries saved without a cycle log → not stale, no detailed data.
+    const row = rows.get(r.run.id)!;
+    const metrics = JSON.parse(row.metricsJson as string);
+    for (const p of ['A', 'B']) delete metrics.paths[p].summary.cycleLog;
+    row.metricsJson = JSON.stringify(metrics);
+    const old = (await loadRun(r.run.id))!;
+    expect(old.stale).toBe(false);
+    expect(old.report.paths.A.summary.cycleLog).toBeUndefined();
   });
 });

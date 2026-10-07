@@ -1,3 +1,302 @@
+> Pionex követő ciklus (TP ár % + ciklustábla) terve: `tasks/pionex-trailing-plan.md` (2026-10-06).
+
+# Final plan v4 — Classic grid simulator repair (Long grid + Short grid) — 2026-10-06
+
+**Status:** checkpoint 1 implemented 2026-10-06; the implementation review's 5 defects are fixed and the C1.9 browser check is done (see "Checkpoint 1 — review fixes") — awaiting approval for checkpoint 2 (gate 2). Checkpoints 2 and 3 not started. No implementation code was changed in the planning sessions; this plan document has been updated. The pre-existing uncommitted schema diff described under "Schema" was already pushed to the local database. v2 resolved the eight review findings on v1, v3 the five findings on v2, v4 the two findings on v3 (all recorded below). Three checkpoints, each with its own approval gate, targeted tests, `npx tsc --noEmit`, `npm test`, `npm run build`.
+
+**Scope:** fixed 1× directional long/short grid, fees, per-side capital. Execution always on 5m candles; the selected timeframe is chart-only. Out of model (stated in the UI): leverage, funding, exchange liquidation, slippage, configurable protective stop-loss, automatic grid recentering. Combo Bot, DCA and Pionex are untouched.
+
+**Verified facts this plan rests on (re-checked 2026-10-06)**
+- Both sides use the same neutral initialization (`orderMatcher.ts:16`); long "complementary" sells open reverse positions (`pnlTracker.ts:128`). For matching configurations with adaptation off, long and short results are identical.
+- Closing P&L uses entry quantity (`pnlTracker.ts:82`) and already subtracts both legs' fees, so legacy snapshot `realizedPnl` is *net of fees*. Headline `totalPnl` and drawdown are realized-only (`engine.ts:220`, `pnlTracker.ts:117`).
+- Start orders use the first candle's close; S/R comes from the first 50 candles before the loop (`engine.ts:113`). Volume compares a sim-TF candle to a 4H average.
+- `orderSizeType`, `profitMode=custom`, and the Long/Short toggles never reach the engine. Polling stops silently after 180 s (`page.tsx:403`). Playback P&L is `realizedPnl + unrealizedPnl` (`page.tsx:595`, `CombinedPnL.tsx:127`); capital is reconstructed from a snapshot (`page.tsx:586`).
+- Replay orders fills by `fillCandleIdx` only (`replay/route.ts:128`); `GridOrder` has no execution-sequence column. Snapshot timestamps are candle opens of the sim-TF candle.
+- Combo shares the creation API (`route.ts:27`) and imports `pnlTracker`, `gridGenerator`, `orderMatcher` directly (`supervisor.ts:17-33`). Combo rows have `engineVersion = 0` (38 rows). Combo capital = sum of both grid configs (`supervisorRunner.ts:78`).
+- Schema columns from v1 (`engineVersion`, `effectiveStart/EndTime`, `realizedPnl`, `unrealizedPnl`, `totalFees`, `roundTrips`, `skippedEntries`, `GridConfiguration.enabled`, `GridOrder.quantity/slotIndex/positionId/role`) already exist in the uncommitted `prisma/schema.prisma` and in `prisma/dev.db`. All 256 saved runs are version 0. One new column (`GridOrder.fillSeq`) is still needed.
+- `computeMissingGaps` is window-naive: for [00:00, 00:07) it reports 00:05 missing although that candle is incomplete. `getCachedCandles` never fetches; `getOrFetchCandles` does.
+- ETHUSDT 5m cache: 2025-12-31 23:00 → 2026-07-22 13:25 UTC, one gap 2026-06-21 21:15 → 06-22 13:30 (194 bars). Saved grid configs reach 1520 levels (one row). `aggregate5mTo` is shared by Combo, ATR, DCA, optimizer and replay and stays untouched.
+- Acceptance fixture (latest saved run) `cmuvfbymi04wlh0y4smim3e1h` "MySimulation!!!": 5m, 2026-01-14 15:52:00 → 2026-05-31 14:52:00 UTC, fee 0.08%, adaptive off. Long: 60 lines 2700–3360, $100, $6,000. Short: 20 lines 1462.77–2557.77, $250, $5,000. 39,444 cached 5m candles in the window; 39,443 are complete under the window rule (first open 15:55, last complete open 14:45). The short grid lies entirely below the start price, so under the slot rule all 19 short slots open at market at the start.
+
+---
+
+## Review findings on plan v1 → resolution
+
+| # | Finding | Resolution in v2 |
+|---|---|---|
+| 1 | Short ledger undefined | Contract A below: cost basis reserved on entry, position valued as basis + signed unrealized, basis + realized released on close. Worked example and partial/negative-settlement tests in C1.8. |
+| 2 | Fees not reaching displays; replay contract incomplete | Contract C: snapshot `realizedPnl` stays *net of fees* (same meaning as legacy), so `realized + unrealized = equity − startingCapital` holds in every display. Simulation row carries gross realized, fees, unrealized, round-trips. Replay returns quantity/positionId/role/fillSeq; open positions derived client-side. PerformanceSummary and TradeLog updated in C1.7. |
+| 3 | Classic changes leak into Combo | Every classic rule is gated on `!comboBotEnabled` (validation, `engineVersion`, banner, rerun, startingCapital rule). Combo keeps existing capital handling and helper imports. API-level Combo regression test added in C1.8. |
+| 4 | Adaptive exposure rules unresolved | Contract F: pending entries resized/removed at each transition, baseline = `fullQuantity` stored at open, `entrySize = orderSize × risk × trend`, inventory target = `fullQuantity × risk` (trend never touches inventory), restoration eligibility, confirmation resets, renewed breakouts all defined. |
+| 5 | Gap / marketable fills unspecified | Contract B: open-point gap fills at the open price, segment fills at the limit price, deterministic intra-segment order, new orders eligible from the next segment, starved entries stay pending. Short custom targets must be positive and finite. (v3 refines: entry placement rule instead of a creation invariant; skip events recorded per streak.) |
+| 6 | Coverage check before normalization; warm-up uses non-fetching helper | Contract E: compute the effective window first, then call `computeMissingGaps(cached, effStart, effEnd, tf)`; the helper itself is unchanged. Warm-up uses `getOrFetchCandles` with aligned padding. |
+| 7 | Replay ordering / boundary contract | New `GridOrder.fillSeq`; replay sorts v1 fills by it. Snapshot timestamp = execution-candle open; bucket mapping by `floor(ts / bucketSec)`, so the final snapshot lands in the final bucket. Replay/API tests moved into C1. |
+| 8 | Wrong fixture | Fixture corrected to the exact saved run above; the symmetric 40-line configuration is kept as a separate synthetic fixture. |
+| — | Status corrections | Schema already pushed except `fillSeq`; "identical results" claim qualified; adaptive default off only for new runs. |
+
+## Review findings on plan v2 → resolution (v3)
+
+| # | Finding | Resolution in v3 |
+|---|---|---|
+| 1 | "Never marketable at creation" is false for custom targets (long [100,110] from 90, distance 5: exit 95, re-entry 100 marketable; short mirror 120 → 115 → sell at 110) | Contract B: entry orders are **placed only when the slot's entry line is on the eligible side of the current price**; otherwise the slot waits and is rechecked at each 5m open (same rule restoration uses). The invariant is replaced by a placement rule and asserted as "no pending entry is ever marketable at its placement point". Both examples are C2.4 tests. Gap-fill exits are eligible from the first segment after the open point (clarified). |
+| 2 | Warm-up fetch too short for S/R (50 bars) and `findLevels` accepts short history silently; `getOrFetchCandles` may throw | Contract E: fetch `max(warmupBars, 50, 20) + 1` complete aligned bars; Contract F: breakout evaluation requires exactly 50 preceding completed bars, trend requires `warmupBars`; neither evaluates before its requirement is met. A thrown fetch error is caught and treated as unavailable → in-window warm-up + `warmup_in_window` event. |
+| 3 | Renewed breakout during 0.25 restoration raises entry size to 0.5 | Contract F: on any de-risk transition `riskMultiplier = min(current, stageMultiplier)`; phases never increase the multiplier. C3.5 tests the 0.25 → renewed-breakout case. |
+| 4 | Per-candle skip events can exceed the page's 5,000-event replay guard | Contract B/C/D: skip diagnostics are recorded as **streaks** (one `entry_skipped` row per order per contiguous starved run, with first/last candle and count); `skippedEntries` keeps the exact per-candle total. Streak count is bounded by fills + pending orders, so the guard holds; a long-window underfunded replay test asserts it. Fills and structural events are never compacted. |
+| 5 | Pre-run candle fetch still uses raw dates | Contract E: a shared pure helper `normalizeExecutionWindow` (new `src/lib/data/executionWindow.ts`, no Prisma import) is used by the engine, the API and the page's classic pre-run fetch; Combo/DCA requests keep raw dates. Impact today is limited to a genuine Binance gap at the excluded trailing candle (the fetch already clamps coverage to the last closed candle), but the paths must agree. Tested through the request path. |
+| — | Doc correction | Status line corrected: no code changed in planning; schema diff pre-exists. |
+
+## Review findings on plan v3 → resolution (v4)
+
+| # | Finding | Resolution in v4 |
+|---|---|---|
+| 1 | Skip streaks still do not guarantee playable replay: a 2,000-line underfunded side can produce 1,999 initial streaks, closure cancels them, 1,999 restoration entries, 1,999 new streaks = 5,997 events with zero fills; the page guard refuses playback | Supersedes the v3 finding-4 resolution. Events are split into two classes (Contract C): **state events** (per side per signal transition, each carrying the full post-transition state of both sides; `reduction` becomes one aggregated row per side per transition) and **per-order diagnostics** (`entry_skipped` streaks, `restoration_entry`). All rows are stored in full. The replay payload carries state events only, with a hard cap: verbatim when ≤ 5,000, otherwise latest-per-chart-bucket (≤ 3,000 rows, lossless for state at chart resolution). Diagnostics never enter the replay payload; a new paginated `GET /api/simulations/[id]/events` endpoint (server-clamped `limit ≤ 500`) serves them independently of candle/fill playback, and a small `EventLog` UI pages through them. The page guard stays unchanged. The exact cancellation-and-restoration scenario is an acceptance test (C3.5) and the route-level behaviour is unit-tested in C1.8. A starved initial market entry is clarified: one-candle streak, slot becomes waiting; no market order is ever kept pending. |
+| 2 | "Refreshes the distance anchor" is undefined; with captured resistance 100 and a renewed breakout at 101, a later close of 104.5 closes the side under 100 but not under 101 | Phrase removed. Contract F: the captured boundary (resistance for up, support for down) is the **only** distance anchor for the whole cycle until the phase returns to `none`. Stage is evaluated at every completed 4H close from the close's distance beyond that boundary (< 2 % phase1, ≥ 2 % phase2, ≥ 4 % closed) under the `min` rule; while restoring, the close must also pass the volume confirmation. C3.5 tests the 2 % and 4 % thresholds after a renewed breakout at 101 (close 102 → 0.25, close 104.5 → closed), asserting the anchor is 100. |
+
+---
+
+## Contracts (binding for implementation and tests)
+
+### A. Per-side ledger
+- Each enabled side has `cash` (starts at `totalCapital`), a set of open positions, and `realizedGross`, `fees`.
+- Position fields: `id`, `slotIndex`, `side`, `entryPrice`, `quantity` (remaining), `fullQuantity` (= `orderSize / entryPrice`, used as the adaptive baseline; equal to `quantity` without adaptation), `basis` (= `entryPrice × quantity`), `entryFees`, `cycle`.
+- **Entry** (long buy or short sell) of quantity `q` at price `P`: requires `cash ≥ q × P + fee`, where `fee = q × P × feeRate`. Then `cash −= q × P + fee`, `basis += q × P`, `fees += fee`. Skipped when the requirement fails (see B).
+- **Mark**: long position value = `q × M`; short position value = `basis + (entryPrice − M) × q` = `(2 × entryPrice − M) × q`. `unrealized_side = Σ (value − basis)`.
+- **Exit / reduce** of quantity `q_c ≤ quantity` at price `X`: `realized = (X − entryPrice) × q_c` for long, `(entryPrice − X) × q_c` for short; `fee = q_c × X × feeRate`. `cash += q_c × entryPrice + realized − fee` (long: this equals `q_c × X − fee`), `basis −= q_c × entryPrice`, `realizedGross += realized`, `fees += fee`. The credit can be negative for a short (X > 2 × entryPrice); cash may then fall. Exits never require cash.
+- **Invariant** (asserted in tests at every fill and path point): `equity_side = cash + Σ basis + unrealized_side = totalCapital + realizedGross − fees + unrealized_side`.
+- Worked example: $1,000, short 1 unit at $100, cover at $110, no fee → cash 1000 → 900 (basis 100) → 900 + 100 − 10 = **990**.
+- **Round-trip**: a position is one completed trade when `quantity` reaches 0. Win/loss = all its realized legs − all its fees (entry + every exit/reduce leg). Each leg still records its own `pnl` (leg realized − leg fee) on the fill row.
+- **Exhaustion**: if `equity_side ≤ 0` at any fill or path point, every open position of that side is closed at that path price (role `exhaust`, fee charged), all its orders are removed, the side is stopped and its (negative) equity is kept. Event `capital_exhausted`.
+- Both sides are fully independent: no cash moves between sides. `startingCapital = Σ totalCapital over enabled sides`.
+
+### B. Execution
+- **Slots**: `gridLevels` = N price lines; slots `k = 0..N−2` are intervals `[L_k, L_{k+1}]`. Long slot: entry line `L_k`, exit line `L_{k+1}`. Short slot: entry line `L_{k+1}`, exit line `L_k`. One slot holds at most one position and one pending order at any time.
+- **Start** at the open `O` of the first execution candle. Long slot: `L_k < O` → limit buy at `L_k`; otherwise market buy at `O` (role `initial`, fee charged) with exit at `L_{k+1}`. Short slot: `L_{k+1} > O` → limit sell at `L_{k+1}`; otherwise market sell at `O` with buyback at `L_k`. Initial market entries are processed in slot order with the same capital rule as any entry.
+- **Quantity**: `q = orderSize / fillPrice` for every entry (limit or market). Exits always carry the position's actual remaining quantity.
+- **Path walk** per 5m candle with the existing `getIntraCandlePath` (open → low → high → close or open → high → low → close).
+  - *Open point*: every order marketable at `O` (buy with limit ≥ `O`, sell with limit ≤ `O`) fills **at `O`** (gap fill). Exits are processed before entries.
+  - *Segments*: an order fills at its **limit price** when the segment crosses it (`from > limit ≥ to` for buys, `from < limit ≤ to` for sells, inclusive of the endpoint). Orders crossed in the same segment are processed in path order (descending price on a down segment, ascending on an up segment); at an equal price exits precede entries.
+  - Orders created during a candle are eligible from the **next segment** onward. An exit created by a gap fill at the open point is therefore eligible in the first segment (open → low or open → high) of that same candle.
+  - **Entry placement rule**: an entry order for a slot is placed only when the slot's entry line is on the eligible side of the current price (`L_k < price` for long, `L_{k+1} > price` for short), where `price` is the fill price at the moment the slot becomes free or the 5m open at a recheck. A slot whose entry line is not eligible (e.g. long slot [100, 110] started at 90 with custom distance 5: initial buy 90, exit 95, line 100 above price; short mirror: start 120, exit 115, line 110 below price) stays **waiting** with no pending order and is rechecked at each 5m open. Consequence: no pending entry is ever marketable at its placement point; a test asserts this for every placement. Initial slot setup at the start is the only place where an ineligible line produces a market entry (Contract B, Start).
+  - Each fill is applied to the ledger immediately, so later fills in the same candle see updated cash (same-candle round-trips are allowed and fee-charged on both legs).
+- **Profit target**: `next_level` → exit at the slot's exit line. `custom` → exit = actual entry fill price ± `customProfitDistance`; the slot's re-entry stays at its original entry line. Validation: distance finite and > 0; for a short side every exit price must be positive, i.e. `L_1 − distance > 0`.
+- **Insufficient capital**: an entry whose requirement fails is **not** filled; it stays pending and is re-evaluated at the next path point/candle. Diagnostics are recorded as **streaks**: one `entry_skipped` event per order per contiguous starved run, created when the order is first skipped and finalized (details `{ side, slotIndex, firstCandleIdx, lastCandleIdx, skippedCandles, shortfall }`) when the order fills, is removed, or the run ends. `skippedEntries` = Σ `skippedCandles` over all streaks (exact per-candle count). Streak rows have **no useful bound** (every closure/restoration cycle can finalize and recreate one streak per slot), so they are **per-order diagnostics** (Contract C): stored in full, never part of the replay payload, served by the paginated events endpoint (Contract D). A starved **initial market entry** (Start) is recorded as a one-candle streak and its slot becomes waiting, rechecked at each 5m open under the entry placement rule; a market order is never kept pending.
+- **Order identity**: fills are matched to orders by id (no per-level cap). Pending orders are kept in price-sorted books per side so a segment only touches the crossed range (performance target: 2 × 2000 lines over one year of 5m in under 10 s, checked in C1.9).
+- **Snapshots** every `max(1, floor(n / 2000))` execution candles and at the last candle, valued at that candle's close. Drawdown is tracked from full equity at every fill and every path point, independent of snapshot thinning.
+- **End of data**: open positions are marked at the final close; nothing is force-closed.
+
+### C. Result contract (v1 rows)
+- `Simulation`: `engineVersion = 1`; `startingCapital` is computed in the API as Σ enabled `totalCapital` (no column); `finalEquity`; `totalPnl = finalEquity − startingCapital`; `totalPnlPct`; `realizedPnl` (gross, both sides); `totalFees`; `unrealizedPnl` (at final close); `longPnl` / `shortPnl` = per-side net total (`equity_side − totalCapital_side`, so they sum to `totalPnl`); `totalTrades` / `longTrades` / `shortTrades` = fill counts; `roundTrips`; `winCount` / `lossCount` over round-trips; `maxDrawdown` / `maxDrawdownPct` from full equity; `totalCandles` = effective 5m candles; `effectiveStartTime` / `effectiveEndTime`; `skippedEntries`.
+- `PnlSnapshot` (existing columns only): `realizedPnl`, `longRealizedPnl`, `shortRealizedPnl` are **net of fees** (gross − cumulative fees), the same meaning the legacy engine already stores, so `equity = startingCapital + realizedPnl + unrealizedPnl` and `longEquity = longCapital + longRealizedPnl + longUnrealizedPnl` hold exactly. `longOrdersActive` / `shortOrdersActive` = pending order counts. `timestamp` = open of the execution candle, `price` = its close.
+- `GridOrder` per fill: `side`, `level` (grid line the order was anchored to: entry line for entries/initial/reduce/exhaust, exit line for `next_level` exits, entry line for custom exits), `levelPrice` (limit price, or market price for market fills), `orderType`, `orderSize` (notional at fill), `fillPrice`, `fillTime`, `fillCandleIdx` (5m index), `fillSeq` (global 0-based execution order), `quantity`, `slotIndex`, `positionId` (`${side}-${slotIndex}-${cycle}`), `role` (`initial | entry | exit | reduce | exhaust`), `pairedOrderId` (exit → its entry fill id; entry → null), `pnl` (leg realized − leg fee for closing legs), `pnlPct` (vs `startingCapital`), `fees`.
+- `AdaptiveEvent.eventType` gains `entry_skipped`, `capital_exhausted`, `reduction`, `restoration_entry`, `warmup_in_window`. Every event is stored in full; nothing is compacted in storage.
+- **Event classes** (v1 rows):
+  - *State events* — `trend_change`, `breakout_detected`, `de_risk`, `re_entry`, `reduction`, `capital_exhausted`, `warmup_in_window`. At most one row per side per transition; `reduction` is **one aggregated row per side per risk transition** (`{ side, riskMultiplier, positionsReduced, quantityReduced, realized }`; the individual legs are `GridOrder` rows with role `reduce`). Every state event carries the full post-transition state of **both** sides: `longMultiplier` / `shortMultiplier` = effective entry-size multiplier (`risk × trend`) per side, `details.state = { long: { trend, riskPhase, risk }, short: { … } }`. Count is driven by 4H closes, not by order count.
+  - *Per-order diagnostics* — `entry_skipped` (streak rows) and `restoration_entry` (one per placed order, details `{ side, slotIndex, price, quantity }`). Count is driven by order count × transitions and is unbounded; they are never placed in the replay payload.
+- Detail GET (`/api/simulations/[id]`) adds `startingCapital` (v1 and classic v0: Σ enabled sides; Combo: Σ both sides, unchanged behaviour). List GET adds `engineVersion`, `comboBotEnabled`, `finalEquity`.
+
+### D. Replay contract (v1 rows)
+- Load effective 5m candles; chart buckets = `aggregateAligned(candles, chartMins)` with `chartMins = max(simTimeframeMins, 5 × snappedFactor)`; partial first/last buckets kept and flagged `complete: false`. Bucket index = position in that array; `bucketOf(ts) = index of floor(ts / bucketSec)`. Fills, snapshots and events are mapped by **timestamp**, so the final 5m candle and final snapshot land in the final bucket.
+- Fill order: `fillSeq` ascending (v0 keeps `fillCandleIdx`). Within a bucket several fills and reductions may occur; the client replays them in `fillSeq` order.
+- Snapshots that collapse into one bucket: last wins (existing rule).
+- Response adds `engineVersion`, `effectiveStart`, `effectiveEnd`, `chartTimeframeMins`, per-fill `quantity`, `positionId`, `role`, `fillSeq`; `longLevels` / `shortLevels` are empty for a disabled side.
+- Client derivation: open positions at playback index = positions whose entry/initial quantity minus exit/reduce/exhaust quantities (fills with bucket index ≤ current) is > 1e-9, grouped by `positionId`.
+- Events (v1): the replay route loads **state events only** (`eventType NOT IN (entry_skipped, restoration_entry)`), remaps them by timestamp and applies a hard cap `MAX_REPLAY_EVENTS = 5000` (same value as the page's `MAX_EVENTS_HINT`, `page.tsx:54`, which is kept unchanged): when the count is ≤ 5,000 every row passes verbatim; otherwise the route keeps the **latest state event per chart bucket** (≤ 3,000 rows because `MAX_CHART_CANDLES = 3000`). This is lossless for state at chart resolution because each state event carries both sides' full state (Contract C). `_compactionStats` gains `compactedStateEvents` and the response gains `diagnosticEventCount` (one count query) so the UI can offer the diagnostics log. Fills are never compacted.
+- **Events endpoint** (new, read-only): `GET /api/simulations/[id]/events?types=a,b&side=long|short&fromIdx=&toIdx=&offset=&limit=` → `{ events, total, offset, limit }`, ordered by `(candleIdx, id)`, `limit` clamped to 1..500 (default 200), `candleIdx` in 5m (DB) space with `timestamp`. Uses the existing `@@index([simulationId, candleIdx])`; no schema change. This is the only way per-order diagnostics reach the client, independent of candle/fill playback.
+- v0 path is byte-for-byte unchanged; `replayCompaction.test.ts` must keep passing.
+
+### E. Data window and coverage
+- `tf = 300 000 ms`. `effStart = ceil(start / tf) × tf`; `effEnd = min(floor(end / tf) × tf, floor(now / tf) × tf)`. Error "window holds no complete 5m candle" when `effEnd − effStart < tf`.
+- Required candles have `open ∈ [effStart, effEnd − tf]`; coverage = `computeMissingGaps(cached, effStart, effEnd, tf)` on candles fetched for `[effStart, effEnd)`. The helper is unchanged; only the inputs are normalized. Remaining gaps → the run fails naming each interval. No carry-forward.
+- `normalizeExecutionWindow(startMs, endMs, nowMs)` lives in a new pure module `src/lib/data/executionWindow.ts` (no Prisma import) and is the single implementation used by the engine, the API and the page. The page's classic pre-run `/api/candles` POST sends the normalized `[effStart, effEnd)` so the fetch and the engine require the same candles; Combo and DCA pre-run requests keep raw dates. The engine still re-checks and refuses.
+- Adaptive warm-up (C3): `requiredBars = max(warmupBars, 50 /* S/R */, 20 /* volume */)`; `warmStart = floor(effStart / 4h) × 4h − (requiredBars + 1) × 4h`; fetch via `getOrFetchCandles` for `[warmStart, effStart)` inside try/catch; aggregate aligned 4H; only bars that are complete and end ≤ `effStart` are used. If the fetch throws or fewer than `requiredBars` complete bars result, warm-up happens inside the window and a `warmup_in_window` event records the shortfall; the signals then wait for their own requirement (Contract F) before evaluating.
+
+### F. Adaptive model (C3)
+- Signals are shared and price-derived from **completed, clock-aligned 4H bars**; decisions taken at a 4H close apply from the next 5m open.
+- Per-side state `{ trendMultiplier ∈ {1, 0.5}, riskPhase ∈ {none, phase1, phase2, closed, restoring}, riskMultiplier ∈ {1, 0.5, 0.25, 0}, breakoutRange?: {support, resistance, direction}, confirmations }`.
+- **Trend**: EMA 12 / EMA 26 on completed 4H closes once ≥ `warmupBars` (field label "Adaptive warm-up bars", min 26) are available; bearish → long `trendMultiplier = 0.5`; bullish → short 0.5; neutral → 1. Trend affects **new entry sizes only**, never inventory, never risk phase.
+- **S/R**: while a side's `riskPhase = none`, S/R = `findLevels` over exactly the preceding 50 completed bars excluding the tested bar, recomputed every bar. **Breakout evaluation does not run until 50 preceding completed bars exist** (no silent short-history S/R). At breakout the range `{ support, resistance, direction }` is captured; the breakout boundary (`resistance` for an up-breakout, `support` for a down-breakout) is the **only** distance anchor for the whole cycle and is never moved until the phase returns to `none`.
+- **Breakout**: tested bar close beyond S/R and bar volume ≥ `volumeMultiplier × mean volume of the preceding 20 completed bars`. Up-breakout de-risks short; down-breakout de-risks long. Stage multipliers: phase1 at breakout 0.5, phase2 at 2 % beyond the captured level 0.25, closed at 4 % 0. **Every de-risk transition sets `riskMultiplier = min(currentRiskMultiplier, stageMultiplier)`**; a de-risk step can never raise the multiplier. Stage is evaluated at **every completed 4H close while `riskPhase ≠ none`** from the close's distance beyond the captured boundary: < 2 % → phase1 (0.5), ≥ 2 % → phase2 (0.25), ≥ 4 % → closed (0). While `riskPhase ∈ {phase1, phase2}` distance alone escalates; while `restoring`, the close must additionally pass the volume confirmation (renewed breakout). `riskPhase` describes the current lifecycle phase; the multiplier rules determine exposure, and a de-risk transition never increases the risk multiplier. A renewed breakout therefore re-enters the de-risk phases **without moving the anchor** and resets `confirmations` to 0. Example: captured resistance 100, restoring at 0.25, renewed breakout close 101 → phase1, stays 0.25; later close 102 → phase2, 0.25; close 104.5 → `closed`, 0 — measured from 100 (104.5 would **not** reach 4 % from 101).
+- **Entry size** = `orderSize × riskMultiplier × trendMultiplier`; at every change all pending entries of the side are resized (quantity computed at fill). `riskMultiplier = 0` removes all pending entries.
+- **Reductions** at the next 5m open after a risk transition: for each open position, target = `fullQuantity × riskMultiplier`; if `quantity > target`, a `reduce` fill of `quantity − target` at the open price (fee charged, realized recorded), exit order resized to the remaining quantity, or removed when the remaining quantity is 0. Event `reduction`.
+- **Restoration**: `confirmations` increments on each completed 4H close back inside the captured range and resets to 0 on any close outside it. At 3 confirmations: `riskMultiplier` steps 0 → 0.25 → 0.5 → 1, `confirmations` resets. At 1 the phase returns to `none`, the captured range is dropped and S/R recomputation resumes. Surviving reduced positions are never enlarged.
+- **Restoration entries**: while `riskMultiplier > 0`, at each 5m open every slot of the side with no position and no pending order gets a limit entry at its entry line at the current entry size, **only if** the line is on the correct side of the open (`L_k < open` for long, `L_{k+1} > open` for short). Slots whose entry line is not eligible are rechecked at each 5m open. No market inventory is ever created by restoration. Event `restoration_entry`.
+- Long-only + short-only must still equal the dual run with adaptation on (states are per side, signals are deterministic).
+
+---
+
+## Schema (one `prisma db push` in C1, then `prisma generate` + dev server restart)
+
+- Already present (uncommitted): `Simulation.engineVersion/effectiveStartTime/effectiveEndTime/realizedPnl/unrealizedPnl/totalFees/roundTrips/skippedEntries`, `GridConfiguration.enabled`, `GridOrder.quantity/slotIndex/positionId/role`.
+- New: `GridOrder.fillSeq Int?` and `@@index([simulationId, fillSeq])`.
+- `AdaptiveEvent.eventType` is a free string; new types listed in Contract C. No new table.
+
+---
+
+## Implementation phases and parallel schedule
+
+**Seven phases, three approval gates.** Contracts A–F and the detailed C1/C2/C3 todo items below remain binding. Phase numbers describe deliverables, not a requirement to finish every phase before starting the next. Use three implementation lanes plus one integration owner; parallelize only within the currently approved checkpoint. Approval is required before each checkpoint, not before each lane or phase within it.
+
+### Phase checklist
+
+- [x] **Phase 1 — Foundations (checkpoint 1):** complete C1.1 and freeze the classic core input/result, config, summary, replay and full two-side event-state interfaces. Separate state events from per-order diagnostics in the shared contract. Test windows and aligned buckets before the parallel lanes start.
+- [x] **Phase 2 — Pure core (checkpoint 1):** complete C1.2 and its C1.8 tests: directional slots, startup inventory, per-side ledger, deterministic execution, fees, starvation streaks, exhaustion, drawdown and `fillSeq`. Keep the ledger and execution in one lane.
+- [x] **Phase 3 — Backend and replay (checkpoint 1):** complete C1.3–C1.6, the Schema section and related C1.8 route tests. API validation, detail/list responses, replay and diagnostics can proceed alongside Phase 2 using fixtures; the engine wrapper is connected after the core passes its targeted tests.
+- [x] **Phase 4 — UI and core acceptance (checkpoint 1):** complete C1.7 against the frozen interfaces and fixture responses alongside Phases 2/3. Connect to real responses after backend integration; complete the remaining C1.8 checks, C1.9 and the checkpoint review.
+- [ ] **Phase 5 — Configuration completion (checkpoint 2):** complete C2.1–C2.5. Run sizing/custom targets, legacy rerun backend, and rerun UI/long-window tests in parallel, then integrate and verify the complete flows.
+- [ ] **Phase 6 — Adaptive signals (checkpoint 3):** complete C3.1 and signal-focused C3.5 tests. Freeze the transition interface before parallel work; test completed-bar causality, current lifecycle phases, fixed anchors, renewed breakouts and the mirrored 2%/4% thresholds.
+- [ ] **Phase 7 — Adaptive execution and acceptance (checkpoint 3):** develop C3.2 hooks and C3.4 UI alongside Phase 6 using fixture transitions/events. The integration owner adds C3.3 warm-up, connects signals to next-5m-open execution and lifts the API restriction only when integration is ready; complete all remaining C3.5 tests, C3.6 and the final review.
+
+### Parallel lanes by checkpoint
+
+| Checkpoint | Lane A | Lane B | Lane C | Integration owner / sequential finish |
+|---|---|---|---|---|
+| **1 — Core correctness** | Phase 2: pure core and accounting/execution tests | Phase 3: creation/detail/list APIs, v1 replay, paginated diagnostics and route tests | Phase 4: configuration/results UI, polling, trade log and diagnostics UI with fixture responses | First finish Phase 1; own schema changes and the single schema push/generation/restart, then engine loading/persistence integration. Connect the three lanes and finish C1.9. |
+| **2 — Configuration completion** | Percent sizing, custom targets and core tests (C2.1) | Legacy rerun endpoint and endpoint tests (C2.2) | Rerun UI and long-window/reload tests (C2.2–C2.4) | Integrate shared API validation changes and real UI requests; finish C2.5. |
+| **3 — Adaptive repair** | Phase 6: signal lifecycle and signal unit tests (C3.1) | Phase 7: reduction/restoration core hooks and fixture-transition tests (C3.2) | Phase 7: adaptive status, reductions display and warm-up label using fixture events (UI portion of C3.4) | First freeze transition interfaces. Own warm-up and engine timing integration (C3.3), enable adaptation through the API when ready, then finish combined C3.5/C3.6 acceptance. |
+
+**Dependency order:** shared contracts/foundations → parallel implementation and targeted tests → engine/API/UI integration → full acceptance → approval for the next checkpoint. Phases 2, much of 3, and the implementation portion of 4 overlap. Phase 7 hooks/UI overlap with Phase 6; combined adaptive acceptance waits for both.
+
+### Ownership and verification rules
+
+- The integration owner owns shared types, the engine wrapper, schema/database operations, task tracking and final integration. Each lane has exclusive ownership of its assigned implementation and test files; agree on ownership before dispatching work.
+- Lane B owns simulation routes in checkpoint 1. In checkpoints 2/3, shared creation-route validation/feature-enabling edits belong to the integration owner, while lane B owns its assigned endpoint or core hooks. Lane C owns frontend files throughout.
+- Each lane writes and runs its targeted tests alongside implementation. Use fixture API responses or signal transitions until the producing lane is ready; these fixtures are development/test inputs, not production fallbacks.
+- Split adaptive signal and execution unit tests into separately owned files; the integration owner owns the combined `classicGridAdaptive.test.ts` acceptance scenarios. Never let two lanes edit the same test file concurrently.
+- Apply the C1 schema additions once and regenerate Prisma before lane B compiles endpoints that use the new fields. Only the integration owner runs schema pushes, client generation and server restarts.
+- Run full TypeScript checking, `npm test`, `npm run build` and browser acceptance after integration at each checkpoint. Serialize the final build with Prisma generation/database operations; retain every existing acceptance requirement.
+- Checkpoint 1 must verify both replay event limits (6,000 diagnostics + 10 state events; 5,001 state events), unchanged legacy/Combo behavior, fixture reconciliation and the performance target. Checkpoint 3 must verify the ≥5,997-event cancellation/restoration scenario through storage, bounded replay and diagnostic pagination.
+- Do not start implementation in a later checkpoint before its approval. Keep the three gates; no additional approval is required between approved parallel lanes.
+
+---
+
+## Checkpoint 1 — Core correctness (approval gate 1)
+
+- [x] C1.1 `src/lib/data/alignedAggregator.ts` — `aggregateAligned(candles5m, minutes)` grouping by `floor(ts / bucket)`, each bucket carrying `complete: boolean` and `startTs`. `aggregate5mTo` untouched. Tests: unaligned start, internal gap, partial last bucket, 5m passthrough. `src/lib/data/executionWindow.ts` — pure `normalizeExecutionWindow` (Contract E), shared by engine, API and page.
+- [x] C1.2 `src/lib/simulation/classicGridCore.ts` — pure `runClassicGrid(input) → result` implementing Contracts A and B: slots, position ledger with `fullQuantity`, per-side cash, price-sorted order books, path walk with open-point gap fills, deterministic intra-segment order, next-segment eligibility, entry placement rule with waiting slots rechecked at each 5m open, starved entries with streak events, exhaustion, round-trips, drawdown at fills and path points, snapshots (net-of-fees realized), `fillSeq`, open positions marked at final close. Imports `getIntraCandlePath` and `generateGridLevels` only; no change to `orderMatcher.ts`, `pnlTracker.ts`, `gridGenerator.ts`.
+- [x] C1.3 `src/lib/simulation/engine.ts` — classic branch becomes load/persist wrapper: effective window (Contract E), coverage check, trim, call the core, persist fills with the full Contract C row shape, snapshots, events, results, `engineVersion = 1`. Legacy loop removed (legacy rows are only ever replayed). Combo branch (`sim.comboBotEnabled`) untouched.
+- [x] C1.4 `src/app/api/simulations/route.ts` — classic validation only when `!combo?.enabled`: dates parse and `start < end`; timeframe ∈ TIMEFRAMES; ≥ 1 enabled side; per enabled side `0 < lower < upper`, integer levels 2..2000, finite positive `orderSize` and `totalCapital`, strictly increasing generated levels; finite `feeRate ≥ 0`. Persist `enabled` per side (disabled side stored as sent, no bounds validation). Explicit 400s for `adaptiveEnabled=true`, `orderSizeType=percent`, `profitMode=custom` ("not available until checkpoint 2/3; switch it off in the panel"). Combo requests keep today's code path and persistence exactly.
+- [x] C1.5 GET list / GET detail — Contract C additions (`startingCapital` rule by mode). Existing fields kept. `SimulationSummary` type extended.
+- [x] C1.6 Replay route — branch on `engineVersion` (Contract D): v1 loads state events only, `MAX_REPLAY_EVENTS` cap with latest-per-bucket fallback, `diagnosticEventCount`, `compactedStateEvents`. v0 path unchanged. New `src/app/api/simulations/[id]/events/route.ts` — paginated diagnostics endpoint (Contract D), clamped limit, no engine or schema change.
+- [x] C1.7 UI — `GridSideConfig`: capital editable, no auto-overwrite, funding estimate "(N−1) slots × order size" shown. `ConfigPanel`: `DEFAULT_SIMULATION.adaptiveEnabled = false`, send `enabled` per side, bounds alert only for enabled sides, adaptive toggle shows "unavailable until checkpoint 3" note. `page.tsx`: classic pre-run candle fetch sends the normalized window (Combo/DCA unchanged); poll until terminal with "Stop waiting" (polling only, run id kept, reload resumes while running); remove capital reconstruction, use `startingCapital`; chart per side rendered when the replay returns levels for it; headline P&L = `equity − startingCapital`; open-position count derived per Contract D; effective window and actual chart timeframe shown; legacy banner for `engineVersion === 0 && !comboBotEnabled`; model-limitations note; replay failure surfaced instead of silent success. `PerformanceSummary`: Total P&L (net), Realized (gross), Fees, Unrealized, Round-trips, Fills, Win rate over round-trips, Max drawdown (full equity), skipped entries (count from the `Simulation` row, no events needed). New small `src/components/simulation/EventLog.tsx`: shown for classic v1 runs when `diagnosticEventCount > 0`; pages through per-order diagnostics via the events endpoint (type, side, slot, first/last candle, skipped candles, shortfall; 200 per page, "Load more"). `AdaptiveStatus` keeps reading state events from the replay payload and shows a one-line note when `compactedStateEvents > 0`. `TradeLog`: role, quantity, position id columns and CSV fields (legacy rows show "—").
+- [x] C1.8 Tests `src/__tests__/classicGridCore.test.ts`: direction (rising → long gains, short loses; no reverse positions); explicit startup inventory on both sides (grid above/below price); slot ownership and quantity conservation (repeat cycles, exact-boundary start, geometric); ledger invariant at every fill and path point for both sides; short example (1 @ 100 → cover 110 = 990), partial close, negative settlement; underfunded entry stays pending, one streak event with exact `skippedCandles`, filled later when cash returns; starved initial market entry → one-candle streak, slot waiting, re-armed as a limit entry at a later eligible 5m open; fees once per leg; exhaustion with deficit; causality (changing later candles leaves earlier fills unchanged); execution (same-candle round-trip, multiple levels crossed in one segment in path order, exits before entries at equal price, open-point gap fill at the open price with its exit eligible in the first segment, waiting slot re-armed at a later 5m open, no pending entry marketable at its placement point); metrics (hand-computed equity and drawdown; closed profit cannot hide a larger open loss); long-only + short-only = dual; timeframe independence of trading results. `src/__tests__/classicGridReplay.test.ts`: timestamp mapping, cap snapping, partial buckets, final snapshot in final bucket, `fillSeq` order, v0 untouched; **event payload**: a v1 row with 6,000 synthetic `entry_skipped` / `restoration_entry` rows and 10 state events returns exactly the 10 state events (payload passes the page guard `checkReplayPayload`), `diagnosticEventCount = 6000`, fills intact; a v1 row with 5,001 synthetic state events returns ≤ 3,000 rows with the latest-per-bucket state preserved; `src/__tests__/simulationEvents.test.ts`: events endpoint paging (`total`, `offset`, clamped `limit`, type/side/range filters, ordering) over the same 6,000 rows. `src/__tests__/simulationsApi.test.ts`: classic validation cases, disabled side, Combo request passes through unchanged (mocked prisma + engine). `src/__tests__/candleWindow.test.ts`: Contract E including the [00:00, 00:07) case, and the `/api/candles` POST receiving the normalized window from the classic pre-run path (request body asserted) while Combo/DCA bodies keep raw dates.
+- [x] C1.9 Gate *(reopened 2026-10-06 for the missing browser check; closed the same day by R8)*: `tsc`, `npm test`, `npm run build`, performance check (2 × 2000 lines, one year of 5m under 10 s). Rerun the fixture `cmuvfbymi04wlh0y4smim3e1h` with its exact saved configuration as a new v1 run; reconcile per-side ledgers, final equity and drawdown by hand (expect 19 initial market shorts, 39,443 candles, effective window 15:55 → 14:50 close); profitability not required. Synthetic symmetric fixture (two 40-line grids 1920–2300, $100, $4,000/side) also run and reconciled. Browser check: fresh dual run, single-side run, legacy run shows banner, Combo run unchanged.
+
+## Checkpoint 1 — review fixes (2026-10-06, before gate 2)
+
+Review of the checkpoint 1 implementation: 5 defects, all verified in code. Each fix is local; no schema, contract or Combo/DCA change.
+
+- [x] R1 Drawdown before fill fees (`classicGridCore.ts` `fillOrder`): equity is observed only after a fill, so at a segment fill (limit price) the pre-fill equity at that price — e.g. the peak just before an exit fee — is never seen. Fix: observe combined equity at the fill price before applying the fill (one `observe('point', price)` call after the `active` check). Open-point fills were already covered by `pathPoint(open)`. Test: reviewer's case ($1,000, size $100, fee 1%, buy 100 → exit 110 → re-buy 100) → max drawdown 2.10 (was 1.00).
+- [x] R2 Win rate denominator (`PerformanceSummary.tsx`): v1 uses `winCount + lossCount`, excluding break-even round-trips. Fix: denominator = `roundTrips` (fallback to win + loss when absent); shown whenever `roundTrips > 0`. Tests: 1 win + 1 break-even → 50.0 %; all break-even → 0.0 %.
+- [x] R3 Saved-run reload errors (`page.tsx` outer `catch`): a thrown fetch or invalid JSON clears `lastSimulationId` silently. Fix: show "Failed to load the last simulation: …" and keep the id (a 404 still removes it, as today). Tests: replay fetch throws; invalid replay JSON.
+- [x] R4 API window check (`api/simulations/route.ts` `validateClassicConfig`): call `normalizeExecutionWindow(start, end, Date.now())` and return its error as a 400 before the record is created (Contract E: page, API and engine). Tests: 00:00–00:02 window → 400; window entirely in the future → 400; record not created.
+- [x] R5 Legacy execution note (`page.tsx`): the "Execution on 5m candles; selected timeframe is chart-only" note is shown for v0 rows, but the old engine executed on the selected timeframe (`git show HEAD:src/lib/simulation/engine.ts:66`). Fix: that note only for v1; v0 shows "Legacy run: executed on the selected <tf> candles, not on 5m." Test: the v0 reload test asserts the legacy note and the absence of the 5m note.
+- [x] R6 Tracking corrections (this file): C1.9 reopened (done above); C2.3 gains the dense-playback item (fills are unbounded in the replay payload and the Trade Log renders every row — a 1M-fill replay must be shown to stay responsive or be bounded/paginated).
+- [x] R7 Gate: targeted tests, `npx tsc --noEmit`, `npm test`, `npm run build` (scratchpad copy; :3000 keeps running).
+- [x] R8 C1.9 browser acceptance: fresh dual run, single-side run, legacy run (banner + legacy note), Combo run unchanged — against a production build on :3100 from a scratchpad copy. (Method to confirm: Playwright driven by me, or manual check by you.)
+
+## Checkpoint 1 — second review fixes (2026-10-06)
+
+Three remaining defects, all in the saved-run reload of `page.tsx`. Rule: the saved id is removed **only** when the run is confirmed gone (HTTP 404) or confirmed failed; every temporary failure keeps the id and shows an error.
+
+- [x] S1 Detail GET on reload: only 404 removes `lastSimulationId` (silently, as today); any other non-OK status (500/503) shows "Failed to load the last simulation: HTTP <status> …" and keeps the id. Tests: 503 keeps the id + error; 404 removes it.
+- [x] S2 Resumed polling: `pollUntilDone` marks its terminal outcomes (404, `failed` status) with a small `TerminalRunError`; the reload's inner catch removes the id only for those. A thrown fetch or malformed JSON keeps the id and shows "Lost contact with the running simulation: … Reload the page to resume waiting." Tests: resumed poll with a network error, with malformed JSON (id kept, error shown), and with a `failed` run (id removed, run error shown).
+- [x] S3 Legacy note: no "not on 5m" suffix for legacy 5m runs ("Legacy run: executed on the selected 5m candles."). Tests: legacy 1h and legacy 5m rows.
+- [x] S4 Workspace type check: the reported Pionex `tpPricePct` error is already resolved by the separate in-progress Pionex task (`PionexParams.tpPricePct` exists, `tsc` clean at 21:52) — no change from this task; Pionex files untouched.
+- [x] S5 Gate: targeted tests, `tsc`, `npm test`, `npm run build` (scratchpad copy).
+
+## Checkpoint 1 — third review fix (2026-10-06)
+
+One remaining P2 in the saved-run reload of `page.tsx`: a run whose first detail response is already `status: 'failed'` was ignored silently (loading message cleared, no error, id kept, so every reload repeated it).
+
+- [x] T1 First detail GET returns `failed`: same handling as the polling path — remove `lastSimulationId` (confirmed terminal) and show `errorMessage` (fallback "Grid simulation failed"). One new `if` block before the `!== 'completed'` check.
+- [x] T2 Test: detail GET returns `failed` + "Coverage gap" on reload → error shown, id removed (`classicUiPage.test.tsx`).
+- [x] T3 Gate: targeted test, `npx tsc --noEmit`.
+
+### Review
+- `page.tsx`: 7 added lines in `loadSavedSimulation`; no other code path changed. The id-removal rule is unchanged (404 or confirmed failed only).
+- `classicUiPage.test.tsx`: one new test next to the resumed-polling failed-run test.
+
+## Checkpoint 2 — Configuration and replay completion (approval gate 2)
+
+- [ ] C2.1 Percent sizing (`orderSize = pct × totalCapital_side`, fixed for the run, `0 < pct ≤ 100`) and custom profit distance (Contract B) in the core; lift the C1.4 rejections; short positivity rule.
+- [ ] C2.2 `POST /api/simulations/[id]/rerun` — new run from a classic legacy row's config with `engineVersion = 1`, adaptation off, both sides enabled; 400 for Combo rows and for already-v1 rows. UI button on the legacy banner with the explanation. Never overwrites or auto-reruns.
+- [ ] C2.3 Long-window playback: one-year 5m run through the capped aligned replay; partial end bucket retained; dropped-row counters = 0. Dense playback (review 2026-10-06): fills are not capped in the replay payload and the Trade Log renders every row; verify a ~1M-fill replay stays responsive in the browser, otherwise bound or paginate the fills/Trade Log.
+- [ ] C2.4 Tests: percent/custom cases (including short positivity), the two deferred re-entry examples from Contract B (long [100,110] from 90 with distance 5 → slot waits after the 95 exit and re-arms once a 5m open is above 100; short mirror 120 → 115 → waits until an open is below 110), rerun endpoint, long-window replay.
+- [ ] C2.5 Gate + browser check: restored playback after reload, single-side, long window, rerun flow.
+
+## Checkpoint 3 — Adaptive repair (approval gate 3)
+
+- [ ] C3.1 `adaptiveLayer.ts` rewrite (sole consumer is `engine.ts`) implementing Contract F signals and per-side state; inputs are completed aligned 4H bars only.
+- [ ] C3.2 Core hooks: `applyRiskTransition(side, riskMultiplier)` (resize/remove pending entries, reductions at next 5m open, exit resizing, one aggregated `reduction` event per side per transition); every state event emitted with both sides' full state (Contract C); `applyTrend(side, trendMultiplier)` (pending entry sizes only); `placeRestorationEntries(side)` per the eligibility rule, rechecked each 5m open.
+- [ ] C3.3 Warm-up per Contract E (`requiredBars = max(warmupBars, 50, 20)`, fetching path in try/catch, aligned padding, `warmup_in_window` fallback on throw or shortfall). Warm-up bars are never traded.
+- [ ] C3.4 Lift the `adaptiveEnabled` rejection; rename the label to "Adaptive warm-up bars" (min 26); `AdaptiveStatus` / `CombinedPnL` show actual trend, risk phase, multipliers and executed reductions per side.
+- [ ] C3.5 Tests `classicGridAdaptive.test.ts`: comparable volumes (bar vs preceding 20), updating S/R excluding the tested bar, causal evaluation (a signal at a 4H close cannot act before the next 5m open), reductions hit `fullQuantity × risk` and never increase, zero exposure and no pending entries after `closed`, pending entries resized on transitions, staged restoration with limit entries only and eligibility recheck, confirmation reset on an outside close, renewed breakout while restoring at 0.25 keeps 0.25 (never 0.5) and resets confirmations, **anchor test**: captured resistance 100, renewed breakout close 101 while restoring → close 102 gives 0.25 and close 104.5 gives `closed` (anchor 100, not 101; mirrored for a down-breakout on support), no breakout evaluation before 50 preceding completed bars, **cancellation-and-restoration acceptance scenario**: 2,000-line underfunded long side → 1,999 initial streaks, down-breakout to `closed` removes the pending entries and finalizes the streaks, restoration places 1,999 `restoration_entry` rows that starve into 1,999 new streaks; assert ≥ 5,997 stored `AdaptiveEvent` rows, `skippedEntries` = Σ streak counts, the replay response holds only the state events and passes `checkReplayPayload`, and the events endpoint pages through every diagnostic row; trend changes never touch inventory, long-only + short-only = dual with adaptation on, warm-up fallback event both on a thrown fetch and on a short result.
+- [ ] C3.6 Gate + browser check with adaptation on; final review section with remaining model limitations.
+
+---
+
+## Review
+
+**Checkpoint 1 second review fixes — 2026-10-06 (S1–S5 done):**
+- *S1* Reload detail GET: only HTTP 404 forgets the saved run; 500/503 etc. show "Failed to load the last simulation: …" and keep the id.
+- *S2* `pollUntilDone` throws a module-level `TerminalRunError` for 404 and `failed` runs; the reload's inner catch drops the id only for those. A network error or malformed JSON keeps the id and shows "Lost contact with the running simulation: … Reload the page to resume waiting." (The fresh-run path never removed the id; unchanged.)
+- *S3* Legacy note ends with ", not on 5m." only when the legacy timeframe is not 5m (147 saved legacy 5m rows now read correctly).
+- *S4* The reported Pionex `tpPricePct` type error was already fixed by the separate in-progress Pionex task before this work started (`tsc` clean); no Pionex file touched here.
+- *Tests:* 6 new page tests (503 keeps id, 404 drops it, resumed poll network error / malformed JSON keep id, failed run drops id, legacy 5m note). With the old behaviour swapped back in, exactly the 4 regression tests fail (503, network, malformed, 5m note).
+- *Gate:* `tsc` exit 0; `npm test` 34 files / 531 tests pass (includes the parallel Pionex task's new tests); `next build` passes (scratchpad copy).
+
+**Checkpoint 1 review fixes — 2026-10-06 (R1–R8 done):**
+- *R1* `classicGridCore.ts`: `fillOrder` now observes combined equity at the fill price before the fill (one line). Reviewer case ($1,000, $100, 1 % fee, buy 100 → exit 110 → re-buy 100) gives max drawdown 2.10 (1.00 without the fix — verified by temporarily removing it). Existing saved v1 rows keep their old drawdown until rerun; the reviewer found both reconciled fixtures unaffected.
+- *R2* `PerformanceSummary.tsx`: v1 win rate = wins / `roundTrips` (break-even included; falls back to wins + losses when absent). Tests: 1W + 1 break-even → 50.0 %, all break-even → 0.0 %.
+- *R3* `page.tsx`: the reload's outer `catch` now shows "Failed to load the last simulation: …" and keeps `lastSimulationId` (only a 404 removes it). Tests: network error and invalid replay JSON.
+- *R4* `api/simulations/route.ts`: classic validation calls `normalizeExecutionWindow(start, end, now)` and returns its error as a 400 before the record is created; Combo/DCA paths untouched. Tests: 00:00–00:02 window, future window.
+- *R5* `page.tsx`: the "Execution on 5m candles; chart-only" note is v1-only; v0 classic rows show "Legacy run: executed on the selected <tf> candles, not on 5m." (old engine aggregated to the sim timeframe, `git show HEAD:src/lib/simulation/engine.ts:66`).
+- *R6* C1.9 reopened then closed by R8; dense-playback risk (uncapped fills, Trade Log renders every row) added to C2.3.
+- *R7 gate:* `tsc` clean; `npm test` 33 files / 511 tests pass (+6); `next build` passes (scratchpad copy).
+- *R8 browser acceptance* (Playwright installed in the scratchpad only, Chromium headless, production build of the scratchpad copy on :3100, now stopped; config seeded into localStorage, runs started by clicking "Run Simulation", Short switched off via its UI toggle): 41/41 checks pass — dual run (both charts, v1 cards incl. round-trip win rate, execution window and 5m note, no banner, reload restores the result), long-only run (only the long chart, `shortConfig.enabled = false` sent, long P&L 81.8963 = the dual run's long side exactly), legacy 1h row (banner + new legacy note, no 5m note, legacy cards), saved Combo row (Combo layout, no classic notes); no page/console errors anywhere. A fresh Combo run through the UI also completed (`engineVersion 0`, `comboBotEnabled`, starting capital 10,000; 0 trades in that week; no Combo file is in the diff). Screenshots in the session scratchpad `pw/shots/`.
+- *Test rows* in `prisma/dev.db`: 8 runs named "C1.9 browser …" (safe to delete), in addition to the 6 "C1.9 …" rows from the checkpoint run.
+- *Still open, by design:* checkpoints 2 and 3 (Phases 5–7) await their gates; dense-playback responsiveness is a C2.3 acceptance item.
+
+**Checkpoint 1 — 2026-10-06 (implemented; gate 2 pending):**
+- *Lane A (core):* `classicGridCore.ts` — pure `runClassicGrid(input, hooks?)` implementing Contracts A/B: directional slots, start inventory at the first 5m open, per-side ledger (exported `ledgerOpen/ledgerClose/...` for C3 reductions), line-indexed order books with bitsets, open-point gap fills, path-ordered segment fills, next-segment eligibility, entry placement rule with waiting slots re-armed at 5m opens, starvation streaks, exhaustion, round-trips, drawdown at every fill/path point, net-of-fees snapshots, `fillSeq`. Tiebreaks documented in the file header (exits → entries, long → short, slot). Exhaustion is checked per side at its own fills and at path points so single-side runs equal the dual run. 29 tests.
+- *Lane B (backend):* POST classic validation + the three "not available until checkpoint 2/3" 400s, `enabled` and `engineVersion = 1` persisted (Combo payload byte-identical, asserted); list adds `engineVersion/comboBotEnabled/finalEquity`; detail adds `startingCapital`; replay branches to `classicReplay.ts` for v1 (aligned buckets ≤ 3000, timestamp mapping, `fillSeq` order, state events only with the 5,000 cap and latest-per-bucket fallback, `diagnosticEventCount`); v0 path unchanged; new paginated `/api/simulations/[id]/events`. 43 tests.
+- *Lane C (UI):* editable capital + funding estimate, adaptive off by default with note, per-side `enabled`, normalized classic pre-run fetch, poll-until-terminal with "Stop waiting" and resume on reload, `startingCapital`, charts by returned levels, net headline P&L, open positions per Contract D, effective window / chart timeframe, legacy banner, model-limitations note, replay errors surfaced; PerformanceSummary v1 metrics; TradeLog role/qty/position; new `EventLog`; AdaptiveStatus compaction note. 20 tests.
+- *Integration:* `engine.ts` classic branch is now a load/persist wrapper (Contract E window + coverage refusal, fill ids derived from `fillSeq` for `pairedOrderId`, rows built per batch for million-fill runs); legacy loop removed, Combo branch untouched. `DEFAULT_SIMULATION.adaptiveEnabled = false`. `classicEngine.test.ts` (5): window, row shape, timeframe independence, coverage gap refusal, disabled side, Combo routing.
+- *Gate results:* `tsc` clean; `npm test` 33 files / 505 tests pass; `next build` passes (built from a scratchpad copy because :3000 is running); performance 2 × 2000 lines × 105,120 candles ≈ 0.85 s (1.4M fills).
+- *Fixture reconciliation* (new v1 rerun of `cmuvfbymi04wlh0y4smim3e1h`): 39,443 candles, window 15:55 → 14:50, 19 initial market shorts, 1 initial long; per-side ledgers recomputed from fill rows match persisted `longPnl` −1,877.53 / `shortPnl` +2,223.54 to 4 dp, ledger invariant gap ~1e-11, fees exact, final equity 11,346.01 (+346.01), max DD 867.73 (≥ snapshot DD 693.37). Synthetic symmetric fixture (2 × 40 lines 1920–2300, $4,000/side, Mar–May 2026): reconciles the same way (+839.30).
+- *HTTP checks* (production build on :3100): adaptive-on → 400; fresh dual run and long-only run complete; long side of the dual run equals the long-only run exactly; replay v1 shape OK (final snapshot in final bucket, `fillSeq` sorted, empty levels for the disabled side); underfunded run stores 1,845 streaks with Σ skippedCandles = `skippedEntries` = 156,816, replay carries 0 of them, events endpoint pages/filters them; legacy and Combo replays keep the old shape.
+- *Not done here:* visual browser check (no browser tool in this session) — please eyeball a dual run, a single-side run, a legacy run (banner) and a Combo run after restarting :3000. Test rows created in `prisma/dev.db`: 6 runs named "C1.9 …" (safe to delete).
+- *Model limitations (unchanged by design):* no leverage, funding, exchange liquidation, slippage, protective stop-loss or recentering; percent sizing, custom profit targets (checkpoint 2) and the adaptive layer (checkpoint 3) are rejected by the API.
+
+**Phase 1 — 2026-10-06:** `GridOrder.fillSeq` + `@@index([simulationId, fillSeq])` pushed (dev.db backed up first; 256 runs intact; Prisma client regenerated — restart the :3000 dev server). Added `alignedAggregator.ts` (clock-aligned buckets with `complete`/`startTs`, bucket lookup) and `executionWindow.ts` (`normalizeExecutionWindow`, `classicCandleFetchRange`) with tests (13 pass). Frozen shared contract in `src/lib/simulation/classicGridTypes.ts` (core input/result, fill rows, state vs diagnostic event classes, streak definition, replay constants); `ReplayData` / `SimulationSummary` / `GridSideConfig.enabled` extended in `types.ts`. `tsc` clean.
+
+**Planning update — 2026-10-06:** added the seven-phase checklist, parallel lanes, dependency order, file ownership and integration/test responsibilities; retained all three approval gates and existing C1/C2/C3 requirements. Corrected `riskPhase` to describe the current lifecycle phase. Documentation only; no implementation or database changes in this update.
+
+(implementation reviews pending — appended after each checkpoint)
+
+---
+
+# Review — Dual grid bot (Long grid + Short grid) simulator — 2026-10-06
+
+**Status:** Review only, no code changed. Scope: `src/lib/simulation/{engine,orderMatcher,pnlTracker,gridGenerator,adaptiveLayer}.ts`, `src/lib/data/aggregator.ts`, `/api/simulations`, grid UI.
+
+## Todo
+- [x] Read engine, order matcher, P&L tracker, grid generator, adaptive layer, aggregator, API route, config UI and result panels.
+- [x] Run the existing grid tests (13/13 pass).
+- [x] Run the real engine functions on synthetic paths (sideways, uptrend, downtrend, crash) and on cached ETH data (Feb–Mar 2026, 1m/5m/15m/1h/4h).
+- [x] Summarise findings.
+
+## Review
+- **Blocker:** Long grid and Short grid are the same neutral grid. Both place buys below and sells above the start price; the "already bought/sold" complementary orders never get the implied inventory, so they open opposite-direction positions. Every test run gave byte-identical long/short results; in an uptrend the Long grid ends net short and loses.
+- **High:** one order on every level (N orders on N lines), so after the first fill one level always holds two orders → double exposure and position drift.
+- **High:** Max drawdown and headline Total P&L use realized P&L only (synthetic crash: reported DD 0.00 vs 137 real).
+- **High:** adaptive layer (on by default) has look-ahead (includes the in-progress 4H bar), compares a 5m/1h candle's volume to a 4H average, uses S/R from the first 50 candles only, and "close" de-risk only freezes orders (also the take-profits), never closes positions.
+- **Medium:** no capital/margin/leverage/liquidation/funding; orderSizeType/profitMode=custom ignored; Long/Short toggles only hide charts (both sides always run and count); aggregation is index-based (194 missing 5m bars shift buckets); 1h default undercounts fills ~14% vs 1m.
+- Existing tests pass but cannot catch the blocker (they run each side alone; ratio 1.000).
+- For a true long futures grid, the `/pionex` backtester already models the initial buy, margin, liquidation and funding.
+
+---
+
 # Pionex — extend the 120-day backtest window limit — 2026-10-06
 
 **Cause:** a hard-coded `MAX_WINDOW_MS = 120 days` guard duplicated in `/api/pionex/run` and `/api/pionex/data`. No engine/data/UI limit behind it.
@@ -2629,3 +2928,76 @@ Confirm one of:
 - [ ] Ellenőrzés: `tsc` + vitest.
 
 ## Review
+
+---
+
+# Pionex — reinvest into I (compounding) — 2026-10-06
+
+**Problem:** Reinvest % currently moves the reinvested cycle profit into the extra margin E (`settleCycle`, trailing plan decision 3). I and the grid size (`slotNotional = I·lev/n`) never change, so every cycle trades the same quantities and final wealth is identical for any reinvest % (reinvested and withdrawn money are both counted in wealth). At 1× leverage the user wants the reinvested share to grow I so the next cycle trades a bigger grid.
+
+**New rule (replaces decision 3 of `tasks/pionex-trailing-plan.md` and §3.6 "I változatlan"):**
+- profit > 0: `I_next = I + reinvest% · profit`; `E_next = E_start + Σ cycle top-ups`; withdrawn `(1 − reinvest%) · profit`.
+- profit ≤ 0: `I_next = I`; `E_next = E_start + Σ cycle top-ups + profit` (unchanged); no withdrawal.
+- Restart from the bot's own money `I_next + E_next` (same wallet as before; `canRestart = E_next ≥ 0` unchanged). The new grid is sized from `I_next` via `newBotState`.
+- Profit‑TP threshold `TP% · I` now uses the current (grown) I automatically, since it reads `bot1.cfg.investment`.
+- Bot 2 keeps `I2 = I1_initial · m` (reads `config.bot`, untouched).
+
+## Todo
+- [x] `interventions.ts` `settleCycle`: return `iNext` as above; `eNext` on profit no longer includes `reinvest% · profit`. Update the §3.6 comment.
+- [x] `interventions.ts` restart (step 3): `bot1.cfg = { ..., investment: restart.iNext, extraMargin: restart.eNext }`; add `I_next` to the `cycle` event reason and `iNext` to the `cycleLog` record.
+- [x] `types.ts`: `CycleRecord.iNext?: number` (optional: runs saved before this change lack it); update the `investment` comment ("fixed" → grows with reinvest).
+- [x] `CycleTable.tsx`: add an `I_next` column next to `E_next` (shows `—` for old saved runs).
+- [x] Tests `pionexCycles.test.ts`: plan example → `iNext 1020, eNext 1950, withdrawn 80`; engine TP test: wallet after restart = I_next + E_next, `slotQty` grows; fix the `eNext` assertions at lines 65, 344, 390, 405; add one test that two consecutive profitable cycles compound I.
+- [x] Docs: one‑line update of decision 3 in `tasks/pionex-trailing-plan.md` and §3.6 in `tasks/pionex-backtester-plan.md`.
+- [x] Verify: `npx tsc --noEmit` + `npx vitest run src/__tests__/pionex*`.
+
+## Review
+- `src/lib/pionex/interventions.ts`: `settleCycle` returns `iNext` (I + reinvest·profit on a positive cycle, unchanged I otherwise); `eNext` no longer carries the reinvested share. The restart sets `investment: restart.iNext` on the bot config, so `newBotState` sizes the new grid from the grown I. `cycle` event reason and `cycleLog` record carry `I_next`. No other engine code touched.
+- `src/lib/pionex/types.ts`: `CycleRecord.iNext?: number` (optional for runs saved earlier); `investment` comment updated.
+- `src/components/pionex/CycleTable.tsx`: new `I_next` column before `E_next` (dash for old runs); open-row colSpan 7 → 8.
+- Side effects by design: the profit‑TP threshold `TP% · I` grows with I (reads `bot1.cfg.investment`); bot 2 still sized from the initial I (reads `config.bot`). The restart budget `I_next + E_next` equals the old `I + E_next`, so wallet/capital invariants are unchanged.
+- Tests: plan example → I_next 1020 / E_next 1950 / withdrawn 80; restart event qty = 5·105/102 after a 10‑profit cycle; two‑cycle log shows cycle 2 profit 13.34 = 1.15 × the fixed‑I 11.6 and compounds again. `tsc` clean; vitest 34 files / 533 tests green.
+- Docs: trailing plan decision 3 struck through with the new rule; backtester plan §3.6 rewritten with I_next and the new example.
+- Not changed: the E = 0 + losing‑TP case still ends in `restart_rejected` (E_next < 0), as before.
+
+---
+
+# Review findings (classic v4 checkpoint 1 + Pionex) — 2026-10-07
+
+All three reported P2 findings are confirmed in the code; the Pionex trailing / reinvest-into-I part had no finding, so nothing changes there.
+
+| # | Finding | Verified cause | Fix (minimal) |
+|---|---|---|---|
+| 1 | Forced close on exhaustion under-measures max drawdown | `pathPoint()` (`classicGridCore.ts:433`) runs `exhaustIfBroke` and only then `observe()`, so the pre-fee equity at the path price is never observed. `fillOrder()` already observes before acting. | `pathPoint`: observe first, then exhaust, and observe once more only when a side was exhausted (so the post-close equity is still recorded and the probe-hook count is unchanged when nothing happens). |
+| 2 | Late saved-run replay overwrites a fresh run | The mount effect's `loadSavedSimulation` (`page.tsx:243`) is not tied to the run it started for; a new run started while its replay request is in flight gets `setReplayData` from the old run while `simulation`/`initialCapital` are the new run's. | New `loadSeqRef` (one `useRef(0)`), bumped at the start of `handleRunSimulation`; `loadSavedSimulation` captures the value and after each `await` returns if it changed (detail fetch, poll, replay fetch). Also guards the `setIsRunning(false)` in the resumed-poll `finally`. |
+| 3 | Resumed polling continues after the page unmounts | The mount effect has no cleanup; `pollUntilDone` keeps looping forever on a stuck run or a non-OK status. | Effect cleanup: `pollTokenRef.current++` (ends the loop, drops late responses) and `loadSeqRef.current++` (the saved load discards its remaining responses). |
+
+## Todo
+- [x] 1. `classicGridCore.ts` `pathPoint`: observe → exhaust → observe-if-exhausted. Regression test in `classicGridCore.test.ts` with the review's configuration (1% fee, long [100,400] ×2 size 500 cap 1000, short [90,100] ×2 size 100 cap 102, one candle 100/250/100/200): max DD 252.50 (fails with 250.00 before the fix).
+- [x] 2. `page.tsx`: `loadSeqRef` guard in `loadSavedSimulation`, bump in `handleRunSimulation`. Test in `classicUiPage.test.tsx`: saved replay response delayed, new run started in between → headline shows the new run's P&L, old replay ignored.
+- [x] 3. `page.tsx`: mount-effect cleanup invalidating both refs. Test: unmount during resumed polling → no further status requests.
+- [x] 4. `npx tsc --noEmit`, `npm test`, `npm run build` (from a scratchpad copy, dev server shares `.next`).
+
+Out of scope: nothing else in the review needs code (performance, fixtures, Pionex checks all passed).
+
+## Review
+- `src/lib/simulation/classicGridCore.ts` `pathPoint`: equity is now observed at the path price *before* the exhaustion check; a second observation follows only when a side was actually force-closed. Normal path points produce the same single probe as before, so the ledger-invariant hook test is unaffected.
+- `src/app/page.tsx`: one new ref (`loadSeqRef`). `handleRunSimulation` bumps it; `loadSavedSimulation` captures it and returns after any `await` whose result is stale (detail, poll, replay, and the catch path). The resumed-poll `finally` only resets `isRunning` when still current, so a saved-run poll cannot clear the new run's running state. The mount effect now returns a cleanup that bumps `pollTokenRef` and `loadSeqRef`, ending the polling loop and dropping late responses on unmount.
+- Tests: 3 new (core drawdown, late replay race, unmount stops polling). Each was confirmed to fail on the pre-fix code and pass after. Full suite 34 files / 536 tests green, `tsc` clean, production build clean from an isolated copy.
+- The review's candle description ("egy 100/250/100/200 gyertya") is a single OHLC candle; four flat candles at those prices give DD 752.50 because of the dip to 100 after the exhaustion.
+
+## Follow-up review (2026-10-07) — remaining guard gaps, all fixed
+- [x] `pollUntilDone`: token check after the status body is parsed, so a late poll JSON (e.g. `failed`) cannot throw into the caller and drop the saved id.
+- [x] `loadSavedSimulation`: `stale()` after the status JSON, after both error-body reads, and at the top of the resumed-poll `catch`, so no late status/error response touches state, the saved id, or starts polling.
+- [x] Mount effect: the unmount cleanup is registered unconditionally; the loader only runs when a saved id exists. A fresh run started on a page with no saved id now stops polling on unmount.
+- Tests: 3 new in `classicUiPage.test.tsx` (late status JSON vs. completed new run; late failed poll JSON after unmount keeps the id; fresh run without saved id stops polling on unmount). Each fails with the guards stripped, passes with them. Suite 34 files / 539 tests green, `tsc` clean, isolated build clean.
+
+## Follow-up review 2 (2026-10-07) — late create response after unmount
+- [x] `page.tsx` `handleRunSimulation`: capture `loadSeqRef` after the bump; after the create JSON, return when the sequence changed (unmount bumps it), so a late response cannot save `lastSimulationId` or start a fresh `pollUntilDone`.
+- [x] Regression test in `classicUiPage.test.tsx`: saved sim3, create request resolves with sim2 only after unmount → id stays sim3, no sim2 status requests.
+- [x] `npx tsc --noEmit`, `npm test`, isolated `next build`.
+
+### Review
+- Cause: `pollUntilDone` claims a new `pollTokenRef` token when it starts, so the unmount bump only stops loops already running. A create response arriving after unmount saved the id and started a brand-new loop that nothing could stop.
+- Fix (2 lines): the handler keeps the sequence value it bumped (`const seq = ++loadSeqRef.current`) and returns right after the create JSON when the sequence no longer matches. The only other bump during a run is the unmount cleanup (the Run button is disabled while `isRunning`), so this cannot abort a live run. Candle/DCA responses after unmount only hit no-op state setters, so no further guards are needed.
+- Test fails with the guard removed, passes with it. Suite 34 files / 540 tests green, `tsc` clean.

@@ -3,9 +3,11 @@
 // series thinned to 5m (bucket minima kept), and the full event stream.
 
 import { computeMetrics, decideVerdict, RunMetrics, thinSamples } from './metrics';
-import { LedgerEvent, PathId, RunResult, Sample, Verdict } from './types';
+import { CycleRecord, LedgerEvent, PathId, RunResult, Sample, Verdict } from './types';
 
-export type RunSummary = Omit<RunResult, 'events' | 'samples'>;
+// A loaded summary may predate the cycle log: a missing `cycleLog` = no detailed data
+// (old saved run), an empty array = no closed cycle.
+export type RunSummary = Omit<RunResult, 'events' | 'samples' | 'cycleLog'> & { cycleLog?: CycleRecord[] };
 
 export interface PathReport {
   summary: RunSummary;

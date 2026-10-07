@@ -18,7 +18,13 @@ export async function GET(
       return NextResponse.json({ error: 'Simulation not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ simulation });
+    // Classic (v1 and legacy v0): Σ capital of enabled sides. Combo: Σ both
+    // sides (unchanged behaviour, supervisorRunner.ts).
+    const startingCapital = simulation.gridConfigs
+      .filter(c => simulation.comboBotEnabled || c.enabled)
+      .reduce((sum, c) => sum + c.totalCapital, 0);
+
+    return NextResponse.json({ simulation: { ...simulation, startingCapital } });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });

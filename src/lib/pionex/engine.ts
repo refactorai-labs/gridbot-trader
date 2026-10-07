@@ -24,7 +24,7 @@ import { BotRun, closesFiveMinute, describePending, emptyPending, evaluateRules,
 import { PionexLedger } from './ledger';
 import { currentLiqPrice, liqDistancePct } from './liquidation';
 import { checkLiquidation, markLastOffset, runSegment, StepContext } from './segments';
-import { LedgerEvent, PathId, PionexRunConfig, RunResult, Sample } from './types';
+import { CycleRecord, LedgerEvent, PathId, PionexRunConfig, RunResult, Sample } from './types';
 
 const MINUTE_MS = 60_000;
 
@@ -50,6 +50,9 @@ export function runPionex(
     cycles: 0,
     liquidatedAtMs: null,
     startLiq: null,
+    cycleStartMs: 0,
+    cycleStartPrice: 0,
+    cycleStartRounds: 0,
   };
   const runs: BotRun[] = [bot1];
   const markByTs = new Map(mark1m.map(c => [c.timestamp, c]));
@@ -58,6 +61,7 @@ export function runPionex(
 
   const events: LedgerEvent[] = [];
   const samples: Sample[] = [];
+  const cycleLog: CycleRecord[] = [];
   let maxInvariantError = 0;
   let now = 0;
   const sumWallets = () => runs.reduce((s, r) => s + r.ledger.bot.wallet, 0);
@@ -142,6 +146,8 @@ export function runPionex(
     // 3. Interventions at the last open (taker).
     if (bot1.startPrice === null) {
       bot1.startPrice = last.open;
+      bot1.cycleStartMs = now;
+      bot1.cycleStartPrice = last.open;
       ctx.sample(modelOpen); // baseline: full capital before the start fees
       const need = cfg.investment + cfg.extraMargin;
       if (!bot1.ledger.fund(need)) {
@@ -165,7 +171,7 @@ export function runPionex(
       if (fundingBucket(t.atMs) === fundingBucket(now)) pending.topUps.push({ bot: 0, amount: t.amount });
     }
     if (pending.bot2) bot2Attempted = true;
-    executePending(ctx, runs, pending, config, last.open, mark.open, () => checkAndSample(last.open, modelOpen));
+    executePending(ctx, runs, pending, config, last.open, mark.open, () => checkAndSample(last.open, modelOpen), cycleLog);
     pending = emptyPending();
 
     // 4. Intra-candle segments along the chosen path.
@@ -230,6 +236,7 @@ export function runPionex(
       endLiq: r.ledger.bot.status === 'active' ? liqLevels(r.ledger, config) : null,
     })),
     totals: { ...capital.totals },
+    cycleLog,
     events,
     samples,
     maxInvariantError,

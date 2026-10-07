@@ -46,7 +46,7 @@ export const DEFAULT_GRID_CONFIG = {
 // Default simulation settings
 export const DEFAULT_SIMULATION = {
   feeRate: 0.001, // 0.1%
-  adaptiveEnabled: true,
+  adaptiveEnabled: false,
   emaPeriod: 50,
   volumeMultiplier: 1.5,
   timeframe: '1h',

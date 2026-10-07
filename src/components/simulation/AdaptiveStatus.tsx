@@ -14,9 +14,16 @@ interface AdaptiveEvent {
 interface AdaptiveStatusProps {
   events: AdaptiveEvent[];
   currentCandleIdx: number;
+  compactedStateEvents?: number; // classic v1: state events thinned by the replay route
 }
 
-export default function AdaptiveStatus({ events, currentCandleIdx }: AdaptiveStatusProps) {
+export default function AdaptiveStatus({ events, currentCandleIdx, compactedStateEvents }: AdaptiveStatusProps) {
+  const compactionNote = compactedStateEvents != null && compactedStateEvents > 0 && (
+    <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+      {compactedStateEvents.toLocaleString()} state events thinned to the latest per chart candle (all are stored).
+    </p>
+  );
+
   // Show only events up to current playback position
   const visibleEvents = events
     .filter(e => e.candleIdx <= currentCandleIdx)
@@ -30,6 +37,7 @@ export default function AdaptiveStatus({ events, currentCandleIdx }: AdaptiveSta
           <span className="card-header text-xs">Adaptive Events</span>
         </div>
         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No events yet</p>
+        {compactionNote}
       </div>
     );
   }
@@ -93,10 +101,19 @@ export default function AdaptiveStatus({ events, currentCandleIdx }: AdaptiveSta
                   </span>
                 </>
               )}
+              {event.eventType === 'capital_exhausted' && (
+                <>
+                  <AlertTriangle size={12} className="text-grid-short flex-shrink-0" />
+                  <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>
+                    Capital exhausted {details.side}
+                  </span>
+                </>
+              )}
             </div>
           );
         })}
       </div>
+      {compactionNote}
     </div>
   );
 }

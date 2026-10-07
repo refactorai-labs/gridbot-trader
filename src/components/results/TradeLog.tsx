@@ -13,6 +13,10 @@ interface TradeEntry {
   fillCandleIdx?: number | null;
   pnl?: number | null;
   status: string;
+  // Classic engine v1 only (null/absent on legacy rows → shown as "—")
+  role?: string | null;
+  quantity?: number | null;
+  positionId?: string | null;
 }
 
 interface TradeLogProps {
@@ -27,10 +31,10 @@ export default function TradeLog({ trades }: TradeLogProps) {
     : trades.filter(t => t.side === sideFilter);
 
   const exportCSV = () => {
-    const headers = ['Side', 'Type', 'Level', 'Price', 'Fill Price', 'P&L', 'Status'];
+    const headers = ['Side', 'Type', 'Role', 'Level', 'Price', 'Fill Price', 'Quantity', 'Position', 'P&L', 'Status'];
     const rows = filtered.map(t => [
-      t.side, t.orderType, t.level, t.levelPrice,
-      t.fillPrice ?? '', t.pnl?.toFixed(4) ?? '', t.status,
+      t.side, t.orderType, t.role ?? '', t.level, t.levelPrice,
+      t.fillPrice ?? '', t.quantity ?? '', t.positionId ?? '', t.pnl?.toFixed(4) ?? '', t.status,
     ]);
 
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -90,15 +94,18 @@ export default function TradeLog({ trades }: TradeLogProps) {
             <tr>
               <th>Side</th>
               <th>Type</th>
+              <th>Role</th>
               <th>Lvl</th>
               <th>Price</th>
+              <th>Qty</th>
+              <th>Position</th>
               <th style={{ textAlign: 'right' }}>P&amp;L</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
+                <td colSpan={8} className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
                   No trades to display
                 </td>
               </tr>
@@ -116,10 +123,13 @@ export default function TradeLog({ trades }: TradeLogProps) {
                   <td style={{ color: 'var(--text-muted)', fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                     {trade.orderType}
                   </td>
+                  <td style={{ color: 'var(--text-muted)', fontSize: 10.5 }}>{trade.role ?? '—'}</td>
                   <td style={{ color: 'var(--text-secondary)' }}>L{trade.level}</td>
                   <td style={{ color: 'var(--text-primary)' }}>
                     ${trade.fillPrice?.toFixed(2) ?? trade.levelPrice.toFixed(2)}
                   </td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{trade.quantity != null ? trade.quantity.toFixed(6) : '—'}</td>
+                  <td style={{ color: 'var(--text-muted)', fontSize: 10.5 }}>{trade.positionId ?? '—'}</td>
                   <td
                     className={trade.pnl == null ? '' : trade.pnl >= 0 ? 'text-profit' : 'text-loss'}
                     style={{ textAlign: 'right', fontWeight: 600 }}

@@ -1,14 +1,22 @@
 'use client';
 
-import { TrendingUp, TrendingDown, BarChart3, Target, Activity } from 'lucide-react';
+import { TrendingUp, TrendingDown, BarChart3, Target, Activity, AlertCircle } from 'lucide-react';
 import { SimulationSummary } from '@/lib/types';
 
 interface PerformanceSummaryProps {
   simulation: SimulationSummary;
 }
 
+const money = (v: number | null | undefined) => (v != null ? `$${v.toFixed(2)}` : '—');
+const signColor = (v: number | null | undefined) => ((v ?? 0) >= 0 ? 'text-profit' : 'text-loss');
+
 export default function PerformanceSummary({ simulation }: PerformanceSummaryProps) {
-  const winRate = simulation.totalTrades && simulation.winCount != null
+  // Classic engine v1 rows: win rate over all round-trips (break-even included), totalTrades = fills.
+  const isClassicV1 = !simulation.comboBotEnabled && (simulation.engineVersion ?? 0) >= 1;
+  const v1Trips = simulation.roundTrips ?? (simulation.winCount ?? 0) + (simulation.lossCount ?? 0);
+  const winRate = isClassicV1
+    ? (v1Trips > 0 ? ((simulation.winCount ?? 0) / v1Trips) * 100 : 0)
+    : simulation.totalTrades && simulation.winCount != null
     ? ((simulation.winCount / (simulation.winCount + (simulation.lossCount || 0))) * 100)
     : 0;
 
@@ -16,12 +24,31 @@ export default function PerformanceSummary({ simulation }: PerformanceSummaryPro
   const totalPnlPct = simulation.totalPnlPct ?? 0;
   const totalPnlPositive = totalPnl >= 0;
   const winRateGood = winRate >= 50;
-  const winLossSummary =
-    simulation.winCount != null
+  const winLossSummary = isClassicV1
+    ? `${simulation.winCount ?? 0}W / ${simulation.lossCount ?? 0}L · ${v1Trips} round-trips`
+    : simulation.winCount != null
       ? `${simulation.winCount}W / ${simulation.lossCount ?? 0}L · ${simulation.totalTrades ?? 0} trades`
       : `${simulation.totalTrades ?? 0} trades`;
+  const showWinRate = isClassicV1 ? v1Trips > 0 : winRate > 0;
 
-  const secondary = [
+  const maxDrawdownStat = {
+    label: 'Max Drawdown',
+    value: money(simulation.maxDrawdown),
+    pct: simulation.maxDrawdownPct != null ? `${simulation.maxDrawdownPct.toFixed(2)}%` : '',
+    color: 'text-loss',
+    icon: Activity,
+  };
+
+  const secondary: { label: string; value: string; pct?: string; color: string; icon: typeof Activity }[] = isClassicV1 ? [
+    { label: 'Realized (gross)', value: money(simulation.realizedPnl), color: signColor(simulation.realizedPnl), icon: BarChart3 },
+    { label: 'Fees', value: money(simulation.totalFees), color: 'text-loss', icon: BarChart3 },
+    { label: 'Unrealized', value: money(simulation.unrealizedPnl), color: signColor(simulation.unrealizedPnl), icon: BarChart3 },
+    maxDrawdownStat,
+    { label: 'Long P&L', value: money(simulation.longPnl), color: signColor(simulation.longPnl), icon: TrendingUp },
+    { label: 'Short P&L', value: money(simulation.shortPnl), color: signColor(simulation.shortPnl), icon: TrendingDown },
+    { label: 'Fills', value: simulation.totalTrades?.toString() ?? '—', color: '', icon: BarChart3 },
+    { label: 'Skipped Entries', value: simulation.skippedEntries?.toString() ?? '—', color: '', icon: AlertCircle },
+  ] : [
     {
       label: 'Long P&L',
       value: simulation.longPnl != null ? `$${simulation.longPnl.toFixed(2)}` : '—',
@@ -40,13 +67,7 @@ export default function PerformanceSummary({ simulation }: PerformanceSummaryPro
       color: '',
       icon: BarChart3,
     },
-    {
-      label: 'Max Drawdown',
-      value: simulation.maxDrawdown != null ? `$${simulation.maxDrawdown.toFixed(2)}` : '—',
-      pct: simulation.maxDrawdownPct != null ? `${simulation.maxDrawdownPct.toFixed(2)}%` : '',
-      color: 'text-loss',
-      icon: Activity,
-    },
+    maxDrawdownStat,
   ];
 
   return (
@@ -56,7 +77,7 @@ export default function PerformanceSummary({ simulation }: PerformanceSummaryPro
       {/* Hero metrics */}
       <div className="perf-hero-grid">
         <div className={`perf-hero-card ${totalPnlPositive ? 'profit' : 'loss'}`}>
-          <div className="perf-hero-label">Total P&amp;L</div>
+          <div className="perf-hero-label">{isClassicV1 ? 'Total P&L (net)' : 'Total P&L'}</div>
           <div className="perf-hero-value">
             {simulation.totalPnl != null
               ? `${totalPnl >= 0 ? '+' : '-'}$${Math.abs(totalPnl).toFixed(2)}`
@@ -74,12 +95,12 @@ export default function PerformanceSummary({ simulation }: PerformanceSummaryPro
           <div className="perf-hero-label">
             <span className="inline-flex items-center gap-1.5">
               <Target size={10} style={{ color: 'var(--text-muted)' }} />
-              Win Rate
+              {isClassicV1 ? 'Win Rate (round-trips)' : 'Win Rate'}
             </span>
           </div>
-          <div className="perf-hero-value" style={{ color: winRateGood ? 'var(--grid-long)' : (winRate > 0 ? 'var(--grid-short)' : 'var(--text-primary)') }}>
-            {winRate > 0 ? winRate.toFixed(1) : '—'}
-            {winRate > 0 && <span className="suffix">%</span>}
+          <div className="perf-hero-value" style={{ color: winRateGood ? 'var(--grid-long)' : (showWinRate ? 'var(--grid-short)' : 'var(--text-primary)') }}>
+            {showWinRate ? winRate.toFixed(1) : '—'}
+            {showWinRate && <span className="suffix">%</span>}
           </div>
           <div className="perf-hero-sub">{winLossSummary}</div>
         </div>

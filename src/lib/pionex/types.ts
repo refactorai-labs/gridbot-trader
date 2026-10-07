@@ -8,7 +8,7 @@ export interface PionexBotConfig {
   upper: number;
   gridCount: number;
   mode: GridMode;
-  investment: number;  // I — fixed, sizes the grid (plan §3.1)
+  investment: number;  // I — sizes the grid (plan §3.1); grows by reinvest% · profit at each TP restart
   extraMargin: number; // E — extra isolated margin
   leverage: number;
 }
@@ -28,6 +28,26 @@ export interface ScheduledTopUp {
 export interface CycleRule {
   takeProfitPct: number; // TP when netIfClosed ≥ takeProfitPct · I (plan §3.6)
   reinvestPct: number;   // share of a positive cycle profit added to E_next; the rest is withdrawn
+  // Optional price TP: 5m close ≥ cycle start price · (1 + pct) also closes the cycle
+  // (trailing plan, decisions 1, 6, 7). Absent / null = off; the profit TP stays mandatory.
+  takeProfitPricePct?: number | null;
+}
+
+export type CycleTrigger = 'profit' | 'price';
+
+// One closed cycle of bot 1 (trailing plan, decision 10).
+export interface CycleRecord {
+  index: number;      // 1-based cycle number
+  startMs: number;    // (re)start 1m open
+  endMs: number;      // TP close 1m open
+  startPrice: number; // (re)start price = price TP reference
+  closePrice: number;
+  rounds: number;     // grid rounds within the cycle
+  profit: number;     // settleCycle profit (may be negative)
+  withdrawn: number;
+  iNext?: number;     // I of the next cycle; missing in runs saved before compounding
+  eNext: number;
+  trigger: CycleTrigger;
 }
 
 export interface TopUpRule {
@@ -155,6 +175,7 @@ export interface RunResult {
   withdrawn: number;
   bots: BotSummary[];
   totals: LedgerTotals;
+  cycleLog: CycleRecord[]; // bot 1's closed cycles, in order
   events: LedgerEvent[];
   samples: Sample[];        // full event stream (metrics are computed on this)
   maxInvariantError: number;

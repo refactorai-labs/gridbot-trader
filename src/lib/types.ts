@@ -31,6 +31,7 @@ export interface GridSideConfig {
   totalCapital: number;
   profitMode: 'next_level' | 'custom';
   customProfitDistance?: number;
+  enabled?: boolean; // classic grid: side runs only when true (default true)
 }
 
 export interface SimulationConfig {
@@ -135,6 +136,13 @@ export interface ReplayData {
     fillPrice?: number;
     fillCandleIdx?: number;
     pnl?: number;
+    // Classic engine v1 only (null/absent on legacy rows)
+    quantity?: number | null;
+    positionId?: string | null;
+    role?: 'initial' | 'entry' | 'exit' | 'reduce' | 'exhaust' | null;
+    fillSeq?: number | null;
+    fillTime?: number | null; // seconds
+    fees?: number | null;
   }[];
   adaptiveEvents: {
     candleIdx: number;
@@ -152,6 +160,18 @@ export interface ReplayData {
   // when the raw count would crash the renderer (combo @ 5m × multi-month).
   chartTimeframeMins?: number;
   avwapAnchor?: AVWAPAnchorData | null;
+  // Classic engine v1 only
+  engineVersion?: number;
+  effectiveStart?: number;        // seconds, first execution 5m open
+  effectiveEnd?: number;          // seconds, exclusive end of the execution window
+  diagnosticEventCount?: number;  // per-order diagnostics, served by /api/simulations/[id]/events
+  _compactionStats?: {
+    rawEventCount: number;
+    emittedEventCount: number;
+    droppedFailedChecks?: number;
+    droppedOutOfRange: number;
+    compactedStateEvents?: number;
+  };
 }
 
 export interface SimulationSummary {
@@ -184,6 +204,32 @@ export interface SimulationSummary {
   totalFundingCost?: number | null;
   longFundingCost?: number | null;
   shortFundingCost?: number | null;
+  // Classic engine v1 (Contract C). startingCapital is computed by the detail GET.
+  engineVersion?: number;
+  startingCapital?: number;
+  finalEquity?: number | null;
+  realizedPnl?: number | null;    // gross, both sides
+  unrealizedPnl?: number | null;  // at final close
+  totalFees?: number | null;
+  roundTrips?: number | null;
+  skippedEntries?: number;
+  longTrades?: number | null;
+  shortTrades?: number | null;
+  effectiveStartTime?: string | null;
+  effectiveEndTime?: string | null;
+  adaptiveEnabled?: boolean;
+  feeRate?: number;
+  errorMessage?: string | null;
+  gridConfigs?: {
+    side: GridSide;
+    enabled: boolean;
+    gridLevels: number;
+    gridType: GridType;
+    lowerBound: number;
+    upperBound: number;
+    orderSize: number;
+    totalCapital: number;
+  }[];
 }
 
 // Pair configuration

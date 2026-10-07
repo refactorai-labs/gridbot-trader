@@ -1,26 +1,38 @@
-// Main simulation engine — processes candles through grid strategy
+// Main simulation engine — classic grid runs go through the pure v1 core
+// (classicGridCore.ts); this file loads inputs and persists results. Combo
+// simulations branch to the supervisor runner unchanged.
 
 import prisma from '../prisma';
-import { OHLC, GridLevel, PendingOrder, Fill, AdaptiveState, AdaptiveEventData, SnapshotData } from '../types';
-import { generateGridLevels, getGridSpacing } from './gridGenerator';
-import { initializeOrders, matchOrders, createCounterOrder, resetOrderIdCounter } from './orderMatcher';
-import { createInitialPnLState, processFill, createSnapshot, PnLState } from './pnlTracker';
-import { createInitialAdaptiveState, evaluateAdaptive } from './adaptiveLayer';
-import { getCachedCandles, getTimeframeMinutes } from '../data/candleCache';
-import { aggregate5mTo } from '../data/aggregator';
+import type { GridConfiguration } from '@prisma/client';
+import { SnapshotData } from '../types';
+import { getGridSpacing } from './gridGenerator';
+import { getCachedCandles, computeMissingGaps } from '../data/candleCache';
+import { normalizeExecutionWindow, EXECUTION_TF_MS } from '../data/executionWindow';
 import { SUPPORTED_PAIRS } from '../constants';
-import { findLevels } from '../analysis/technical';
 import { runComboSimulationFromDb } from '../combo/supervisorRunner';
+import { runClassicGrid } from './classicGridCore';
+import { ClassicFill, ClassicEvent, ClassicSideInput, CLASSIC_ENGINE_VERSION } from './classicGridTypes';
 
 function getBinanceSymbol(poolAddress: string, pair: string): string {
   const config = SUPPORTED_PAIRS.find(p => p.poolAddress === poolAddress);
   return config?.binanceSymbol || pair;
 }
 
-export async function runSimulation(simulationId: string): Promise<void> {
-  // Reset order ID counter for clean simulation
-  resetOrderIdCounter();
+function toSideInput(config: GridConfiguration | undefined): ClassicSideInput | null {
+  if (!config || !config.enabled) return null;
+  return {
+    lowerBound: config.lowerBound,
+    upperBound: config.upperBound,
+    gridLevels: config.gridLevels,
+    gridType: config.gridType as 'arithmetic' | 'geometric',
+    orderSize: config.orderSize,
+    totalCapital: config.totalCapital,
+    profitMode: config.profitMode as 'next_level' | 'custom',
+    customProfitDistance: config.customProfitDistance ?? undefined,
+  };
+}
 
+export async function runSimulation(simulationId: string): Promise<void> {
   // 1. Load simulation config
   const sim = await prisma.simulation.findUnique({
     where: { id: simulationId },
@@ -35,13 +47,6 @@ export async function runSimulation(simulationId: string): Promise<void> {
     return;
   }
 
-  const longConfig = sim.gridConfigs.find(c => c.side === 'long');
-  const shortConfig = sim.gridConfigs.find(c => c.side === 'short');
-
-  if (!longConfig || !shortConfig) {
-    throw new Error('Missing grid configuration for long or short side');
-  }
-
   // Mark as running
   await prisma.simulation.update({
     where: { id: simulationId },
@@ -49,187 +54,68 @@ export async function runSimulation(simulationId: string): Promise<void> {
   });
 
   try {
-    // 2. Load 5m candles from Binance cache and aggregate
+    const longConfig = sim.gridConfigs.find(c => c.side === 'long');
+    const shortConfig = sim.gridConfigs.find(c => c.side === 'short');
+    const long = toSideInput(longConfig);
+    const short = toSideInput(shortConfig);
+    if (!long && !short) throw new Error('No enabled grid side');
+    if (sim.adaptiveEnabled) throw new Error('Adaptive layer is not available until checkpoint 3; switch it off in the panel');
+
+    // 2. Effective 5m window (Contract E) and coverage check — no carry-forward.
+    const { effStart, effEnd } = normalizeExecutionWindow(sim.startTime.getTime(), sim.endTime.getTime(), Date.now());
     const binanceSymbol = getBinanceSymbol(sim.poolAddress, sim.pair);
-    const candles5m = await getCachedCandles(
-      binanceSymbol, '5m', sim.startTime, sim.endTime
-    );
+    const candles = await getCachedCandles(binanceSymbol, '5m', new Date(effStart), new Date(effEnd));
+    const gaps = computeMissingGaps(candles, effStart, effEnd, EXECUTION_TF_MS);
+    if (gaps.length > 0) {
+      const ranges = gaps
+        .map(g => `[${new Date(g.startMs).toISOString()}, ${new Date(g.endMs).toISOString()})`)
+        .join(', ');
+      throw new Error(`Missing cached 5m candles for ${binanceSymbol}: ${ranges}. Use the Data Manager to download.`);
+    }
 
-    if (candles5m.length === 0) {
-      throw new Error(
-        `No cached candles for ${binanceSymbol} between ${sim.startTime.toISOString()} and ${sim.endTime.toISOString()}. Use the Data Manager to download.`
+    // 3. Store grid spacing for display (enabled sides only)
+    for (const config of [longConfig, shortConfig]) {
+      if (!config?.enabled) continue;
+      const { spacing, spacingPct } = getGridSpacing(
+        config.lowerBound, config.upperBound, config.gridLevels, config.gridType as 'arithmetic' | 'geometric'
       );
+      await prisma.gridConfiguration.update({
+        where: { id: config.id },
+        data: { gridSpacing: spacing, gridSpacingPct: spacingPct },
+      });
     }
 
-    // Aggregate to simulation timeframe if needed
-    const simTimeframeMins = getTimeframeMinutes(sim.timeframe);
-    const candles = simTimeframeMins === 5 ? candles5m : aggregate5mTo(candles5m, simTimeframeMins);
+    // 4. Run the pure core
+    const result = runClassicGrid({ candles, feeRate: sim.feeRate, long, short });
 
-    // Aggregate to 4H for adaptive layer (if enabled)
-    let candles4H: OHLC[] = [];
-    if (sim.adaptiveEnabled) {
-      candles4H = aggregate5mTo(candles5m, 240);
-    }
-
-    // 3. Generate grid levels
-    const longLevels = generateGridLevels(
-      longConfig.lowerBound, longConfig.upperBound,
-      longConfig.gridLevels, 'long', longConfig.gridType as 'arithmetic' | 'geometric'
-    );
-    const shortLevels = generateGridLevels(
-      shortConfig.lowerBound, shortConfig.upperBound,
-      shortConfig.gridLevels, 'short', shortConfig.gridType as 'arithmetic' | 'geometric'
-    );
-
-    // Store grid spacing
-    const longSpacing = getGridSpacing(longConfig.lowerBound, longConfig.upperBound, longConfig.gridLevels, longConfig.gridType as 'arithmetic' | 'geometric');
-    const shortSpacing = getGridSpacing(shortConfig.lowerBound, shortConfig.upperBound, shortConfig.gridLevels, shortConfig.gridType as 'arithmetic' | 'geometric');
-
-    await Promise.all([
-      prisma.gridConfiguration.update({
-        where: { id: longConfig.id },
-        data: { gridSpacing: longSpacing.spacing, gridSpacingPct: longSpacing.spacingPct },
-      }),
-      prisma.gridConfiguration.update({
-        where: { id: shortConfig.id },
-        data: { gridSpacing: shortSpacing.spacing, gridSpacingPct: shortSpacing.spacingPct },
-      }),
-    ]);
-
-    // 4. Initialize orders
-    const firstPrice = candles[0].close;
-    let pendingOrders: PendingOrder[] = [
-      ...initializeOrders(firstPrice, longLevels, 'long', longConfig.orderSize),
-      ...initializeOrders(firstPrice, shortLevels, 'short', shortConfig.orderSize),
-    ];
-
-    // 5. Initialize state
-    const totalCapital = longConfig.totalCapital + shortConfig.totalCapital;
-    const pnlState = createInitialPnLState();
-    pnlState.maxEquity = totalCapital;
-    let adaptiveState = createInitialAdaptiveState();
-
-    // Detect initial S/R levels
-    const initialCandles = candles.slice(0, Math.min(50, candles.length));
-    let { support, resistance } = findLevels(initialCandles);
-
-    // Collect results for batch insert
-    const allFills: Fill[] = [];
-    const allSnapshots: SnapshotData[] = [];
-    const allAdaptiveEvents: { candleIdx: number; timestamp: number; event: AdaptiveEventData }[] = [];
-
-    // Snapshot interval — take a snapshot every N candles, capped at ~2000 total
-    const snapshotInterval = Math.max(1, Math.floor(candles.length / 2000));
-    let fourHourIdx = 0;
-
-    // 6. Process each candle
-    for (let i = 0; i < candles.length; i++) {
-      const candle = candles[i];
-
-      // 6a. Adaptive layer on 4H boundaries (if enabled)
-      if (sim.adaptiveEnabled && candles4H.length > 0) {
-        // Check if we've crossed into a new 4H candle
-        while (fourHourIdx < candles4H.length && candles4H[fourHourIdx].timestamp <= candle.timestamp) {
-          fourHourIdx++;
-        }
-
-        // Evaluate at 4H boundaries
-        const relevantCandles4H = candles4H.slice(0, fourHourIdx);
-        const fourHours = 4 * 60 * 60;
-        const isNew4H = i === 0 || Math.floor(candle.timestamp / fourHours) !== Math.floor(candles[i - 1].timestamp / fourHours);
-        if (relevantCandles4H.length > 0 && isNew4H) {
-          const { newState, events } = evaluateAdaptive(
-            relevantCandles4H, candle, adaptiveState, support, resistance,
-            { emaPeriod: sim.emaPeriod, volumeMultiplier: sim.volumeMultiplier }
-          );
-
-          adaptiveState = newState;
-
-          // Apply multipliers to pending orders
-          for (const order of pendingOrders) {
-            if (order.side === 'long') {
-              order.sizeMultiplier = adaptiveState.longMultiplier;
-            } else {
-              order.sizeMultiplier = adaptiveState.shortMultiplier;
-            }
-          }
-
-          // Store adaptive events
-          for (const event of events) {
-            allAdaptiveEvents.push({
-              candleIdx: i,
-              timestamp: candle.timestamp,
-              event,
-            });
-          }
-        }
-      }
-
-      // 6b. Match orders
-      const fills = matchOrders(candle, i, pendingOrders, sim.feeRate, longLevels, shortLevels);
-
-      // 6c. Process fills
-      for (const fill of fills) {
-        // Remove the filled order
-        pendingOrders = pendingOrders.filter(o => o.id !== fill.orderId);
-
-        // Calculate P&L
-        const { pnl, pnlPct } = processFill(pnlState, fill, totalCapital);
-        fill.pnl = pnl;
-        fill.pnlPct = pnlPct;
-
-        // Create counter-order
-        const multiplier = fill.side === 'long' ? adaptiveState.longMultiplier : adaptiveState.shortMultiplier;
-        const orderSize = fill.side === 'long' ? longConfig.orderSize : shortConfig.orderSize;
-        const counterOrder = createCounterOrder(fill, longLevels, shortLevels, orderSize, multiplier);
-
-        if (counterOrder) {
-          fill.counterOrderId = counterOrder.id;
-          pendingOrders.push(counterOrder);
-        }
-
-        allFills.push(fill);
-      }
-
-      // 6d. Take P&L snapshot
-      if (i % snapshotInterval === 0 || i === candles.length - 1) {
-        const longActive = pendingOrders.filter(o => o.side === 'long' && o.sizeMultiplier > 0).length;
-        const shortActive = pendingOrders.filter(o => o.side === 'short' && o.sizeMultiplier > 0).length;
-
-        const snapshot = createSnapshot(
-          pnlState, i, candle.timestamp, candle.close,
-          totalCapital, longConfig.totalCapital, shortConfig.totalCapital,
-          longActive, shortActive
-        );
-        allSnapshots.push(snapshot);
-      }
-    }
-
-    // 7. Batch store all results
-    await storeResults(simulationId, allFills, allSnapshots, allAdaptiveEvents, longLevels, shortLevels);
-
-    // 8. Update simulation with aggregate results
-    const lastCandle = candles[candles.length - 1];
-    const finalEquity = totalCapital + pnlState.realizedPnl +
-      (lastCandle ? calculateFinalUnrealized(pnlState, lastCandle.close) : 0);
+    // 5. Persist fills, snapshots, events, then the aggregate row
+    await storeResults(simulationId, result.fills, result.snapshots, result.events, result.startingCapital);
 
     await prisma.simulation.update({
       where: { id: simulationId },
       data: {
         status: 'completed',
-        totalPnl: pnlState.realizedPnl,
-        totalPnlPct: totalCapital > 0 ? (pnlState.realizedPnl / totalCapital) * 100 : 0,
-        longPnl: pnlState.longRealizedPnl,
-        shortPnl: pnlState.shortRealizedPnl,
-        totalTrades: pnlState.longFillCount + pnlState.shortFillCount,
-        longTrades: pnlState.longFillCount,
-        shortTrades: pnlState.shortFillCount,
-        winCount: pnlState.winCount,
-        lossCount: pnlState.lossCount,
-        maxDrawdown: pnlState.maxDrawdown,
-        maxDrawdownPct: pnlState.maxDrawdownPct,
-        finalEquity,
-        totalCandles: candles.length,
+        engineVersion: CLASSIC_ENGINE_VERSION,
+        effectiveStartTime: new Date(effStart),
+        effectiveEndTime: new Date(effEnd),
+        finalEquity: result.finalEquity,
+        totalPnl: result.totalPnl,
+        totalPnlPct: result.totalPnlPct,
+        realizedPnl: result.realizedGross,
+        totalFees: result.totalFees,
+        unrealizedPnl: result.unrealized,
+        longPnl: result.long ? result.long.finalEquity - result.long.totalCapital : 0,
+        shortPnl: result.short ? result.short.finalEquity - result.short.totalCapital : 0,
+        totalTrades: result.fills.length,
+        longTrades: result.long?.fills ?? 0,
+        shortTrades: result.short?.fills ?? 0,
+        roundTrips: result.roundTrips,
+        winCount: result.winCount,
+        lossCount: result.lossCount,
+        maxDrawdown: result.maxDrawdown,
+        maxDrawdownPct: result.maxDrawdownPct,
+        totalCandles: result.totalCandles,
+        skippedEntries: result.skippedEntries,
       },
     });
   } catch (error) {
@@ -242,101 +128,82 @@ export async function runSimulation(simulationId: string): Promise<void> {
   }
 }
 
-function calculateFinalUnrealized(state: PnLState, currentPrice: number): number {
-  let unrealized = 0;
-  for (const pos of state.openPositions) {
-    if (pos.side === 'long' && pos.entryType === 'buy') {
-      unrealized += (currentPrice - pos.entryPrice) * (pos.size / pos.entryPrice);
-    } else if (pos.side === 'long' && pos.entryType === 'sell') {
-      unrealized += (pos.entryPrice - currentPrice) * (pos.size / pos.entryPrice);
-    } else if (pos.side === 'short' && pos.entryType === 'sell') {
-      unrealized += (pos.entryPrice - currentPrice) * (pos.size / pos.entryPrice);
-    } else if (pos.side === 'short' && pos.entryType === 'buy') {
-      unrealized += (currentPrice - pos.entryPrice) * (pos.size / pos.entryPrice);
-    }
-  }
-  return unrealized;
-}
-
-// Batch store simulation results in database
+// Batch store simulation results in database. Fill ids are derived from fillSeq
+// so a closing leg can reference its entry fill (pairedOrderId) without a lookup.
 async function storeResults(
   simulationId: string,
-  fills: Fill[],
+  fills: ClassicFill[],
   snapshots: SnapshotData[],
-  adaptiveEvents: { candleIdx: number; timestamp: number; event: AdaptiveEventData }[],
-  longLevels: GridLevel[],
-  shortLevels: GridLevel[]
+  events: ClassicEvent[],
+  startingCapital: number
 ): Promise<void> {
   const batchSize = 500;
+  const fillId = (seq: number) => `${simulationId}_f${seq}`;
 
-  // Store grid orders (fills)
-  if (fills.length > 0) {
-    const orderData = fills.map(f => ({
-      simulationId,
-      side: f.side,
-      level: f.levelIndex,
-      levelPrice: f.fillPrice,
-      orderType: f.type,
-      orderSize: f.size,
-      status: 'filled' as const,
-      fillPrice: f.fillPrice,
-      fillTime: new Date(f.timestamp * 1000),
-      fillCandleIdx: f.candleIdx,
-      pairedOrderId: f.counterOrderId || null,
-      pnl: f.pnl || null,
-      pnlPct: f.pnlPct || null,
-      fees: f.fees,
-      sizeMultiplier: 1.0,
-    }));
-
-    for (let i = 0; i < orderData.length; i += batchSize) {
-      await prisma.gridOrder.createMany({
-        data: orderData.slice(i, i + batchSize),
-      });
-    }
+  // Store grid orders (fills). Rows are built per batch: dense grids can produce
+  // over a million fills, so a second full-size array is avoided.
+  const toOrderRow = (f: ClassicFill) => ({
+    id: fillId(f.fillSeq),
+    simulationId,
+    side: f.side,
+    level: f.level,
+    levelPrice: f.levelPrice,
+    orderType: f.orderType,
+    orderSize: f.notional,
+    status: 'filled' as const,
+    fillPrice: f.fillPrice,
+    fillTime: new Date(f.timestamp * 1000),
+    fillCandleIdx: f.candleIdx,
+    fillSeq: f.fillSeq,
+    quantity: f.quantity,
+    slotIndex: f.slotIndex,
+    positionId: f.positionId,
+    role: f.role,
+    pairedOrderId: f.pairedFillSeq != null ? fillId(f.pairedFillSeq) : null,
+    pnl: f.pnl,
+    pnlPct: f.pnl != null && startingCapital > 0 ? (f.pnl / startingCapital) * 100 : null,
+    fees: f.fees,
+    sizeMultiplier: 1.0,
+  });
+  for (let i = 0; i < fills.length; i += batchSize) {
+    await prisma.gridOrder.createMany({ data: fills.slice(i, i + batchSize).map(toOrderRow) });
   }
 
   // Store P&L snapshots
-  if (snapshots.length > 0) {
-    const snapshotData = snapshots.map(s => ({
-      simulationId,
-      candleIdx: s.candleIdx,
-      timestamp: new Date(s.timestamp * 1000),
-      price: s.price,
-      equity: s.equity,
-      realizedPnl: s.realizedPnl,
-      unrealizedPnl: s.unrealizedPnl,
-      longRealizedPnl: s.longRealizedPnl,
-      shortRealizedPnl: s.shortRealizedPnl,
-      longUnrealizedPnl: s.longUnrealizedPnl,
-      shortUnrealizedPnl: s.shortUnrealizedPnl,
-      longEquity: s.longEquity,
-      shortEquity: s.shortEquity,
-      longOrdersActive: s.longOrdersActive,
-      shortOrdersActive: s.shortOrdersActive,
-      longFillCount: s.longFillCount,
-      shortFillCount: s.shortFillCount,
-    }));
-
-    for (let i = 0; i < snapshotData.length; i += batchSize) {
-      await prisma.pnlSnapshot.createMany({
-        data: snapshotData.slice(i, i + batchSize),
-      });
-    }
+  const snapshotData = snapshots.map(s => ({
+    simulationId,
+    candleIdx: s.candleIdx,
+    timestamp: new Date(s.timestamp * 1000),
+    price: s.price,
+    equity: s.equity,
+    realizedPnl: s.realizedPnl,
+    unrealizedPnl: s.unrealizedPnl,
+    longRealizedPnl: s.longRealizedPnl,
+    shortRealizedPnl: s.shortRealizedPnl,
+    longUnrealizedPnl: s.longUnrealizedPnl,
+    shortUnrealizedPnl: s.shortUnrealizedPnl,
+    longEquity: s.longEquity,
+    shortEquity: s.shortEquity,
+    longOrdersActive: s.longOrdersActive,
+    shortOrdersActive: s.shortOrdersActive,
+    longFillCount: s.longFillCount,
+    shortFillCount: s.shortFillCount,
+  }));
+  for (let i = 0; i < snapshotData.length; i += batchSize) {
+    await prisma.pnlSnapshot.createMany({ data: snapshotData.slice(i, i + batchSize) });
   }
 
-  // Store adaptive events
-  if (adaptiveEvents.length > 0) {
-    await prisma.adaptiveEvent.createMany({
-      data: adaptiveEvents.map(ae => ({
-        simulationId,
-        candleIdx: ae.candleIdx,
-        timestamp: new Date(ae.timestamp * 1000),
-        eventType: ae.event.type,
-        detailsJson: JSON.stringify(ae.event.details),
-        longMultiplier: ae.event.longMultiplier ?? null,
-        shortMultiplier: ae.event.shortMultiplier ?? null,
-      })),
-    });
+  // Store events (state events and per-order diagnostics, all in full)
+  const eventData = events.map(e => ({
+    simulationId,
+    candleIdx: e.candleIdx,
+    timestamp: new Date(e.timestamp * 1000),
+    eventType: e.eventType,
+    detailsJson: JSON.stringify(e.details),
+    longMultiplier: e.longMultiplier,
+    shortMultiplier: e.shortMultiplier,
+  }));
+  for (let i = 0; i < eventData.length; i += batchSize) {
+    await prisma.adaptiveEvent.createMany({ data: eventData.slice(i, i + batchSize) });
   }
 }

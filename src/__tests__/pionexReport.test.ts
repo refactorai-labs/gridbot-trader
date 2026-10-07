@@ -170,7 +170,7 @@ describe('pionex UI params (plan §6, §6.3)', () => {
     const r = toRunRequest({ ...BOT_A_PARAMS, cycleOn: true }, 'ETHUSDT', W0, W1);
     expect(r.band).toEqual({ lowerPct: -0.06665, upperPct: 0.0404 });
     expect(r.config.costs).toEqual({ makerFee: 0.0002, takerFee: 0.0005, mmr: 0.005, fundingRateOverride: null });
-    expect(r.config.cycle).toEqual({ takeProfitPct: 0.05, reinvestPct: 0.5 });
+    expect(r.config.cycle).toEqual({ takeProfitPct: 0.05, reinvestPct: 0.5, takeProfitPricePct: null });
     expect(r.config.topUp).toBeNull();
     expect(r.config.capitalTotal).toBeUndefined();
     expect(toRunRequest({ ...BOT_A_PARAMS, bandMode: 'absolute' }, 'ETHUSDT', W0, W1).band).toBeNull();
@@ -182,7 +182,7 @@ describe('pionex UI params (plan §6, §6.3)', () => {
     for (const r of [one, two, three]) {
       expect(r.config.capitalTotal).toBe(600);
       expect([r.startMs, r.endMs]).toEqual([W0, W1]);
-      expect(r.config.cycle).toEqual({ takeProfitPct: 0.05, reinvestPct: 0.5 });
+      expect(r.config.cycle).toEqual({ takeProfitPct: 0.05, reinvestPct: 0.5, takeProfitPricePct: null });
       expect(r.name).toMatch(/^trio: /);
     }
     expect(one.config.bot.extraMargin).toBeCloseTo(600 - 134.68, 9);
