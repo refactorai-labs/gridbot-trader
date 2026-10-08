@@ -34,6 +34,7 @@ interface DataCheck {
 // An emptied date input yields NaN; it renders as an empty field and disables the check.
 const toInput = (ms: number) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : '');
 const fromInput = (s: string) => Date.parse(`${s}T00:00:00.000Z`);
+const DAY_MS = 86_400_000;
 const fmtTs = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
 
 interface RunTiming { load: number; compute: number; save: number }
@@ -79,8 +80,9 @@ function SeriesRow({ label, q }: { label: string; q: DataGapReport['last'] }) {
 
 export default function PionexPage() {
   const [symbol, setSymbol] = useState<PionexSymbol>('ETHUSDT');
-  const [startMs, setStartMs] = useState(() => Date.UTC(2022, 4, 4));
-  const [endMs, setEndMs] = useState(() => Date.UTC(2022, 4, 20));
+  // Default window: the last 16 days ending today (UTC midnight).
+  const [endMs, setEndMs] = useState(() => Math.floor(Date.now() / DAY_MS) * DAY_MS);
+  const [startMs, setStartMs] = useState(() => endMs - 16 * DAY_MS);
   const [leadDays, setLeadDays] = useState(2);
   const [picked, setPicked] = useState<PickedWindow | null>(null);
   const [check, setCheck] = useState<DataCheck | null>(null);
@@ -336,6 +338,7 @@ export default function PionexPage() {
                   <input
                     type="date"
                     className="form-input"
+                    min={toInput(startMs + DAY_MS)}
                     value={toInput(endMs)}
                     onChange={e => { setEndMs(fromInput(e.target.value)); setPicked(null); windowChanged(); }}
                   />

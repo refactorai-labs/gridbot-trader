@@ -1,4 +1,54 @@
+# Pionex window pickers: 2026 default + To ≥ From — 2026-10-07
+
+**File:** `src/app/pionex/page.tsx` only.
+
+- [x] Default window: replace the hard-coded 2022-05-04 → 2022-05-20 with the last 16 days ending today (UTC midnight), so the From picker opens in 2026 (current year)
+- [x] To picker: add `min` = From + 1 day, so earlier (and equal) dates are greyed out in the calendar (`validWindow` already requires To > From)
+- [x] `npx tsc --noEmit`, then a quick browser check
+- [x] Review section
+
+## Review
+
+- `page.tsx`: new `DAY_MS` constant; `endMs` defaults to today's UTC midnight and `startMs` to 16 days before it (same window length as the old default, follows the current date). The To `<input type="date">` got `min={toInput(startMs + DAY_MS)}`, so it follows From whenever From changes; an emptied From gives no `min` (`toInput(NaN)` → `''`).
+- Checked: `npx tsc --noEmit` clean; the dev server renders From `2026-09-21`, To `2026-10-07` with `min="2026-09-22"`.
+- Note: `min` greys out dates in the native calendar; a date typed by hand below it is still caught by the existing `validWindow` check (Run/Check disabled). Choosing a drawdown, gate window or saved run still sets both dates as before.
+
 > Pionex követő ciklus (TP ár % + ciklustábla) terve: `tasks/pionex-trailing-plan.md` (2026-10-06).
+
+# Review — grid cycle calculation (Pionex `/pionex` + classic long/short) — 2026-10-07
+
+**Scope:** read-only review of whether the cycle / round-trip accounting can be trusted. No code changes unless a defect is confirmed.
+
+- [x] Read Pionex engine (`engine.ts`, `segments.ts`, `interventions.ts`, `ledger.ts`, `liquidation.ts`, `metrics.ts`, `report.ts`) and the trailing-cycle plan
+- [x] Read the classic long/short core (`classicGridCore.ts`) and its wiring
+- [x] Run `npx tsc --noEmit` and `npm test` — clean, 34 files / 540 tests green
+- [x] Probe scripts (scratchpad) on synthetic data: cycle accounting identities, restart band, rounds per cycle, invariant under random walks
+- [x] Write findings into the review section below
+
+## Review (2026-10-07) — grid cycle calculation
+
+**Scope note.** `/pionex` is a **long-only** futures grid by design (plan §8 lists short/neutral grids as non-goals); there is no short Pionex bot to review. The long/short pair lives in the classic engine (`classicGridCore.ts`, checkpoint 1), reviewed here as well.
+
+**Verified correct (Pionex cycles, `interventions.ts` / `engine.ts`)**
+- TP rule: `netIfClosed = equity(5m close) − qty·close·taker − (I + E_start + Σ cycle top-ups)`, evaluated on the 1m bar that closes a 5m candle, executed at the next 1m open at the open price (taker); missing execution minute → `intervention_missed`, re-evaluated at the next 5m close. Price TP: `close ≥ cycleStartPrice·(1 + pct)` with the 1e-12 tolerance; profit TP checked first.
+- Settlement (`settleCycle`): profit > 0 → `I_next = I + r·profit`, `E_next = E_start + top-ups`, withdraw `(1 − r)·profit`; profit ≤ 0 → loss out of E, no withdrawal; `E_next < 0` → `restart_rejected`, bot stopped, wallet to freeCash. Wallet after restart = `I_next + E_next` exactly.
+- Restart: band re-centred on the restart price with the original % offsets (`first.lower · price/startPrice`), grid sized from `I_next`, levels at/above the price bought at market (22 of 60 for the Bot A offsets, matching the live fixture), cycle counters/log fields reset.
+- Probe (10 random walks × paths A/B, fees + funding + top-ups + margin check, 50–120 cycles each): ledger invariant < 1e-6; `withdrawn = Σ cycle withdrawn`; `cycles = cycleLog.length`; `Σ cycle rounds + open-cycle rounds = bot rounds`; `Σ cycle profit + open-cycle net = realized − fees − funding` (the per-cycle profits partition the total P&L with no leak or double count); `I_cur − I_0 = Σ reinvested`; final band = last restart price × (1 + offsets); log start price/time = the start/restart events. Restart exactly on a grid level behaves correctly.
+- Fixture tests: profit/round within 3 % of two live Pionex bots, start grid count and initial qty consistent, invariant tests on every event.
+
+**Verified correct (classic long/short, `classicGridCore.ts`)**
+- Probe (5 random walks, 30 days of 5m, 60 slots per side, 0.08 % fee): every position has one entry leg (`initial`/`entry`) and one exit leg paired by `pairedFillSeq`; exit at the adjacent line on the profitable side; `pnl = ±(exit − entry)·q − fee` with the correct sign for shorts; `Σ realized`, `Σ fees`, `roundTrips` match the side result; `equity = capital + realizedGross − fees + unrealized`; long-only / short-only runs equal the dual run per side; a short grid on a price path equals a long grid on the mirrored path (same rounds and fills).
+
+**No defects found in the cycle accounting.** Nothing was changed in the code.
+
+**Limitations that bound how far the numbers can be trusted**
+1. Verdict label vs cycles (usability, `metrics.ts` `pathsDiffer`): any difference in cycle count between path A and B labels the run `path_dependent`, which outranks `liquidated / borderline / survived`. In the saved runs 14 of 40 carry this label and most of them differ by 1–2 cycles out of 30–77 with both paths surviving — the survival answer is hidden behind a label meant for liquidation ambiguity. Suggest treating a cycle-count difference as a note on the card, not as the verdict (plan §3.4.2 would need the change).
+2. Fill optimism: a limit order fills the moment the 1m high/low touches its level (no queue position, no partial fills), and interventions close at the exact 1m open (no slippage). Rounds and cycle counts are therefore an upper bound. Not listed in the Assumptions panel.
+3. Intra-candle path: A/B on 1m data narrows the ambiguity but neither path is a bound (documented).
+4. TP decisions only on 5m closes; an intra-5m spike through the TP level does not close (by design, documented).
+5. Chart overlay shows only the initial band; after a restart the drawn grid no longer matches the fills (cosmetic, noted in `chartData.ts`).
+6. Est. Liq. gap vs Pionex (+1.4 %) and the single-tier mmr remain open until the §4.2 live-bot readings.
+7. The classic engine is at checkpoint 1: custom profit distance and the adaptive layer are rejected at run time; results are fee-only (no leverage/funding/liquidation), as stated in the plan.
 
 # Final plan v4 — Classic grid simulator repair (Long grid + Short grid) — 2026-10-06
 
@@ -3001,3 +3051,28 @@ Out of scope: nothing else in the review needs code (performance, fixtures, Pion
 - Cause: `pollUntilDone` claims a new `pollTokenRef` token when it starts, so the unmount bump only stops loops already running. A create response arriving after unmount saved the id and started a brand-new loop that nothing could stop.
 - Fix (2 lines): the handler keeps the sequence value it bumped (`const seq = ++loadSeqRef.current`) and returns right after the create JSON when the sequence no longer matches. The only other bump during a run is the unmount cleanup (the Run button is disabled while `isRunning`), so this cannot abort a live run. Candle/DCA responses after unmount only hit no-op state setters, so no further guards are needed.
 - Test fails with the guard removed, passes with it. Suite 34 files / 540 tests green, `tsc` clean.
+
+# Grid cycle calculation review (Long + Short classic grid) — 2026-10-07
+
+Read-only review of the classic grid engine v1 (`classicGridCore.ts`) and the chain to the UI. No code changes.
+
+- [x] Read core engine, types, engine wrapper, replay builder, generator
+- [x] Read API validation, config UI, P&L panels, trade log, summary panel
+- [x] Run existing classic suites (47 tests)
+- [x] Independent reference simulator cross-check (scratchpad, random walks, long/short/dual, fees, starvation, exhaustion)
+- [x] Accounting identities from persisted fills (cash, fees, realized, equity, per-cycle profit)
+- [x] Review section with findings and trust assessment
+
+## Review — grid cycle calculation (2026-10-07)
+
+**Method.** Read `classicGridCore.ts` end to end plus the wrapper, replay, API validation and UI panels. Ran the three classic suites (47 passing). Wrote an independent reference simulator (scratchpad `refcheck.ts`, plain arrays, written from the rules only) and compared it with `runClassicGrid` fill by fill (side, role, slot, positionId, level, limit, fill price, quantity, fee, pnl, pairing, candle) and on final cash / gross / fees / equity / round-trips / wins / losses / exhaustion / drawdown over 57 scenarios: long-only, short-only, dual, arithmetic + geometric, ample and tight capital, 90 % gap candles, up/down trends with short exhaustion, grid above/below start price, zero fee. All matched. Accounting identities from the persisted fills alone also hold: cash rebuilt from fills = ledger cash; Σ fees; Σ realized; unrealized from open entries; equity = capital + gross − fees + unrealized; pure limit cycle net = orderSize × spacing − both fees. Dual run = long-only + short-only.
+
+**Verdict.** The cycle mechanics for both sides are correct: one position per slot, long buys L_k / sells L_{k+1}, short sells L_{k+1} / buys back L_k, quantity = orderSize / fill price, fees on both legs, round-trip and win/loss counted on full close, per-side equity and combined drawdown consistent. No calculation bug found.
+
+**Findings.**
+1. *Underfunded start allocation is asymmetric (medium, only when totalCapital < slots × orderSize).* `start()` (`classicGridCore.ts:466`) market-enters in ascending slot order. For long that funds the slots nearest the price first (exits just above); for short it funds the farthest slots first (buy-backs at the bottom of the range). Demo: 80–120, 41 lines, $100 × 40 slots, $450 capital, price 100 → long buys slots 20–23 (exits 101–104), short sells slots 0–3 (exits 80–83). In random walks the long mirror made 153 round-trips, the short 0. Fully funded runs (funding estimate not red) are unaffected. Suggested fix: iterate short slots descending in `start()`.
+2. *Three "realized" figures with similar labels (low, presentation).* Summary "Realized (gross)" = gross; live panel "Realized" = gross − all fees so far incl. entry fees of still-open positions; trade-log P&L per exit row = leg realized − exit fee only (entry fee excluded), so summing the column / CSV overstates net by the entry fees. Headline Total P&L = equity − starting capital is consistent everywhere.
+3. *Model assumptions to keep in mind (info).* Intra-candle path open→low→high→close (up) / open→high→low→close (down); touch = fill (inclusive) — slightly optimistic; a single fee rate for limit, initial market, gap-at-open and exhaustion fills; short exhaustion = force close at equity ≤ 0 (can end slightly negative; no maintenance margin, no funding); no lot/tick rounding; at start the line adjacent to the price on the far side of the containing slot carries no order (exchanges skip the nearest line) — first cycle only; open positions at the end are marked at the last close, not closed.
+4. Custom profit distance / percent order size are selectable in the form but rejected by the API with a clear message (checkpoint 2) — not a bug.
+
+No code was changed.
